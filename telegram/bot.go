@@ -223,9 +223,8 @@ func (b *Bot) HandleStatus() {
 		return
 	}
 
-	// Si el lock está listo para desbloquear, ejecutarlo automáticamente
+	// Si el lock está listo para desbloquear, ejecutarlo automáticamente y silenciosamente
 	if lock.IsReadyToUnlock {
-		b.Send("🔓 *LISTA PARA DESBLOQUEAR*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejecutando desbloqueo automático..._")
 		b.finishLock(lock.ID)
 		return
 	}
