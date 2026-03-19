@@ -850,6 +850,10 @@ func (b *Bot) Start() {
 			b.Send("Uso: `/pillory [minutos] [razón opcional]`\nEjemplo: `/pillory 30 por no obedecer`")
 		case text == "/testevent":
 			b.HandleRandomEventTest()
+		case text == "/testremove":
+			b.HandleTestRemoveTime()
+		case strings.HasPrefix(text, "/testremove "):
+			b.HandleTestRemoveTime()
 		case text == "/testmsg":
 			b.SendRandomMessageTest()
 		case text != "" && !strings.HasPrefix(text, "/"):
@@ -1305,6 +1309,22 @@ func (b *Bot) SendRandomMessage() {
 	}
 
 	b.Send(stripMarkdown(msg))
+}
+
+// HandleTestRemoveTime quita 1 hora de la condena — solo para testing con /testremove
+func (b *Bot) HandleTestRemoveTime() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	if err := b.chaster.RemoveTime(lock.ID, 3600); err != nil {
+		b.Send(fmt.Sprintf("❌ Error quitando tiempo: %v", err))
+		return
+	}
+	b.state.TotalTimeRemovedHours++
+	b.mustSaveState()
+	b.Send("🧪 *TEST* — Se quitó *1 hora* de tu condena.")
 }
 
 // SendRandomMessageTest fuerza un mensaje random — solo para testing con /testmsg

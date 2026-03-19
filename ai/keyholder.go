@@ -222,7 +222,8 @@ TIPOS (varía, no repitas):
 - Vestimenta o desnudez: llevar o no llevar algo específico de cierta manera
 - Exposición: mostrarse desde un ángulo concreto, zona concreta
 - Restricción: inmovilizarse, limitarse de alguna forma visible
-- Juguete: orden concreta con el juguete disponible si aplica
+- Juguete EN USO: si hay juguetes disponibles, úsalos activamente — no solo mostrarlos,
+  sino usarlos de forma visible y específica en la foto
 - Humillación activa: hacer algo vergonzoso y documentarlo
 
 ESCALA:
@@ -241,7 +242,9 @@ REGLAS:
 - Usa apodos denigrantes al dar la orden
 - MUY IMPORTANTE: la tarea debe ser posible tomarla en foto SOLA — sin ayuda de nadie.
   Considera que necesita apoyar el teléfono o usar temporizador. Evita posiciones donde sea
-  imposible sostener el teléfono y mantener la posición al mismo tiempo.`,
+  imposible sostener el teléfono y mantener la posición al mismo tiempo.
+- Si hay juguetes disponibles, DEBES incorporarlos en uso activo al menos el 60%% de las veces.
+  No basta con mostrarlos — deben usarse de forma visible en la foto.`,
 		ctx, level.String(), level.String(),
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
