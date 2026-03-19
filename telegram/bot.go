@@ -572,6 +572,39 @@ func (b *Bot) HandlePillory(durationMinutes int, reason string) {
 	))
 }
 
+// handleToyRemoveSelection procesa la selección de juguete a eliminar
+func (b *Bot) handleToyRemoveSelection(text string) {
+	var num int
+	fmt.Sscanf(strings.TrimSpace(text), "%d", &num)
+
+	if num < 1 || num > len(b.state.Toys) {
+		lines := []string{"❌ Número inválido. ¿Cuál quieres eliminar?"}
+		for i, t := range b.state.Toys {
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, t.Name))
+		}
+		b.Send(strings.Join(lines, "\n"))
+		return
+	}
+
+	selected := b.state.Toys[num-1]
+
+	if b.db != nil {
+		b.db.DeleteToy(selected.ID)
+	}
+
+	newToys := []models.Toy{}
+	for _, t := range b.state.Toys {
+		if t.ID != selected.ID {
+			newToys = append(newToys, t)
+		}
+	}
+	b.state.Toys = newToys
+	b.state.PendingToyMime = ""
+	b.mustSaveState()
+
+	b.Send(fmt.Sprintf("🗑 *%s* eliminado.", selected.Name))
+}
+
 // handleCageSelection procesa la selección de jaula durante el flujo de newlock
 func (b *Bot) handleCageSelection(text string) {
 	if b.db == nil {
@@ -711,6 +744,12 @@ func (b *Bot) HandleChat(text string) {
 		return
 	}
 
+	// Detectar selección de juguete a eliminar
+	if b.state.PendingToyMime == "removing_toy" {
+		b.handleToyRemoveSelection(text)
+		return
+	}
+
 	// Detectar ruegos sobre evento activo (freeze/hidetime)
 	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
 		eventKeywords := map[string][]string{
@@ -831,64 +870,58 @@ func (b *Bot) HandleToys(args string) {
 	if len(parts) > 0 {
 		subCmd = strings.ToLower(parts[0])
 	}
-	toyName := ""
-	if len(parts) > 1 {
-		toyName = strings.TrimSpace(parts[1])
-	}
+	_ = parts // toyName ya no se usa — la IA genera todo desde la foto
 
 	switch subCmd {
-	case "add", "agregar":
-		if toyName == "" {
-			b.Send("Uso: `/toys add [nombre]`\nEjemplo: `/toys add plug mediano`")
-			return
-		}
-		// Guardar nombre temporalmente y pedir foto
+	case "add", "agregar", "":
+		// Pedir foto directamente — la IA genera todo
 		b.state.PendingToyPhoto = nil
-		b.state.PendingToyMime = toyName // reutilizamos el campo para guardar el nombre
+		b.state.PendingToyMime = "new_toy"
 		b.awaitingToyPhoto = true
-		b.Send(fmt.Sprintf(
-			"▪️ *NUEVO JUGUETE*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda una foto de *%s* para registrarlo.\n_La IA generará el nombre y descripción automáticamente._",
-			toyName,
-		))
+		b.Send("▪️ *NUEVO JUGUETE*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda la foto del juguete.\n_La IA generará nombre, descripción y tipo automáticamente._")
 
 	case "remove", "quitar":
-		if toyName == "" {
-			b.Send("Uso: `/toys remove [nombre]`")
+		// Mostrar lista para seleccionar
+		if len(b.state.Toys) == 0 {
+			b.Send("No hay juguetes en el inventario.")
 			return
 		}
-		found := false
-		newToys := []models.Toy{}
-		for _, t := range b.state.Toys {
-			if strings.EqualFold(t.Name, toyName) || strings.EqualFold(t.ID, toyName) {
-				found = true
-				// Borrar de DB
-				if b.db != nil {
-					b.db.DeleteToy(t.ID)
-				}
-			} else {
-				newToys = append(newToys, t)
-			}
+		lines := []string{"▪️ *¿CUÁL QUIERES ELIMINAR?*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
+		for i, t := range b.state.Toys {
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, t.Name))
 		}
-		if !found {
-			b.Send(fmt.Sprintf("❌ No encontré *%s* en el inventario.", toyName))
-			return
-		}
-		b.state.Toys = newToys
+		lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
+		b.Send(strings.Join(lines, "\n"))
+		b.state.PendingToyMime = "removing_toy"
 		b.mustSaveState()
-		b.Send(fmt.Sprintf("🗑 *%s* eliminado.", toyName))
 
 	default:
 		if len(b.state.Toys) == 0 {
-			b.Send("🧸 *INVENTARIO*\n\nVacío. Añade juguetes con:\n`/toys add [nombre]`")
+			b.Send("🧸 *INVENTARIO*\n\nVacío. Añade juguetes con:\n`/toys add`")
 			return
 		}
 		lines := []string{"🧸 *INVENTARIO*\n"}
 		for i, t := range b.state.Toys {
-			lines = append(lines, fmt.Sprintf("%d. %s", i+1, t.Name))
+			status := ""
+			if t.InUse {
+				status = " ✅"
+			}
+			typeStr := ""
+			switch t.Type {
+			case "cage":
+				typeStr = " 🔒"
+			case "plug":
+				typeStr = " 🔌"
+			case "vibrator":
+				typeStr = " 📳"
+			case "restraint":
+				typeStr = " ⛓"
+			}
+			lines = append(lines, fmt.Sprintf("%d. %s%s%s", i+1, t.Name, typeStr, status))
 		}
-		lines = append(lines, "\n_Comandos:_")
-		lines = append(lines, "`/toys add [nombre]`")
-		lines = append(lines, "`/toys remove [nombre]`")
+		lines = append(lines, "\n_✅ = en uso ahora_")
+		lines = append(lines, "`/toys add` — añadir")
+		lines = append(lines, "`/toys remove` — eliminar")
 		b.Send(strings.Join(lines, "\n"))
 	}
 }
