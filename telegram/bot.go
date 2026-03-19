@@ -1487,7 +1487,15 @@ func (b *Bot) CheckLockFinished() {
 		return
 	}
 
-	// Caso 1: tiempo vencido pero el usuario aún no hizo el unlock manual en Chaster
+	// Caso 1: lock listo para desbloquear (IsReadyToUnlock=true) → ejecutar automáticamente
+	if lock.IsReadyToUnlock {
+		log.Printf("[CheckLockFinished] lock %s IsReadyToUnlock=true — ejecutando finishLock", lockID)
+		b.state.CurrentLockID = lockID
+		b.finishLock(lockID)
+		return
+	}
+
+	// Caso 2: tiempo vencido pero el usuario aún no hizo el unlock manual en Chaster
 	if lock.Status == "locked" && lock.EndDate != nil && time.Now().After(*lock.EndDate) {
 		if !alreadyNotified {
 			b.Send("🔓 *TIEMPO CUMPLIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\nAbre Chaster y presiona desbloquear.\nCuando lo confirmes, te mando la combinación.")
