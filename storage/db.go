@@ -66,6 +66,12 @@ func (db *DB) migrate() error {
 		reward_hours  INTEGER DEFAULT 0
 	);
 
+	CREATE TABLE IF NOT EXISTS chaster_tasks (
+		id          TEXT PRIMARY KEY,
+		description TEXT NOT NULL,
+		assigned_at DATETIME NOT NULL
+	);
+
 	CREATE TABLE IF NOT EXISTS events (
 		id              TEXT PRIMARY KEY,
 		lock_id         TEXT REFERENCES locks(id),
@@ -277,6 +283,34 @@ func (db *DB) GetTasksByLock(lockID string) ([]*Task, error) {
 
 func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 	rows, err := db.conn.Query(`SELECT description FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var descs []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		descs = append(descs, d)
+	}
+	return descs, nil
+}
+
+// ── Chaster Tasks ─────────────────────────────────────────────────────────
+
+func (db *DB) SaveChasterTask(description string) error {
+	id := fmt.Sprintf("chatask-%d", time.Now().UnixNano())
+	_, err := db.conn.Exec(
+		`INSERT INTO chaster_tasks (id, description, assigned_at) VALUES (?, ?, ?)`,
+		id, description, time.Now(),
+	)
+	return err
+}
+
+func (db *DB) GetRecentChasterTaskDescriptions(n int) ([]string, error) {
+	rows, err := db.conn.Query(`SELECT description FROM chaster_tasks ORDER BY assigned_at DESC LIMIT ?`, n)
 	if err != nil {
 		return nil, err
 	}

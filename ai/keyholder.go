@@ -1134,13 +1134,21 @@ Streak: %d. Reference her belonging to him. Maximum 2 lines. In Spanish.`,
 
 // GenerateChasterTask genera una tarea simple en inglés para verificación comunitaria en Chaster.
 // La tarea debe ser corta, clara, con foto requerida y apropiada para la plataforma.
-func (c *Client) GenerateChasterTask(daysLocked int, toys []models.Toy) (string, error) {
+func (c *Client) GenerateChasterTask(daysLocked int, toys []models.Toy, recentTasks []string) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 
 	system := `You generate short, simple task descriptions in English for a chastity community app.
 Tasks must be easy to understand and complete. Respond ONLY with the task text, nothing else.`
 
-	prompt := fmt.Sprintf(`%s
+	recentCtx := ""
+	if len(recentTasks) > 0 {
+		recentCtx = "\n\nDo NOT repeat or closely resemble these recent tasks:\n"
+		for _, t := range recentTasks {
+			recentCtx += "- " + t + "\n"
+		}
+	}
+
+	prompt := fmt.Sprintf(`%s%s
 Generate ONE simple task. It must be a basic, direct action — no complex poses or setups.
 
 TASK TYPES (pick one randomly):
@@ -1161,7 +1169,7 @@ Good: "Insert the plug and photograph it in use"
 Good: "Kneel and show your locked cage"
 Bad: "Kneel on the floor and photograph your cage from above with feet crossed"
 
-Write ONLY the task text.`, ctx)
+Write ONLY the task text.`, ctx, recentCtx)
 
 	return c.chat("llama-3.3-70b-versatile", system, prompt)
 }

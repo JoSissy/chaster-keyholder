@@ -2422,7 +2422,11 @@ func (b *Bot) HandleChasterTaskCommand() {
 
 	b.Send("_El Señor está preparando una tarea para la comunidad..._")
 
-	taskDesc, err := b.ai.GenerateChasterTask(b.daysLocked(), b.state.Toys)
+	var recentTasks []string
+	if b.db != nil {
+		recentTasks, _ = b.db.GetRecentChasterTaskDescriptions(10)
+	}
+	taskDesc, err := b.ai.GenerateChasterTask(b.daysLocked(), b.state.Toys, recentTasks)
 	if err != nil {
 		b.Send("❌ Error generando la tarea.")
 		return
@@ -2437,6 +2441,12 @@ func (b *Bot) HandleChasterTaskCommand() {
 	if err != nil {
 		b.Send(fmt.Sprintf("❌ No se pudo obtener la sesión de extensión: %v", err))
 		return
+	}
+
+	if b.db != nil {
+		if err := b.db.SaveChasterTask(taskDesc); err != nil {
+			log.Printf("[ChasterTask] error guardando tarea en DB: %v", err)
+		}
 	}
 
 	if err := b.chaster.AssignChasterTask(sessionID, taskDesc); err != nil {
