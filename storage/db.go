@@ -324,6 +324,42 @@ func (db *DB) GetRecentTasks(n int) ([]*Task, error) {
 	return tasks, nil
 }
 
+func (db *DB) GetAllTasks() ([]*Task, error) {
+	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks ORDER BY assigned_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []*Task
+	for rows.Next() {
+		t := &Task{}
+		if err := rows.Scan(&t.ID, &t.LockID, &t.Description, &t.PhotoURL, &t.AssignedAt, &t.DueAt, &t.CompletedAt, &t.Status, &t.PenaltyHours, &t.RewardHours); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+func (db *DB) GetAllOrgasmEntries() ([]*OrgasmEntry, error) {
+	rows, err := db.conn.Query(`SELECT id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at FROM orgasm_log ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*OrgasmEntry
+	for rows.Next() {
+		e := &OrgasmEntry{}
+		var granted int
+		if err := rows.Scan(&e.ID, &granted, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.Granted = granted == 1
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
 func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 	rows, err := db.conn.Query(`SELECT description FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
 	if err != nil {
