@@ -182,11 +182,23 @@ func (c *Client) AddTime(lockID string, seconds int) error {
 	return err
 }
 
-// RemoveTime quita tiempo a la sesión (segundos positivos = cantidad a quitar)
+// RemoveTime quita tiempo a la sesión usando la Extensions API si está disponible,
+// o el endpoint público con valor negativo como fallback.
 func (c *Client) RemoveTime(lockID string, seconds int) error {
 	if seconds <= 0 {
 		return fmt.Errorf("RemoveTime requiere segundos positivos")
 	}
+	// Intentar via Extensions API primero (remove_time con valor positivo)
+	if c.HasExtension() {
+		sessionID, err := c.GetSessionByLockID(lockID)
+		if err == nil {
+			return c.doExtensionAction(sessionID, actionWithParams{
+				Name:   "remove_time",
+				Params: seconds,
+			})
+		}
+	}
+	// Fallback: endpoint público con valor negativo
 	payload := map[string]int{"duration": -seconds}
 	_, err := c.doRequest("POST", fmt.Sprintf("/locks/%s/update-time", lockID), payload)
 	return err
