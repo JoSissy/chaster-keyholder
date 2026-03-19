@@ -27,7 +27,20 @@ func main() {
 		log.Fatal("TELEGRAM_CHAT_ID inválido:", err)
 	}
 
+	// Cliente base (Public API)
 	chasterClient := chaster.NewClient(chasterToken)
+
+	// Extensión — opcional. Si las variables están presentes, activa freeze/pillory/etc.
+	extToken := os.Getenv("CHASTER_EXTENSION_TOKEN")
+	extSlug := os.Getenv("CHASTER_EXTENSION_SLUG")
+	if extToken != "" && extSlug != "" {
+		chasterClient.WithExtension(extToken, extSlug)
+		log.Println("✅ Extensions API configurada —", extSlug)
+	} else {
+		log.Println("⚠️  Extensions API no configurada — freeze/pillory/hidetime no disponibles")
+		log.Println("   Añade CHASTER_EXTENSION_TOKEN y CHASTER_EXTENSION_SLUG al .env para activarlos")
+	}
+
 	aiClient := ai.NewClient(groqKey)
 
 	bot, err := telegram.NewBot(telegramToken, chatID, chasterClient, aiClient)

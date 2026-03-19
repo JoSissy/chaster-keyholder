@@ -438,41 +438,67 @@ func (b *Bot) HandleFail() {
 }
 
 // ── Freeze / Timer visibility ──────────────────────────────────────────────
+// Todas estas funciones obtienen el lock activo automáticamente.
 
-func (b *Bot) HandleFreeze(sessionID string) {
-	if err := b.chaster.FreezeLock(sessionID); err != nil {
+func (b *Bot) HandleFreeze() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	if err := b.chaster.FreezeLock(lock.ID); err != nil {
 		b.Send(fmt.Sprintf("❌ Error congelando el lock: %v", err))
 		return
 	}
 	b.Send("❄️ *LOCK CONGELADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo está detenido. No puedes hacer nada._")
 }
 
-func (b *Bot) HandleUnfreeze(sessionID string) {
-	if err := b.chaster.UnfreezeLock(sessionID); err != nil {
+func (b *Bot) HandleUnfreeze() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	if err := b.chaster.UnfreezeLock(lock.ID); err != nil {
 		b.Send(fmt.Sprintf("❌ Error descongelando el lock: %v", err))
 		return
 	}
 	b.Send("🔥 *LOCK DESCONGELADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo sigue corriendo. Sin descanso._")
 }
 
-func (b *Bot) HandleHideTime(sessionID string) {
-	if err := b.chaster.SetTimerVisibility(sessionID, false); err != nil {
+func (b *Bot) HandleHideTime() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	if err := b.chaster.SetTimerVisibility(lock.ID, false); err != nil {
 		b.Send(fmt.Sprintf("❌ Error ocultando el tiempo: %v", err))
 		return
 	}
 	b.Send("🙈 *TIEMPO OCULTO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ya no sabes cuánto te queda. Así me gusta._")
 }
 
-func (b *Bot) HandleShowTime(sessionID string) {
-	if err := b.chaster.SetTimerVisibility(sessionID, true); err != nil {
+func (b *Bot) HandleShowTime() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	if err := b.chaster.SetTimerVisibility(lock.ID, true); err != nil {
 		b.Send(fmt.Sprintf("❌ Error mostrando el tiempo: %v", err))
 		return
 	}
 	b.Send("👁 *TIEMPO VISIBLE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Puedes ver cuánto te queda. Sufre con eso._")
 }
 
-func (b *Bot) HandlePillory(sessionID string, durationMinutes int, reason string) {
-	if err := b.chaster.PutInPillory(sessionID, durationMinutes*60, reason); err != nil {
+func (b *Bot) HandlePillory(durationMinutes int, reason string) {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	if err := b.chaster.PutInPillory(lock.ID, durationMinutes*60, reason); err != nil {
 		b.Send(fmt.Sprintf("❌ Error enviando al cepo: %v", err))
 		return
 	}
@@ -656,27 +682,32 @@ func (b *Bot) HandleToys(args string) {
 // ── Help ───────────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleHelp() {
-	b.Send(`🔒 *CHASTER KEYHOLDER BOT*
+	extStatus := "no configurada"
+	if b.chaster.HasExtension() {
+		extStatus = "activa ✅"
+	}
+
+	b.Send(fmt.Sprintf(`🔒 *CHASTER KEYHOLDER BOT*
 
 *Sesión:*
-/newlock — Crear nueva sesión de castidad 🔒
+/newlock — Crear nueva sesión 🔒
 /status — Estado actual
 /task — Ver o solicitar tarea
 /fail — Confesar que fallaste 💀
 
-*Control avanzado (requiere sessionId):*
-/freeze [sessionId] — Congelar lock ❄️
-/unfreeze [sessionId] — Descongelar lock 🔥
-/hidetime [sessionId] — Ocultar tiempo restante 🙈
-/showtime [sessionId] — Mostrar tiempo restante 👁
-/pillory [sessionId] [minutos] [razón] — Enviar al cepo ⛓
+*Control avanzado* (extensión: %s):
+/freeze — Congelar lock ❄️
+/unfreeze — Descongelar lock 🔥
+/hidetime — Ocultar tiempo restante 🙈
+/showtime — Mostrar tiempo restante 👁
+/pillory [min] [razón] — Enviar al cepo ⛓
 
 *Inventario:*
 /toys — Ver juguetes
 /toys add [nombre] — Añadir juguete
 /toys remove [nombre] — Eliminar juguete
 
-_Para completar una tarea: manda la foto de evidencia directo al chat._`)
+_Para completar una tarea: manda la foto directo al chat._`, extStatus))
 }
 
 // ── Loop principal ─────────────────────────────────────────────────────────
@@ -747,56 +778,43 @@ func (b *Bot) Start() {
 			b.HandleToys("")
 		case strings.HasPrefix(text, "/toys "):
 			b.HandleToys(strings.TrimPrefix(text, "/toys "))
-		// Comandos de extensión
-		case strings.HasPrefix(text, "/freeze "):
-			parts := strings.Fields(strings.TrimPrefix(text, "/freeze "))
-			if len(parts) >= 1 {
-				b.HandleFreeze(parts[0])
-			}
-		case strings.HasPrefix(text, "/unfreeze "):
-			parts := strings.Fields(strings.TrimPrefix(text, "/unfreeze "))
-			if len(parts) >= 1 {
-				b.HandleUnfreeze(parts[0])
-			}
-		case strings.HasPrefix(text, "/hidetime "):
-			parts := strings.Fields(strings.TrimPrefix(text, "/hidetime "))
-			if len(parts) >= 1 {
-				b.HandleHideTime(parts[0])
-			}
-		case strings.HasPrefix(text, "/showtime "):
-			parts := strings.Fields(strings.TrimPrefix(text, "/showtime "))
-			if len(parts) >= 1 {
-				b.HandleShowTime(parts[0])
-			}
+		// Comandos de extensión — usan el lock activo automáticamente
+		case text == "/freeze":
+			b.HandleFreeze()
+		case text == "/unfreeze":
+			b.HandleUnfreeze()
+		case text == "/hidetime":
+			b.HandleHideTime()
+		case text == "/showtime":
+			b.HandleShowTime()
 		case strings.HasPrefix(text, "/pillory "):
 			b.parsePilloryCommand(strings.TrimPrefix(text, "/pillory "))
+		case text == "/pillory":
+			b.Send("Uso: `/pillory [minutos] [razón opcional]`\nEjemplo: `/pillory 30 por no obedecer`")
 		case text != "" && !strings.HasPrefix(text, "/"):
 			b.HandleChat(text)
 		}
 	}
 }
 
-// parsePilloryCommand parsea "/pillory sessionId 30 razón del cepo"
+// parsePilloryCommand parsea "/pillory 30 razón del cepo"
 func (b *Bot) parsePilloryCommand(args string) {
 	parts := strings.Fields(args)
-	if len(parts) < 2 {
-		b.Send("Uso: `/pillory [sessionId] [minutos] [razón opcional]`")
+	if len(parts) < 1 {
+		b.Send("Uso: `/pillory [minutos] [razón opcional]`")
 		return
 	}
-	sessionID := parts[0]
 	var minutes int
-	fmt.Sscanf(parts[1], "%d", &minutes)
+	fmt.Sscanf(parts[0], "%d", &minutes)
 	if minutes <= 0 {
 		b.Send("❌ Los minutos deben ser un número positivo.")
 		return
 	}
-	reason := ""
-	if len(parts) > 2 {
-		reason = strings.Join(parts[2:], " ")
-	} else {
-		reason = "El amo lo ha decidido."
+	reason := "El amo lo ha decidido."
+	if len(parts) > 1 {
+		reason = strings.Join(parts[1:], " ")
 	}
-	b.HandlePillory(sessionID, minutes, reason)
+	b.HandlePillory(minutes, reason)
 }
 
 // ── Scheduler hooks ────────────────────────────────────────────────────────

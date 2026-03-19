@@ -14,11 +14,21 @@ import (
 
 const baseURL = "https://api.chaster.app"
 
+// Client maneja el Public API de Chaster (token de usuario)
 type Client struct {
 	token      string
 	httpClient *http.Client
+	ext        *ExtensionClient // nil si no está configurado
 }
 
+// ExtensionClient maneja el Extensions API de Chaster (developer token de la extensión)
+type ExtensionClient struct {
+	token         string
+	extensionSlug string
+	httpClient    *http.Client
+}
+
+// NewClient crea un cliente para el Public API
 func NewClient(token string) *Client {
 	return &Client{
 		token:      token,
@@ -26,7 +36,33 @@ func NewClient(token string) *Client {
 	}
 }
 
+// WithExtension añade soporte para el Extensions API.
+// extensionToken: developer token de tu extensión en Chaster.
+// extensionSlug: slug de tu extensión (ej: "jolie-keyholder").
+func (c *Client) WithExtension(extensionToken, extensionSlug string) *Client {
+	c.ext = &ExtensionClient{
+		token:         extensionToken,
+		extensionSlug: extensionSlug,
+		httpClient:    &http.Client{Timeout: 15 * time.Second},
+	}
+	return c
+}
+
+// HasExtension indica si el cliente de extensión está configurado
+func (c *Client) HasExtension() bool {
+	return c.ext != nil && c.ext.token != "" && c.ext.extensionSlug != ""
+}
+
 func (c *Client) doRequest(method, path string, body interface{}) ([]byte, error) {
+	return doHTTPRequest(c.httpClient, c.token, method, baseURL+path, body)
+}
+
+func (e *ExtensionClient) doRequest(method, path string, body interface{}) ([]byte, error) {
+	return doHTTPRequest(e.httpClient, e.token, method, baseURL+path, body)
+}
+
+// doHTTPRequest es la función base compartida por ambos clientes
+func doHTTPRequest(httpClient *http.Client, token, method, url string, body interface{}) ([]byte, error) {
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -36,15 +72,15 @@ func (c *Client) doRequest(method, path string, body interface{}) ([]byte, error
 		reqBody = bytes.NewBuffer(data)
 	}
 
-	req, err := http.NewRequest(method, baseURL+path, reqBody)
+	req, err := http.NewRequest(method, url, reqBody)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +193,6 @@ func (c *Client) RemoveTime(lockID string, seconds int) error {
 
 // ── Acciones de extensión ──────────────────────────────────────────────────
 
-// extensionAction es el cuerpo base para acciones de extensión
 type extensionAction struct {
 	Action interface{} `json:"action"`
 }
@@ -171,30 +206,91 @@ type actionWithParams struct {
 	Params interface{} `json:"params"`
 }
 
-// doExtensionAction ejecuta una acción en una sesión de extensión
+// ExtensionSession representa una sesión de extensión activa
+type ExtensionSession struct {
+	ID     string `json:"_id"`
+	LockID string `json:"lockId"`
+	Status string `json:"status"`
+}
+
+// GetSessionByLockID busca el sessionId de extensión correspondiente a un lockId.
+// Necesario porque las acciones de extensión usan sessionId, no lockId.
+func (c *Client) GetSessionByLockID(lockID string) (string, error) {
+	if !c.HasExtension() {
+		return "", fmt.Errorf("extensión no configurada: falta CHASTER_EXTENSION_TOKEN o CHASTER_EXTENSION_SLUG")
+	}
+
+	payload := map[string]interface{}{
+		"status":           "locked",
+		"extensionSlug":    c.ext.extensionSlug,
+		"limit":            50,
+		"paginationLastId": nil,
+	}
+
+	data, err := c.ext.doRequest("POST", "/api/extensions/sessions/search", payload)
+	if err != nil {
+		return "", fmt.Errorf("error buscando sesiones de extensión: %w", err)
+	}
+
+	var result struct {
+		Results []ExtensionSession `json:"results"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", err
+	}
+
+	for _, s := range result.Results {
+		if s.LockID == lockID {
+			return s.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("no se encontró sesión de extensión para el lock %s", lockID)
+}
+
+// doExtensionAction ejecuta una acción usando el token de extensión
 func (c *Client) doExtensionAction(sessionID string, action interface{}) error {
+	if !c.HasExtension() {
+		return fmt.Errorf("extensión no configurada: falta CHASTER_EXTENSION_TOKEN o CHASTER_EXTENSION_SLUG")
+	}
 	payload := extensionAction{Action: action}
-	_, err := c.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/action", sessionID), payload)
+	_, err := c.ext.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/action", sessionID), payload)
 	return err
 }
 
-// FreezeLock congela el lock — el portador no puede hacer cambios
-func (c *Client) FreezeLock(sessionID string) error {
+// FreezeLock congela el lock dado su lockId (resuelve sessionId automáticamente)
+func (c *Client) FreezeLock(lockID string) error {
+	sessionID, err := c.GetSessionByLockID(lockID)
+	if err != nil {
+		return err
+	}
 	return c.doExtensionAction(sessionID, actionSimple{Name: "freeze"})
 }
 
-// UnfreezeLock descongela el lock
-func (c *Client) UnfreezeLock(sessionID string) error {
+// UnfreezeLock descongela el lock dado su lockId
+func (c *Client) UnfreezeLock(lockID string) error {
+	sessionID, err := c.GetSessionByLockID(lockID)
+	if err != nil {
+		return err
+	}
 	return c.doExtensionAction(sessionID, actionSimple{Name: "unfreeze"})
 }
 
-// ToggleFreezeLock alterna el estado de congelación
-func (c *Client) ToggleFreezeLock(sessionID string) error {
+// ToggleFreezeLock alterna congelación dado su lockId
+func (c *Client) ToggleFreezeLock(lockID string) error {
+	sessionID, err := c.GetSessionByLockID(lockID)
+	if err != nil {
+		return err
+	}
 	return c.doExtensionAction(sessionID, actionSimple{Name: "toggle_freeze"})
 }
 
-// SetTimerVisibility muestra u oculta el tiempo restante al portador
-func (c *Client) SetTimerVisibility(sessionID string, visible bool) error {
+// SetTimerVisibility muestra u oculta el tiempo restante dado su lockId
+func (c *Client) SetTimerVisibility(lockID string, visible bool) error {
+	sessionID, err := c.GetSessionByLockID(lockID)
+	if err != nil {
+		return err
+	}
 	return c.doExtensionAction(sessionID, actionWithParams{
 		Name:   "set_display_remaining_time",
 		Params: visible,
@@ -207,8 +303,12 @@ type PilloryParams struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-// PutInPillory pone al portador en el cepo por la duración indicada (segundos)
-func (c *Client) PutInPillory(sessionID string, durationSeconds int, reason string) error {
+// PutInPillory pone al portador en el cepo dado su lockId
+func (c *Client) PutInPillory(lockID string, durationSeconds int, reason string) error {
+	sessionID, err := c.GetSessionByLockID(lockID)
+	if err != nil {
+		return err
+	}
 	params := PilloryParams{Duration: durationSeconds, Reason: reason}
 	return c.doExtensionAction(sessionID, actionWithParams{
 		Name:   "pillory",
