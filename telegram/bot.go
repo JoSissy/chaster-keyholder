@@ -1684,6 +1684,17 @@ func (b *Bot) executeRandomEvent(lockID string, decision *ai.RandomEventDecision
 
 	switch decision.Action {
 
+	case "chatask":
+		// Si ya hay una tarea comunitaria activa, ignorar
+		if b.state.PendingChasterTask != "" || b.state.ChasterTaskLockID != "" {
+			log.Printf("[RandomEvent] chatask ignorado — tarea comunitaria ya activa")
+			return
+		}
+		if decision.Message != "" {
+			b.Send(stripMarkdown(decision.Message))
+		}
+		b.HandleChasterTaskCommand()
+
 	case "freeze":
 		if err := b.chaster.FreezeLock(lockID); err != nil {
 			log.Printf("[RandomEvent] error freeze: %v", err)

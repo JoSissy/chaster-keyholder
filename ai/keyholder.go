@@ -595,6 +595,7 @@ El Señor decides whether to execute a surprise control event on Jolie. Respond 
 }
 
 Available ACTIONS:
+- "chatask": assign a community-verified task — the Chaster community will vote on her photo (duration_minutes: 0)
 - "freeze": freeze the lock (duration_minutes: 30-120 min)
 - "hidetime": hide the timer (duration_minutes: 60-360 min)
 - "pillory": send to public pillory (duration_minutes: 5-30 min, minimum 5)
@@ -602,9 +603,11 @@ Available ACTIONS:
 - "none": El Señor decides not to intervene this cycle
 
 CRITERIA:
-- If tasksFailed > tasksCompleted → prefer punitive action (pillory, addtime)
+- Prefer "chatask" over other actions — El Señor enjoys having the community judge her
+- If tasksFailed > tasksCompleted → prefer punitive action (chatask, pillory, addtime)
 - If daysLocked > 7 → more frequent and severe events
 - If there is already an active event → mandatory "none"
+- If PendingChasterTask is active → skip "chatask"
 - Vary events — unpredictable is the point
 - The message must sound like El Señor acting on a whim — not scheduled, just because he can`
 
