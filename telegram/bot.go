@@ -1464,55 +1464,53 @@ func (b *Bot) finishLock(lockID string) {
 	b.mustSaveState()
 }
 
-// CheckLockFinished verifica si el lock específico terminó.
-// IMPORTANTE: Chaster NO hace unlock automático al vencer el tiempo.
-// El usuario debe abrir la app y presionar desbloquear manualmente.
-// Flujo:
-//  1. endDate vencido + status "locked" → avisar una sola vez (flag "notified:")
-//  2. status "unlocked" → mandar combinación y archivar
+// CheckLockFinished verifica si el lock activo terminó.
+// Usa GetActiveLock (lista) como comprobación primaria porque es el único endpoint
+// que devuelve isReadyToUnlock. Solo recurre a GetLockByID cuando el lock ya
+// no aparece en la lista (fue desbloqueado manualmente o archivado).
 func (b *Bot) CheckLockFinished() {
 	if b.state.CurrentLockID == "" {
 		return
 	}
 
-	// Extraer lockID real (puede tener prefijo "notified:" si ya se avisó)
 	rawID := b.state.CurrentLockID
 	alreadyNotified := strings.HasPrefix(rawID, "notified:")
 	lockID := strings.TrimPrefix(rawID, "notified:")
 
-	lock, err := b.chaster.GetLockByID(lockID)
-	if err != nil {
-		// ErrLockNotFound = Chaster devolvió 404 — el lock fue desbloqueado/archivado
-		// En ese caso ejecutamos el cierre aunque no podamos leer el status
-		if errors.Is(err, chaster.ErrLockNotFound) {
-			log.Printf("[CheckLockFinished] lock %s devolvió 404 — ejecutando finishLock", lockID)
+	// Paso 1: consultar la lista activa — devuelve isReadyToUnlock correctamente
+	activeLock, err := b.chaster.GetActiveLock()
+	if err == nil && activeLock.ID == lockID {
+		// Lock sigue activo — revisar si está listo para desbloquear
+		if activeLock.IsReadyToUnlock {
+			log.Printf("[CheckLockFinished] IsReadyToUnlock=true — ejecutando finishLock para %s", lockID)
 			b.state.CurrentLockID = lockID
 			b.finishLock(lockID)
 			return
 		}
-		log.Printf("[CheckLockFinished] error consultando lock %s: %v", lockID, err)
-		return
-	}
-
-	// Caso 1: lock listo para desbloquear (IsReadyToUnlock=true) → ejecutar automáticamente
-	if lock.IsReadyToUnlock {
-		log.Printf("[CheckLockFinished] lock %s IsReadyToUnlock=true — ejecutando finishLock", lockID)
-		b.state.CurrentLockID = lockID
-		b.finishLock(lockID)
-		return
-	}
-
-	// Caso 2: tiempo vencido pero el usuario aún no hizo el unlock manual en Chaster
-	if lock.Status == "locked" && lock.EndDate != nil && time.Now().After(*lock.EndDate) {
-		if !alreadyNotified {
-			b.Send("🔓 *TIEMPO CUMPLIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\nAbre Chaster y presiona desbloquear.\nCuando lo confirmes, te mando la combinación.")
-			b.state.CurrentLockID = "notified:" + lockID
-			b.mustSaveState()
+		// Tiempo vencido pero usuario aún no presionó desbloquear
+		if activeLock.EndDate != nil && time.Now().After(*activeLock.EndDate) {
+			if !alreadyNotified {
+				b.Send("🔓 *TIEMPO CUMPLIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\nAbre Chaster y presiona desbloquear.\nCuando lo confirmes, te mando la combinación.")
+				b.state.CurrentLockID = "notified:" + lockID
+				b.mustSaveState()
+			}
 		}
 		return
 	}
 
-	// Caso 2: status unlocked explícito
+	// Paso 2: lock no está en la lista activa — verificar qué pasó
+	lock, err := b.chaster.GetLockByID(lockID)
+	if err != nil {
+		if errors.Is(err, chaster.ErrLockNotFound) {
+			log.Printf("[CheckLockFinished] lock %s devolvió 404 — ejecutando finishLock", lockID)
+			b.state.CurrentLockID = lockID
+			b.finishLock(lockID)
+		} else {
+			log.Printf("[CheckLockFinished] error consultando lock %s: %v", lockID, err)
+		}
+		return
+	}
+
 	if lock.Status == "unlocked" {
 		log.Printf("[CheckLockFinished] status=unlocked — ejecutando finishLock para %s", lockID)
 		b.state.CurrentLockID = lockID
