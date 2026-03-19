@@ -1034,34 +1034,40 @@ func (b *Bot) HandleStats() {
 // ── Help ───────────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleHelp() {
-	extStatus := "no configurada"
-	if b.chaster.HasExtension() {
-		extStatus = "activa ✅"
-	}
+	b.Send(`🔒 *CHASTER KEYHOLDER BOT*
+▬▬▬▬▬▬▬▬▬▬▬▬
 
-	b.Send(fmt.Sprintf(`🔒 *CHASTER KEYHOLDER BOT*
+📋 *SESIÓN Y TAREAS*
+/status — Estado de tu condena
+/task — Ver tarea activa del día
+/explain — Cómo fotografiar la tarea
+/fail — Confesar que fallaste
+/ruleta — Girar la ruleta diaria 🎰
 
-*Sesión:*
-/newlock — Crear nueva sesión 🔒
-/status — Estado actual
-/task — Ver o solicitar tarea
-/explain — Cómo completar la tarea actual 📸
-/fail — Confesar que fallaste 💀
-/stats — Estadísticas históricas 📊
+🧸 *INVENTARIO*
+/toys — Ver tus juguetes
+/toys add — Añadir juguete
+/toys remove — Eliminar juguete
 
-*Control avanzado* (extensión: %s):
-/freeze — Congelar lock ❄️
-/unfreeze — Descongelar lock 🔥
-/hidetime — Ocultar tiempo restante 🙈
-/showtime — Mostrar tiempo restante 👁
-/pillory [min] [razón] — Enviar al cepo ⛓
+📊 *HISTORIAL*
+/stats — Estadísticas de sesiones
+/newlock — Iniciar nueva sesión
 
-*Inventario:*
-/toys — Ver juguetes
-/toys add [nombre] — Añadir juguete
-/toys remove [nombre] — Eliminar juguete
+▬▬▬▬▬▬▬▬▬▬▬▬
+🚫 *SOLO EL SEÑOR*
+_/freeze /unfreeze /hidetime /showtime /pillory_
+_Estos comandos los ejecuta El Señor, no tú._
 
-_Para completar una tarea: manda la foto directo al chat._`, extStatus))
+▬▬▬▬▬▬▬▬▬▬▬▬
+🧪 *PRUEBAS* _(se eliminarán pronto)_
+/testevent — Forzar evento random
+/testremove — Quitar tiempo manualmente
+/testmsg — Mensaje espontáneo
+/testjuicio — Juicio dominical
+/help — Este menú
+
+▬▬▬▬▬▬▬▬▬▬▬▬
+_Para completar una tarea — manda la foto directo al chat._`)
 }
 
 // ── Loop principal ─────────────────────────────────────────────────────────
@@ -1730,6 +1736,18 @@ func (b *Bot) executeRandomEvent(lockID string, decision *ai.RandomEventDecision
 
 // ── Mensajes random ───────────────────────────────────────────────────────
 
+// randomMessageTypes — se rota para forzar variedad en los mensajes espontáneos
+var randomMessageTypes = []string{
+	"possessive reminder — he's thinking of her caged, belonging to him",
+	"small degrading order — something tiny to do alone right now, no photo (think about X, say something out loud, feel the cage)",
+	"perverse comment — about her cage, her body, what El Señor enjoys about owning her",
+	"uncomfortable psychological question — about her submission, what she is, her secret desires",
+	"veiled threat — something is coming, vague and unsettling, no details",
+	"mocking observation — laugh quietly at her situation, her cage, her life as a sissy",
+	"conditioning phrase — reinforce what she is and who she belongs to",
+	"reference to her secret — about what he knows, what he could do with that information, his patience",
+}
+
 // sendRandomMessageInternal construye y envía el mensaje espontáneo del keyholder.
 func (b *Bot) sendRandomMessageInternal() {
 	_, lockErr := b.chaster.GetActiveLock()
@@ -1741,6 +1759,9 @@ func (b *Bot) sendRandomMessageInternal() {
 		activeType = b.state.ActiveEvent.Type
 	}
 
+	// Forzar variedad eligiendo un tipo aleatorio antes de llamar a la IA
+	msgType := randomMessageTypes[rand.Intn(len(randomMessageTypes))]
+
 	msg, err := b.ai.GenerateRandomMessage(
 		b.daysLocked(),
 		b.state.Toys,
@@ -1749,6 +1770,7 @@ func (b *Bot) sendRandomMessageInternal() {
 		hasActive,
 		activeType,
 		locked,
+		msgType,
 	)
 	if err != nil {
 		log.Printf("[SendRandomMessage] error: %v", err)

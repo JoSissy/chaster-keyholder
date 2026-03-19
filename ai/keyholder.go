@@ -706,9 +706,9 @@ Evaluate whether she deserves you to end the event early.`,
 // ── Random control messages ────────────────────────────────────────────────
 
 // GenerateRandomMessage generates a spontaneous keyholder message with no task context.
-// Simulates the master thinking of Jolie and deciding to write to her without apparent reason.
+// messageType forces a specific style — pass empty string to let AI decide.
 // locked indicates if there is an active session.
-func (c *Client) GenerateRandomMessage(daysLocked int, toys []models.Toy, tasksCompleted int, tasksFailed int, hasActiveEvent bool, activeEventType string, locked bool) (string, error) {
+func (c *Client) GenerateRandomMessage(daysLocked int, toys []models.Toy, tasksCompleted int, tasksFailed int, hasActiveEvent bool, activeEventType string, locked bool, messageType string) (string, error) {
 	system := buildSystemPrompt(locked)
 
 	if !locked {
@@ -734,28 +734,26 @@ Maximum 2 lines. In Spanish.`,
 		}
 	}
 
+	typeInstruction := messageType
+	if typeInstruction == "" {
+		typeInstruction = "choose freely"
+	}
+
 	prompt := fmt.Sprintf(
 		`%s
 Tasks completed: %d | Failed: %d
 %s
 
-El Señor thinks of Jolie and decides to send her a spontaneous message.
-
-TYPES (vary each time, pick one):
-- Possessive reminder: let her know you are thinking about her, caged, belonging to you
-- Small immediate order: something degrading to do right now, no photo needed
-- Verbal provocation: reference her secret, what she is, what you know about her
-- Uncomfortable question: something that makes her confront her submission or situation
-- Subtle threat: hint at something coming — vague, unsettling
-- Perverse comment: about her cage, her body, your control, what you enjoy about her situation
+El Señor picks up his phone and sends Jolie a spontaneous message.
+STYLE THIS TIME: %s
 
 RULES:
-- Maximum 3 lines. No preamble. Sound like El Señor in the middle of his day, thinking of her.
-- Not scheduled — spontaneous, like he picked up his phone and decided to write
-- No emojis. Calm, deliberate dominant text.
-- Use a nickname. Reference her secret occasionally.
+- Maximum 3 lines. Start directly — no "Jolie," no greeting, no preamble.
+- Sound genuinely spontaneous — in the middle of his day, she crossed his mind.
+- No emojis. Calm, deliberate, perverse.
+- Use a nickname. Reference her cage, her secret, or what she is.
 - In Spanish.`,
-		ctx, tasksCompleted, tasksFailed, eventCtx,
+		ctx, tasksCompleted, tasksFailed, eventCtx, typeInstruction,
 	)
 
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
