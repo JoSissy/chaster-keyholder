@@ -1,0 +1,51 @@
+{
+  "current_task": {
+    "id": "task-1773899821",
+    "description": "Poner el plug con cola de zorro gris y sentarte en cuclillas con la jaula visible, con las manos detrás de la espalda y una sonrisa forzada en la cara. Enviar una foto que muestre el plug y la jaula claramente.",
+    "assigned_at": "2026-03-19T00:57:01.372642498-05:00",
+    "due_at": "2026-03-19T01:57:01.372642498-05:00",
+    "completed": false,
+    "failed": false,
+    "penalty_minutes": 2,
+    "reward_minutes": 1,
+    "awaiting_photo": true
+  },
+  "last_game_time": "0001-01-01T00:00:00Z",
+  "next_forced_game": "2026-03-19T05:05:11.499718947-05:00",
+  "game_pending": false,
+  "game_deadline": "0001-01-01T00:00:00Z",
+  "total_time_added_minutes": 928,
+  "total_time_removed_minutes": 0,
+  "days_locked": 0,
+  "toys": [
+    {
+      "name": "plug con cola de zorro gris",
+      "added_at": "2026-03-18T21:47:13.639459239-05:00"
+    },
+    {
+      "name": "Dildo",
+      "added_at": "2026-03-19T00:46:19.925955473-05:00"
+    },
+    {
+      "name": "plug con cola de conejo",
+      "added_at": "2026-03-19T00:46:39.584902242-05:00"
+    },
+    {
+      "name": "pinzas para pezones",
+      "added_at": "2026-03-19T00:47:01.910869173-05:00"
+    },
+    {
+      "name": "succionadores para pezones",
+      "added_at": "2026-03-19T00:47:17.987892825-05:00"
+    },
+    {
+      "name": "vibrador masajeador",
+      "added_at": "2026-03-19T00:47:31.302288969-05:00"
+    }
+  ],
+  "awaiting_lock_photo": false,
+  "current_lock_id": "69bb7c9b1a6d6bdb0ace563b",
+  "manual_duration_seconds": 0,
+  "tasks_completed": 0,
+  "tasks_failed": 0
+}
