@@ -1425,7 +1425,8 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 
 	lockID, err := b.chaster.CreateLock(combinationID, durationSeconds)
 	if err != nil {
-		b.Send("❌ Error creando el lock en Chaster.")
+		log.Printf("[CreateLock] error: %v", err)
+		b.Send(fmt.Sprintf("❌ Error creando el lock en Chaster.\n`%v`", err))
 		return
 	}
 
