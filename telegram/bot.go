@@ -1012,6 +1012,18 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		return
 	}
 
+	// Guardar en historial
+	if b.db != nil {
+		b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
+			Granted:       decision.Granted,
+			UserMessage:   text,
+			SenorResponse: decision.Message,
+			Condition:     decision.Condition,
+			StreakAtTime:  b.state.TasksStreak,
+			DaysLocked:    b.daysLocked(),
+		})
+	}
+
 	if decision.Granted {
 		msg := "▪️ *PERMISO CONCEDIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
 		if strings.TrimSpace(decision.Condition) != "" {
@@ -1021,6 +1033,49 @@ func (b *Bot) handleOrgasmRequest(text string) {
 	} else {
 		b.Send("▪️ *DENEGADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message))
 	}
+}
+
+func (b *Bot) HandleOrgasmHistory() {
+	if b.db == nil {
+		b.Send("❌ Base de datos no disponible.")
+		return
+	}
+
+	total, granted, denied, err := b.db.GetOrgasmStats()
+	if err != nil || total == 0 {
+		b.Send("💦 *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ningún registro todavía._")
+		return
+	}
+
+	entries, err := b.db.GetOrgasmHistory(10)
+	if err != nil {
+		b.Send("❌ Error obteniendo historial.")
+		return
+	}
+
+	loc, _ := time.LoadLocation("America/Bogota")
+	lines := []string{fmt.Sprintf(
+		"💦 *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n❌ Denegados — *%d*\nTotal — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
+		granted, denied, total,
+	)}
+
+	for _, e := range entries {
+		icon := "❌"
+		status := "DENEGADO"
+		if e.Granted {
+			icon = "✅"
+			status = "CONCEDIDO"
+		}
+		date := e.CreatedAt.In(loc).Format("02 Jan 15:04")
+		lines = append(lines, fmt.Sprintf(
+			"%s *%s* — %s\n_Racha: %d | Día %d_\n_%s_",
+			icon, status, date,
+			e.StreakAtTime, e.DaysLocked,
+			stripMarkdown(e.SenorResponse),
+		))
+	}
+
+	b.Send(strings.Join(lines, "\n▬▬▬▬▬▬▬▬▬▬▬▬\n"))
 }
 
 func (b *Bot) handleNegotiation(text string) {
@@ -1208,6 +1263,7 @@ func (b *Bot) HandleHelp() {
 
 📊 *HISTORIAL*
 /stats — Estadísticas de sesiones
+/orgasmos — Historial de permisos
 /newlock — Iniciar nueva sesión
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
@@ -1311,6 +1367,8 @@ func (b *Bot) Start() {
 			b.HandleHelp()
 		case text == "/stats":
 			b.HandleStats()
+		case text == "/orgasmos":
+			b.HandleOrgasmHistory()
 		case text == "/toys":
 			b.HandleToys("")
 		case strings.HasPrefix(text, "/toys "):

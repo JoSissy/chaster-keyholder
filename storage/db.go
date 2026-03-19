@@ -92,6 +92,17 @@ func (db *DB) migrate() error {
 		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS orgasm_log (
+		id               TEXT PRIMARY KEY,
+		granted          INTEGER NOT NULL DEFAULT 0,
+		user_message     TEXT NOT NULL,
+		senor_response   TEXT NOT NULL,
+		condition_text   TEXT DEFAULT '',
+		streak_at_time   INTEGER DEFAULT 0,
+		days_locked      INTEGER DEFAULT 0,
+		created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS session_state (
 		id                      TEXT PRIMARY KEY DEFAULT 'current',
 		tasks_streak            INTEGER DEFAULT 0,
@@ -311,6 +322,59 @@ func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 		descs = append(descs, d)
 	}
 	return descs, nil
+}
+
+// ── Orgasm Log ────────────────────────────────────────────────────────────
+
+type OrgasmEntry struct {
+	ID            string
+	Granted       bool
+	UserMessage   string
+	SenorResponse string
+	Condition     string
+	StreakAtTime  int
+	DaysLocked    int
+	CreatedAt     time.Time
+}
+
+func (db *DB) SaveOrgasmEntry(e *OrgasmEntry) error {
+	id := fmt.Sprintf("orgasm-%d", time.Now().UnixNano())
+	granted := 0
+	if e.Granted {
+		granted = 1
+	}
+	_, err := db.conn.Exec(`
+		INSERT INTO orgasm_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, granted, e.UserMessage, e.SenorResponse, e.Condition, e.StreakAtTime, e.DaysLocked, time.Now(),
+	)
+	return err
+}
+
+func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at
+		FROM orgasm_log ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*OrgasmEntry
+	for rows.Next() {
+		e := &OrgasmEntry{}
+		var granted int
+		if err := rows.Scan(&e.ID, &granted, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.Granted = granted == 1
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+func (db *DB) GetOrgasmStats() (total, granted, denied int, err error) {
+	err = db.conn.QueryRow(`SELECT COUNT(*), SUM(granted), SUM(1-granted) FROM orgasm_log`).Scan(&total, &granted, &denied)
+	return
 }
 
 // ── Session State ─────────────────────────────────────────────────────────
