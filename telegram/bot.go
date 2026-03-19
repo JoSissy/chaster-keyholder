@@ -517,6 +517,32 @@ func (b *Bot) HandlePillory(durationMinutes int, reason string) {
 	))
 }
 
+// HandleExplain explica cómo completar y fotografiar la tarea actual
+func (b *Bot) HandleExplain() {
+	if b.state.CurrentTask == nil || b.state.CurrentTask.Completed || b.state.CurrentTask.Failed {
+		b.Send("No hay tarea activa en este momento.")
+		return
+	}
+
+	b.Send("_Analizando la tarea..._")
+
+	explanation, err := b.ai.GenerateTaskExplanation(
+		b.state.CurrentTask.Description,
+		b.state.Toys,
+		b.daysLocked(),
+	)
+	if err != nil {
+		b.Send("❌ Error generando explicación.")
+		return
+	}
+
+	b.Send(fmt.Sprintf(
+		"▪️ *CÓMO COMPLETAR LA TAREA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_",
+		b.state.CurrentTask.Description,
+		stripMarkdown(explanation),
+	))
+}
+
 // ── Chat libre ────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleChat(text string) {
@@ -721,6 +747,7 @@ func (b *Bot) HandleHelp() {
 /newlock — Crear nueva sesión 🔒
 /status — Estado actual
 /task — Ver o solicitar tarea
+/explain — Cómo completar la tarea actual 📸
 /fail — Confesar que fallaste 💀
 
 *Control avanzado* (extensión: %s):
@@ -749,8 +776,8 @@ func (b *Bot) Start() {
 	keyboard := [][]tgbotapi.KeyboardButton{
 		{tgbotapi.NewKeyboardButton("/status"), tgbotapi.NewKeyboardButton("/task")},
 		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/fail")},
-		{tgbotapi.NewKeyboardButton("/newlock"), tgbotapi.NewKeyboardButton("/toys")},
-		{tgbotapi.NewKeyboardButton("/help")},
+		{tgbotapi.NewKeyboardButton("/explain"), tgbotapi.NewKeyboardButton("/newlock")},
+		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/help")},
 	}
 
 	for update := range updates {
@@ -796,6 +823,8 @@ func (b *Bot) Start() {
 			b.HandleTaskWithLevel(strings.TrimPrefix(text, "/order "))
 		case text == "/fail":
 			b.HandleFail()
+		case text == "/explain":
+			b.HandleExplain()
 		case text == "/newlock":
 			b.HandleNewLock("")
 		case strings.HasPrefix(text, "/newlock "):

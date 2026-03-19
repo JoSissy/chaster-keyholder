@@ -220,7 +220,6 @@ Genera UNA orden de intensidad %s. Debe ser específica, degradante y verificabl
 TIPOS (varía, no repitas):
 - Postura sometida: posición concreta, humillante, que muestre sumisión
 - Vestimenta o desnudez: llevar o no llevar algo específico de cierta manera
-- Escritura corporal: escribir algo degradante en su piel y mostrarlo
 - Exposición: mostrarse desde un ángulo concreto, zona concreta
 - Restricción: inmovilizarse, limitarse de alguna forma visible
 - Juguete: orden concreta con el juguete disponible si aplica
@@ -246,6 +245,31 @@ REGLAS:
 		ctx, level.String(), level.String(),
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
+}
+
+// GenerateTaskExplanation explica en detalle cómo tomar la foto para la tarea actual
+func (c *Client) GenerateTaskExplanation(taskDescription string, toys []models.Toy, daysLocked int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	system := `Eres un asistente técnico que explica cómo completar y fotografiar tareas de sumisión.
+Tu tono es directo y práctico — no eres el amo, solo explicas. Sin apodos, sin humillaciones.
+Responde en español. Máximo 5 líneas.`
+
+	prompt := fmt.Sprintf(
+		`%s
+Tarea: "%s"
+
+Explica concretamente:
+1. Qué debe mostrar la foto exactamente
+2. Desde qué ángulo o posición tomarla
+3. Cómo apoyar el teléfono o usar temporizador para lograrlo sola
+4. Qué elemento debe ser claramente visible para que se apruebe
+
+Sé específico y práctico. Sin rodeos.`,
+		ctx, taskDescription,
+	)
+
+	return c.chat("llama-3.3-70b-versatile", system, prompt)
 }
 
 // GenerateTaskReward genera mensaje de recompensa. rewardHours en HORAS.
