@@ -11,9 +11,11 @@ type ChasterLock struct {
 	TotalDuration int64      `json:"totalDuration"`
 	Title         string     `json:"title"`
 	Combination   string     `json:"combination,omitempty"`
+	Frozen        bool       `json:"isFrozen"`
 }
 
-// Task representa una tarea diaria asignada por el keyholder IA
+// Task representa una tarea diaria asignada por el keyholder IA.
+// PenaltyHours y RewardHours están en HORAS para consistencia.
 type Task struct {
 	ID            string    `json:"id"`
 	Description   string    `json:"description"`
@@ -21,8 +23,8 @@ type Task struct {
 	DueAt         time.Time `json:"due_at"`
 	Completed     bool      `json:"completed"`
 	Failed        bool      `json:"failed"`
-	Penalty       int       `json:"penalty_minutes"`
-	Reward        int       `json:"reward_minutes"`
+	PenaltyHours  int       `json:"penalty_hours"`
+	RewardHours   int       `json:"reward_hours"`
 	AwaitingPhoto bool      `json:"awaiting_photo"`
 }
 
@@ -79,14 +81,14 @@ func GetIntensity(daysLocked int) IntensityLevel {
 	}
 }
 
-// AppState estado global de la app (persiste en state.json)
+// AppState estado global de la app (persiste en state.json).
+// TotalTimeAddedHours y TotalTimeRemovedHours están en HORAS.
 type AppState struct {
-	CurrentTask      *Task `json:"current_task,omitempty"`
-	TotalTimeAdded   int   `json:"total_time_added_minutes"`
-	TotalTimeRemoved int   `json:"total_time_removed_minutes"`
-	DaysLocked       int   `json:"days_locked"`
-	Toys             []Toy `json:"toys"`
-	// Flujo de nuevo lock
+	CurrentTask           *Task  `json:"current_task,omitempty"`
+	TotalTimeAddedHours   int    `json:"total_time_added_hours"`
+	TotalTimeRemovedHours int    `json:"total_time_removed_hours"`
+	DaysLocked            int    `json:"days_locked"`
+	Toys                  []Toy  `json:"toys"`
 	AwaitingLockPhoto     bool   `json:"awaiting_lock_photo"`
 	CurrentLockID         string `json:"current_lock_id"`
 	ManualDurationSeconds int    `json:"manual_duration_seconds"`

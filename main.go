@@ -13,7 +13,6 @@ import (
 )
 
 func main() {
-	// Cargar variables de entorno
 	if err := godotenv.Load(); err != nil {
 		log.Println("Archivo .env no encontrado, usando variables del sistema")
 	}
@@ -28,11 +27,9 @@ func main() {
 		log.Fatal("TELEGRAM_CHAT_ID inválido:", err)
 	}
 
-	// Inicializar clientes
 	chasterClient := chaster.NewClient(chasterToken)
 	aiClient := ai.NewClient(groqKey)
 
-	// Inicializar bot de Telegram
 	bot, err := telegram.NewBot(telegramToken, chatID, chasterClient, aiClient)
 	if err != nil {
 		log.Fatal("Error iniciando bot de Telegram:", err)
@@ -40,10 +37,8 @@ func main() {
 
 	log.Println("🔒 Chaster Keyholder Bot iniciado")
 
-	// Iniciar scheduler en goroutine
 	go scheduler.Start(bot)
 
-	// Iniciar bot (bloqueante)
 	bot.Start()
 }
 

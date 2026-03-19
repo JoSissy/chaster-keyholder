@@ -194,19 +194,21 @@ REGLAS:
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
 }
 
-func (c *Client) GenerateTaskReward(rewardMinutes int, toys []models.Toy, daysLocked int) (string, error) {
+// GenerateTaskReward genera mensaje de recompensa. rewardHours en HORAS.
+func (c *Client) GenerateTaskReward(rewardHours int, toys []models.Toy, daysLocked int) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
-		"%s Jolie completó su tarea. Recompensa: -%dm. Mensaje de reconocimiento dominante.",
-		ctx, rewardMinutes,
+		"%s Jolie completó su tarea. Recompensa: -%dh de condena. Mensaje de reconocimiento dominante.",
+		ctx, rewardHours,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
 }
 
-func (c *Client) GenerateTaskPenalty(penaltyMinutes int, reason string) (string, error) {
+// GenerateTaskPenalty genera mensaje de penalización. penaltyHours en HORAS.
+func (c *Client) GenerateTaskPenalty(penaltyHours int, reason string) (string, error) {
 	prompt := fmt.Sprintf(
-		"Jolie falló su tarea. Motivo: %s. Penalización: +%dm. Mensaje de corrección firme y humillante.",
-		reason, penaltyMinutes,
+		"Jolie falló su tarea. Motivo: %s. Penalización: +%dh de condena. Mensaje de corrección firme y humillante.",
+		reason, penaltyHours,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
 }
@@ -286,7 +288,6 @@ Escala según la intensidad: suave=1-12h, moderada=12-48h, intensa=48-96h, máxi
 		return nil, err
 	}
 
-	// Extraer solo el bloque JSON de la respuesta (la IA a veces añade texto antes)
 	raw = extractJSON(raw)
 
 	var decision LockDecision
@@ -302,12 +303,10 @@ Escala según la intensidad: suave=1-12h, moderada=12-48h, intensa=48-96h, máxi
 // extractJSON extrae el primer bloque JSON válido de un string
 func extractJSON(s string) string {
 	s = strings.TrimSpace(s)
-	// Limpiar backticks
 	s = strings.TrimPrefix(s, "```json")
 	s = strings.TrimPrefix(s, "```")
 	s = strings.TrimSuffix(s, "```")
 	s = strings.TrimSpace(s)
-	// Buscar inicio y fin del JSON
 	start := strings.Index(s, "{")
 	end := strings.LastIndex(s, "}")
 	if start >= 0 && end > start {
@@ -358,17 +357,17 @@ Rechaza si no se ven los diales, no se ve la jaula puesta, o la foto es claramen
 	return &verdict, nil
 }
 
-// ── Chat libre con el keyholder ────────────────────────────────────────────
+// ── Chat libre ─────────────────────────────────────────────────────────────
 
 // NegotiationResult resultado de una negociación con el keyholder
 type NegotiationResult struct {
 	Decision    string `json:"decision"`   // "approved", "rejected", "counter", "penalty"
 	TimeHours   int    `json:"time_hours"` // positivo = añadir, negativo = quitar
 	Message     string `json:"message"`
-	CounterTask string `json:"counter_task,omitempty"` // si pide algo a cambio
+	CounterTask string `json:"counter_task,omitempty"`
 }
 
-// Chat conversación libre con el keyholder
+// Chat conversación libre con el keyholder. totalHoursAdded en HORAS.
 func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 
@@ -391,7 +390,7 @@ Sé conciso, dominante y en español.`,
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
 }
 
-// NegotiateTime evalúa una petición de negociación de tiempo
+// NegotiateTime evalúa una petición de negociación de tiempo. totalHoursAdded en HORAS.
 func (c *Client) NegotiateTime(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int) (*NegotiationResult, error) {
 	ctx := buildContext(toys, daysLocked)
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -24,6 +25,10 @@ type Bot struct {
 	ai        *ai.Client
 	state     *models.AppState
 	statePath string
+
+	// Rate limiting para chat libre — máximo 1 mensaje cada 3 segundos
+	lastChatTime time.Time
+	chatMu       sync.Mutex
 }
 
 func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient *ai.Client) (*Bot, error) {
@@ -52,16 +57,39 @@ func (b *Bot) loadState() *models.AppState {
 		}
 	}
 	var s models.AppState
-	json.Unmarshal(data, &s)
+	if err := json.Unmarshal(data, &s); err != nil {
+		log.Printf("error parseando state.json: %v — usando estado vacío", err)
+		return &models.AppState{Toys: []models.Toy{}}
+	}
 	if s.Toys == nil {
 		s.Toys = []models.Toy{}
 	}
 	return &s
 }
 
-func (b *Bot) saveState() {
-	data, _ := json.MarshalIndent(b.state, "", "  ")
-	os.WriteFile(b.statePath, data, 0644)
+// saveState guarda el estado usando write atómico para evitar corrupción
+func (b *Bot) saveState() error {
+	data, err := json.MarshalIndent(b.state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error serializando estado: %w", err)
+	}
+
+	tmp := b.statePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return fmt.Errorf("error escribiendo estado temporal: %w", err)
+	}
+
+	if err := os.Rename(tmp, b.statePath); err != nil {
+		return fmt.Errorf("error aplicando estado: %w", err)
+	}
+
+	return nil
+}
+
+func (b *Bot) mustSaveState() {
+	if err := b.saveState(); err != nil {
+		log.Printf("CRÍTICO — error guardando estado: %v", err)
+	}
 }
 
 // ── Mensajes ───────────────────────────────────────────────────────────────
@@ -70,14 +98,12 @@ func (b *Bot) Send(text string) {
 	msg := tgbotapi.NewMessage(b.chatID, text)
 	msg.ParseMode = "Markdown"
 	if _, err := b.api.Send(msg); err != nil {
-		// Si falla por Markdown inválido, reenviar sin formato
 		log.Printf("error enviando mensaje con Markdown: %v — reintentando sin formato", err)
 		plain := tgbotapi.NewMessage(b.chatID, stripMarkdown(text))
 		b.api.Send(plain)
 	}
 }
 
-// stripMarkdown elimina caracteres de formato para fallback sin parseo
 func stripMarkdown(s string) string {
 	replacer := strings.NewReplacer(
 		"*", "",
@@ -139,6 +165,11 @@ func (b *Bot) downloadFile(fileID string) ([]byte, string, error) {
 	return data, mime, nil
 }
 
+func (b *Bot) deleteMessage(messageID int) {
+	del := tgbotapi.NewDeleteMessage(b.chatID, messageID)
+	b.api.Request(del)
+}
+
 // ── Comandos ───────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleStatus() {
@@ -148,7 +179,6 @@ func (b *Bot) HandleStatus() {
 		return
 	}
 
-	// Calcular tiempo real desde inicio del lock actual
 	var elapsed time.Duration
 	if !lock.StartDate.IsZero() {
 		elapsed = time.Since(lock.StartDate)
@@ -173,6 +203,11 @@ func (b *Bot) HandleStatus() {
 
 	intensity := models.GetIntensity(days)
 
+	frozenStr := ""
+	if lock.Frozen {
+		frozenStr = "\n❄️ Estado — *CONGELADA*"
+	}
+
 	taskStatus := "sin asignar"
 	if b.state.CurrentTask != nil {
 		if b.state.CurrentTask.Completed {
@@ -193,22 +228,23 @@ func (b *Bot) HandleStatus() {
 			"⌛ Restante — *%s*\n"+
 			"🌡 Nivel — *%s*\n"+
 			"🧸 Juguetes — *%d*\n"+
-			"📊 Balance — *+%dh / -%dh*\n"+
+			"📊 Balance — *+%dh / -%dh*%s\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
 			"📋 Tarea — %s",
 		days, hours, mins,
 		timeRemaining,
 		intensity.String(),
 		len(b.state.Toys),
-		b.state.TotalTimeAdded/60,
-		b.state.TotalTimeRemoved/60,
+		b.state.TotalTimeAddedHours,
+		b.state.TotalTimeRemovedHours,
+		frozenStr,
 		taskStatus,
 	)
 	b.Send(msg)
 }
 
 func (b *Bot) HandleTask() {
-	b.handleTaskInternal(models.IntensityLevel(0)) // 0 = usar intensidad automática
+	b.handleTaskInternal(models.IntensityLevel(0))
 }
 
 func (b *Bot) HandleTaskWithLevel(args string) {
@@ -246,8 +282,8 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 				"💀 Consecuencia — *+%dh*%s",
 			b.state.CurrentTask.Description,
 			b.state.CurrentTask.DueAt.Format("15:04"),
-			b.state.CurrentTask.Reward,
-			b.state.CurrentTask.Penalty,
+			b.state.CurrentTask.RewardHours,
+			b.state.CurrentTask.PenaltyHours,
 			awaiting,
 		))
 		return
@@ -273,16 +309,19 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 	}
 	now := time.Now().In(loc)
 
+	penaltyHours := 1 + int(intensity)
+	rewardHours := 1
+
 	b.state.CurrentTask = &models.Task{
 		ID:            fmt.Sprintf("task-%d", now.Unix()),
 		Description:   taskDesc,
 		AssignedAt:    now,
 		DueAt:         now.Add(1 * time.Hour),
-		Penalty:       1 + int(intensity),
-		Reward:        1,
+		PenaltyHours:  penaltyHours,
+		RewardHours:   rewardHours,
 		AwaitingPhoto: true,
 	}
-	b.saveState()
+	b.mustSaveState()
 
 	b.Send(fmt.Sprintf(
 		"▪️ *NUEVA ORDEN* — nivel %s\n"+
@@ -296,8 +335,8 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 		intensity.String(),
 		taskDesc,
 		b.state.CurrentTask.DueAt.Format("15:04"),
-		b.state.CurrentTask.Reward,
-		b.state.CurrentTask.Penalty,
+		rewardHours,
+		penaltyHours,
 	))
 }
 
@@ -333,42 +372,45 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 
 	switch verdict.Status {
 	case "approved":
-		reward := b.state.CurrentTask.Reward
+		rewardHours := b.state.CurrentTask.RewardHours
 		b.state.CurrentTask.Completed = true
 		b.state.CurrentTask.AwaitingPhoto = false
-		b.state.TotalTimeRemoved += reward
+		b.state.TotalTimeRemovedHours += rewardHours
 		b.state.TasksCompleted++
-		b.saveState()
+		b.mustSaveState()
 
-		b.chaster.AddTime(lock.ID, -reward*3600)
+		// Usar RemoveTime con segundos positivos
+		if err := b.chaster.RemoveTime(lock.ID, rewardHours*3600); err != nil {
+			log.Printf("error quitando tiempo en Chaster: %v", err)
+		}
 
-		aiMsg, _ := b.ai.GenerateTaskReward(reward, b.state.Toys, b.daysLocked()) // reward en horas
+		aiMsg, _ := b.ai.GenerateTaskReward(rewardHours, b.state.Toys, b.daysLocked())
 		b.Send(fmt.Sprintf(
-			"✅ *EVIDENCIA APROBADA*\n\n%s\n\n_%s_\n\n_Se quitaron %d minutos de tu condena._",
-			aiMsg, verdict.Reason, reward,
+			"✅ *EVIDENCIA APROBADA*\n\n%s\n\n_%s_\n\n_Se quitaron %dh de tu condena._",
+			aiMsg, verdict.Reason, rewardHours,
 		))
 
 	case "retry":
-		// No penalizar, dar otra oportunidad
 		b.Send(fmt.Sprintf(
 			"⚠️ *CASI — INTÉNTALO DE NUEVO*\n\n_%s_\n\nManda otra foto corrigiendo eso.",
 			verdict.Reason,
 		))
-		// AwaitingPhoto sigue en true, la tarea sigue activa
 
 	case "rejected":
-		penalty := b.state.CurrentTask.Penalty
+		penaltyHours := b.state.CurrentTask.PenaltyHours
 		b.state.CurrentTask.Failed = true
 		b.state.CurrentTask.AwaitingPhoto = false
-		b.state.TotalTimeAdded += penalty
-		b.saveState()
+		b.state.TotalTimeAddedHours += penaltyHours
+		b.mustSaveState()
 
-		b.chaster.AddTime(lock.ID, penalty*3600)
+		if err := b.chaster.AddTime(lock.ID, penaltyHours*3600); err != nil {
+			log.Printf("error añadiendo tiempo en Chaster: %v", err)
+		}
 
-		aiMsg, _ := b.ai.GenerateTaskPenalty(penalty, verdict.Reason)
+		aiMsg, _ := b.ai.GenerateTaskPenalty(penaltyHours, verdict.Reason)
 		b.Send(fmt.Sprintf(
 			"▪️ *EVIDENCIA RECHAZADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n\n*+%dh* añadidas a tu condena.",
-			aiMsg, verdict.Reason, penalty,
+			aiMsg, verdict.Reason, penaltyHours,
 		))
 	}
 }
@@ -379,29 +421,83 @@ func (b *Bot) HandleFail() {
 		return
 	}
 
-	penalty := b.state.CurrentTask.Penalty
+	penaltyHours := b.state.CurrentTask.PenaltyHours
 	b.state.CurrentTask.Failed = true
 	b.state.CurrentTask.AwaitingPhoto = false
-	b.state.TotalTimeAdded += penalty
-	b.saveState()
+	b.state.TotalTimeAddedHours += penaltyHours
+	b.mustSaveState()
 
-	// Añadir tiempo solo si hay lock activo
 	if lock, err := b.chaster.GetActiveLock(); err == nil {
-		b.chaster.AddTime(lock.ID, penalty*3600)
+		if err := b.chaster.AddTime(lock.ID, penaltyHours*3600); err != nil {
+			log.Printf("error añadiendo tiempo en Chaster: %v", err)
+		}
 	}
 
-	msg, _ := b.ai.GenerateTaskPenalty(penalty, "confesó que no pudo completar la tarea")
-	b.Send("▪️ *TAREA ABANDONADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + msg + fmt.Sprintf("\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+%dh* añadidas.", penalty))
+	msg, _ := b.ai.GenerateTaskPenalty(penaltyHours, "confesó que no pudo completar la tarea")
+	b.Send("▪️ *TAREA ABANDONADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + msg + fmt.Sprintf("\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+%dh* añadidas.", penaltyHours))
+}
+
+// ── Freeze / Timer visibility ──────────────────────────────────────────────
+
+func (b *Bot) HandleFreeze(sessionID string) {
+	if err := b.chaster.FreezeLock(sessionID); err != nil {
+		b.Send(fmt.Sprintf("❌ Error congelando el lock: %v", err))
+		return
+	}
+	b.Send("❄️ *LOCK CONGELADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo está detenido. No puedes hacer nada._")
+}
+
+func (b *Bot) HandleUnfreeze(sessionID string) {
+	if err := b.chaster.UnfreezeLock(sessionID); err != nil {
+		b.Send(fmt.Sprintf("❌ Error descongelando el lock: %v", err))
+		return
+	}
+	b.Send("🔥 *LOCK DESCONGELADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo sigue corriendo. Sin descanso._")
+}
+
+func (b *Bot) HandleHideTime(sessionID string) {
+	if err := b.chaster.SetTimerVisibility(sessionID, false); err != nil {
+		b.Send(fmt.Sprintf("❌ Error ocultando el tiempo: %v", err))
+		return
+	}
+	b.Send("🙈 *TIEMPO OCULTO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ya no sabes cuánto te queda. Así me gusta._")
+}
+
+func (b *Bot) HandleShowTime(sessionID string) {
+	if err := b.chaster.SetTimerVisibility(sessionID, true); err != nil {
+		b.Send(fmt.Sprintf("❌ Error mostrando el tiempo: %v", err))
+		return
+	}
+	b.Send("👁 *TIEMPO VISIBLE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Puedes ver cuánto te queda. Sufre con eso._")
+}
+
+func (b *Bot) HandlePillory(sessionID string, durationMinutes int, reason string) {
+	if err := b.chaster.PutInPillory(sessionID, durationMinutes*60, reason); err != nil {
+		b.Send(fmt.Sprintf("❌ Error enviando al cepo: %v", err))
+		return
+	}
+	b.Send(fmt.Sprintf(
+		"⛓ *ENVIADA AL CEPO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\nDuración — *%d min*",
+		reason, durationMinutes,
+	))
 }
 
 // ── Chat libre ────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleChat(text string) {
-	// Detectar si es una petición de negociación de tiempo
+	// Rate limiting — máximo 1 mensaje IA cada 3 segundos
+	b.chatMu.Lock()
+	if time.Since(b.lastChatTime) < 3*time.Second {
+		b.chatMu.Unlock()
+		return
+	}
+	b.lastChatTime = time.Now()
+	b.chatMu.Unlock()
+
 	negotiationKeywords := []string{
 		"quitar", "reducir", "menos tiempo", "recompensa", "me porté",
 		"porte bien", "negociar", "tiempo", "horas", "minutos", "liberar",
-		"permiso", "puedo", "déjame", "déjame", "por favor",
+		"permiso", "puedo", "déjame", "por favor",
 	}
 
 	isNegotiation := false
@@ -418,14 +514,13 @@ func (b *Bot) HandleChat(text string) {
 		return
 	}
 
-	// Chat libre normal
 	response, err := b.ai.Chat(
 		text,
 		b.state.Toys,
 		b.daysLocked(),
 		b.state.TasksCompleted,
 		b.state.TasksFailed,
-		b.state.TotalTimeAdded/60,
+		b.state.TotalTimeAddedHours,
 	)
 	if err != nil {
 		b.Send("_..._")
@@ -443,7 +538,7 @@ func (b *Bot) handleNegotiation(text string) {
 		b.daysLocked(),
 		b.state.TasksCompleted,
 		b.state.TasksFailed,
-		b.state.TotalTimeAdded/60,
+		b.state.TotalTimeAddedHours,
 	)
 	if err != nil {
 		b.Send("_..._")
@@ -455,9 +550,12 @@ func (b *Bot) handleNegotiation(text string) {
 	switch result.Decision {
 	case "approved":
 		if result.TimeHours < 0 && lock != nil {
-			b.chaster.AddTime(lock.ID, result.TimeHours*3600)
-			b.state.TotalTimeRemoved += -result.TimeHours * 60
-			b.saveState()
+			hoursToRemove := -result.TimeHours
+			if err := b.chaster.RemoveTime(lock.ID, hoursToRemove*3600); err != nil {
+				log.Printf("error quitando tiempo en negociación: %v", err)
+			}
+			b.state.TotalTimeRemovedHours += hoursToRemove
+			b.mustSaveState()
 		}
 		timeStr := ""
 		if result.TimeHours < 0 {
@@ -477,9 +575,11 @@ func (b *Bot) handleNegotiation(text string) {
 
 	case "penalty":
 		if lock != nil {
-			b.chaster.AddTime(lock.ID, result.TimeHours*3600)
-			b.state.TotalTimeAdded += result.TimeHours * 60
-			b.saveState()
+			if err := b.chaster.AddTime(lock.ID, result.TimeHours*3600); err != nil {
+				log.Printf("error añadiendo tiempo como penalización: %v", err)
+			}
+			b.state.TotalTimeAddedHours += result.TimeHours
+			b.mustSaveState()
 		}
 		b.Send(fmt.Sprintf(
 			"▪️ *PENALIZACIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+%dh* añadidas.",
@@ -503,7 +603,6 @@ func (b *Bot) HandleToys(args string) {
 	}
 
 	switch subCmd {
-
 	case "add", "agregar":
 		if toyName == "" {
 			b.Send("Uso: `/toys add [nombre]`\nEjemplo: `/toys add plug mediano`")
@@ -513,7 +612,7 @@ func (b *Bot) HandleToys(args string) {
 			Name:    toyName,
 			AddedAt: time.Now(),
 		})
-		b.saveState()
+		b.mustSaveState()
 		b.Send(fmt.Sprintf("✅ *%s* añadido al inventario.", toyName))
 
 	case "remove", "quitar":
@@ -535,7 +634,7 @@ func (b *Bot) HandleToys(args string) {
 			return
 		}
 		b.state.Toys = newToys
-		b.saveState()
+		b.mustSaveState()
 		b.Send(fmt.Sprintf("🗑 *%s* eliminado.", toyName))
 
 	default:
@@ -554,7 +653,7 @@ func (b *Bot) HandleToys(args string) {
 	}
 }
 
-// ── Minijuegos ─────────────────────────────────────────────────────────────
+// ── Help ───────────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleHelp() {
 	b.Send(`🔒 *CHASTER KEYHOLDER BOT*
@@ -565,12 +664,19 @@ func (b *Bot) HandleHelp() {
 /task — Ver o solicitar tarea
 /fail — Confesar que fallaste 💀
 
+*Control avanzado (requiere sessionId):*
+/freeze [sessionId] — Congelar lock ❄️
+/unfreeze [sessionId] — Descongelar lock 🔥
+/hidetime [sessionId] — Ocultar tiempo restante 🙈
+/showtime [sessionId] — Mostrar tiempo restante 👁
+/pillory [sessionId] [minutos] [razón] — Enviar al cepo ⛓
+
 *Inventario:*
 /toys — Ver juguetes
 /toys add [nombre] — Añadir juguete
 /toys remove [nombre] — Eliminar juguete
 
-_Para completar una tarea: manda la foto de evidencia directo al chat. Se borrará automáticamente._`)
+_Para completar una tarea: manda la foto de evidencia directo al chat._`)
 }
 
 // ── Loop principal ─────────────────────────────────────────────────────────
@@ -580,11 +686,12 @@ func (b *Bot) Start() {
 	u.Timeout = 60
 	updates := b.api.GetUpdatesChan(u)
 
+	// Keyboard sin duplicados, organizado
 	keyboard := [][]tgbotapi.KeyboardButton{
 		{tgbotapi.NewKeyboardButton("/status"), tgbotapi.NewKeyboardButton("/task")},
 		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/fail")},
-		{tgbotapi.NewKeyboardButton("/fail"), tgbotapi.NewKeyboardButton("/newlock")},
-		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/help")},
+		{tgbotapi.NewKeyboardButton("/newlock"), tgbotapi.NewKeyboardButton("/toys")},
+		{tgbotapi.NewKeyboardButton("/help")},
 	}
 
 	for update := range updates {
@@ -607,10 +714,8 @@ func (b *Bot) Start() {
 			msgID := update.Message.MessageID
 
 			if b.state.AwaitingLockPhoto {
-				// Foto para crear nuevo lock
 				b.HandleLockPhoto(imgBytes, mime, msgID)
 			} else {
-				// Foto de evidencia de tarea — también borrar
 				b.deleteMessage(msgID)
 				b.HandlePhoto(imgBytes, mime)
 			}
@@ -642,11 +747,56 @@ func (b *Bot) Start() {
 			b.HandleToys("")
 		case strings.HasPrefix(text, "/toys "):
 			b.HandleToys(strings.TrimPrefix(text, "/toys "))
+		// Comandos de extensión
+		case strings.HasPrefix(text, "/freeze "):
+			parts := strings.Fields(strings.TrimPrefix(text, "/freeze "))
+			if len(parts) >= 1 {
+				b.HandleFreeze(parts[0])
+			}
+		case strings.HasPrefix(text, "/unfreeze "):
+			parts := strings.Fields(strings.TrimPrefix(text, "/unfreeze "))
+			if len(parts) >= 1 {
+				b.HandleUnfreeze(parts[0])
+			}
+		case strings.HasPrefix(text, "/hidetime "):
+			parts := strings.Fields(strings.TrimPrefix(text, "/hidetime "))
+			if len(parts) >= 1 {
+				b.HandleHideTime(parts[0])
+			}
+		case strings.HasPrefix(text, "/showtime "):
+			parts := strings.Fields(strings.TrimPrefix(text, "/showtime "))
+			if len(parts) >= 1 {
+				b.HandleShowTime(parts[0])
+			}
+		case strings.HasPrefix(text, "/pillory "):
+			b.parsePilloryCommand(strings.TrimPrefix(text, "/pillory "))
 		case text != "" && !strings.HasPrefix(text, "/"):
-			// Mensaje libre → chat con el keyholder
 			b.HandleChat(text)
 		}
 	}
+}
+
+// parsePilloryCommand parsea "/pillory sessionId 30 razón del cepo"
+func (b *Bot) parsePilloryCommand(args string) {
+	parts := strings.Fields(args)
+	if len(parts) < 2 {
+		b.Send("Uso: `/pillory [sessionId] [minutos] [razón opcional]`")
+		return
+	}
+	sessionID := parts[0]
+	var minutes int
+	fmt.Sscanf(parts[1], "%d", &minutes)
+	if minutes <= 0 {
+		b.Send("❌ Los minutos deben ser un número positivo.")
+		return
+	}
+	reason := ""
+	if len(parts) > 2 {
+		reason = strings.Join(parts[2:], " ")
+	} else {
+		reason = "El amo lo ha decidido."
+	}
+	b.HandlePillory(sessionID, minutes, reason)
 }
 
 // ── Scheduler hooks ────────────────────────────────────────────────────────
@@ -677,23 +827,28 @@ func (b *Bot) SendNightStatus() {
 	days := int(time.Since(lock.StartDate).Hours()) / 24
 	taskCompleted := b.state.CurrentTask != nil && b.state.CurrentTask.Completed
 
+	// Penalizar tarea no completada al final del día
 	if b.state.CurrentTask != nil && !b.state.CurrentTask.Completed && !b.state.CurrentTask.Failed {
-		penalty := b.state.CurrentTask.Penalty
-		b.chaster.AddTime(lock.ID, penalty*3600)
+		penaltyHours := b.state.CurrentTask.PenaltyHours
+		if err := b.chaster.AddTime(lock.ID, penaltyHours*3600); err != nil {
+			log.Printf("error añadiendo penalización nocturna: %v", err)
+		}
 		b.state.CurrentTask.Failed = true
-		b.state.TotalTimeAdded += penalty * 60
+		b.state.TotalTimeAddedHours += penaltyHours
 	}
 
 	msg, _ := b.ai.GenerateNightMessage(days, taskCompleted, b.state.Toys)
 	b.Send("🌙 *BUENAS NOCHES*\n\n" + msg)
 
 	b.state.CurrentTask = nil
-	b.saveState()
+	b.mustSaveState()
 }
 
 // ── Nuevo lock ─────────────────────────────────────────────────────────────
 
-// parseDuration parsea strings como "4 horas", "1 minuto", "2 dias" a segundos
+// parseDuration parsea strings en español e inglés a segundos
+// Soporta: "4 horas", "1 hora", "2 días", "1 dia", "30 minutos", "1 semana"
+// y en inglés: "4 hours", "1 day", "2 weeks"
 func parseDuration(input string) int {
 	input = strings.ToLower(strings.TrimSpace(input))
 	parts := strings.Fields(input)
@@ -709,52 +864,45 @@ func parseDuration(input string) int {
 
 	unit := parts[1]
 	switch {
-	case strings.HasPrefix(unit, "minute") || strings.HasPrefix(unit, "min"):
+	case strings.HasPrefix(unit, "minuto") || strings.HasPrefix(unit, "min"):
 		return amount * 60
-	case strings.HasPrefix(unit, "hour") || strings.HasPrefix(unit, "hr"):
+	case strings.HasPrefix(unit, "hora") || strings.HasPrefix(unit, "hour") || strings.HasPrefix(unit, "hr"):
 		return amount * 3600
-	case strings.HasPrefix(unit, "day"):
+	case strings.HasPrefix(unit, "día") || strings.HasPrefix(unit, "dia") || strings.HasPrefix(unit, "day"):
 		return amount * 86400
-	case strings.HasPrefix(unit, "week"):
+	case strings.HasPrefix(unit, "semana") || strings.HasPrefix(unit, "week"):
 		return amount * 604800
 	}
 	return 0
 }
 
-// HandleNewLock inicia el flujo de creación de un nuevo lock
 func (b *Bot) HandleNewLock(args string) {
-	// Verificar que no haya sesión activa
 	if _, err := b.chaster.GetActiveLock(); err == nil {
 		b.Send("🔒 Ya tienes una sesión activa. Espera a que termine antes de crear una nueva.")
 		return
 	}
 
-	// Parsear duración manual si fue proporcionada
 	if args != "" {
 		secs := parseDuration(args)
 		if secs <= 0 {
-			b.Send("❌ Invalid format. Examples:\n`/newlock 4 hours`\n`/newlock 1 minute`\n`/newlock 2 days`\n`/newlock 1 week`")
+			b.Send("❌ Formato inválido. Ejemplos:\n`/newlock 4 horas`\n`/newlock 1 hora`\n`/newlock 2 días`\n`/newlock 30 minutos`\n`/newlock 1 semana`")
 			return
 		}
 		b.state.ManualDurationSeconds = secs
 	} else {
-		b.state.ManualDurationSeconds = 0 // la IA decide
+		b.state.ManualDurationSeconds = 0
 	}
 
 	b.Send("▪️ *NUEVA SESIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\nCierra el candado. Gira los diales sin mirar.\n\nCuando esté listo, manda la foto.\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La imagen será eliminada automáticamente._")
 
 	b.state.AwaitingLockPhoto = true
-	b.saveState()
+	b.mustSaveState()
 }
 
-// HandleLockPhoto procesa la foto del candado para crear el lock
 func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int) {
-	// Borrar el mensaje con la foto inmediatamente
 	b.deleteMessage(messageID)
-
 	b.Send("_Verificando..._")
 
-	// Verificar que el candado esté cerrado
 	verdict, err := b.ai.VerifyLockPhoto(imageBytes, mimeType)
 	if err != nil {
 		b.Send("❌ Error analizando la foto. Inténtalo de nuevo.")
@@ -768,7 +916,6 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 
 	b.Send("_Candado verificado. Creando sesión..._")
 
-	// Duración: manual o decidida por la IA
 	var durationSeconds int
 	var lockMsg string
 
@@ -791,26 +938,22 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 		lockMsg = decision.Message
 	}
 
-	// Subir foto a Chaster como combinación
 	combinationID, err := b.chaster.UploadCombinationImage(imageBytes, mimeType)
 	if err != nil {
 		b.Send("❌ Error subiendo la combinación a Chaster.")
 		return
 	}
 
-	// Crear el lock en modo test
 	lockID, err := b.chaster.CreateLock(combinationID, durationSeconds, true)
 	if err != nil {
 		b.Send("❌ Error creando el lock en Chaster.")
 		return
 	}
 
-	// Guardar lockID en estado para verificar cuando termine
 	b.state.AwaitingLockPhoto = false
 	b.state.CurrentLockID = lockID
-	b.saveState()
+	b.mustSaveState()
 
-	// Escapar caracteres especiales del mensaje de la IA para evitar errores de Markdown
 	hours := durationSeconds / 3600
 	mins := (durationSeconds % 3600) / 60
 	var durStr string
@@ -827,61 +970,55 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 	))
 }
 
-// ── Helpers adicionales ────────────────────────────────────────────────────
-
-// deleteMessage borra un mensaje del chat
-func (b *Bot) deleteMessage(messageID int) {
-	del := tgbotapi.NewDeleteMessage(b.chatID, messageID)
-	b.api.Request(del)
-}
-
-// CheckLockFinished verifica si el lock terminó y manda la imagen de combinación
+// CheckLockFinished verifica si el lock específico terminó usando su ID directamente.
+// Esto evita falsos positivos por errores de red o locks diferentes activos.
 func (b *Bot) CheckLockFinished() {
 	if b.state.CurrentLockID == "" {
 		return
 	}
 
-	// Verificar si el lock sigue activo
-	lock, err := b.chaster.GetActiveLock()
-	if err == nil && lock.ID == b.state.CurrentLockID {
+	lock, err := b.chaster.GetLockByID(b.state.CurrentLockID)
+	if err != nil {
+		// Error de red — no asumir que terminó, esperar al próximo ciclo
+		log.Printf("[CheckLockFinished] error consultando lock %s: %v", b.state.CurrentLockID, err)
 		return
 	}
 
-	// Desbloquear el lock (ignorar error si ya está desbloqueado)
+	// Si sigue bloqueado, no hacer nada
+	if lock.Status == "locked" {
+		return
+	}
+
+	// El lock terminó — intentar desbloquear (puede ya estar desbloqueado por el usuario)
 	b.chaster.UnlockLock(b.state.CurrentLockID)
 
-	// Obtener combinación
 	combo, err := b.chaster.GetCombination(b.state.CurrentLockID)
 	if err != nil {
 		log.Printf("error obteniendo combinación: %v", err)
 		return
 	}
 
-	// Descargar imagen de combinación
 	imgBytes, err := b.chaster.DownloadCombinationImage(combo.ImageFullURL)
 	if err != nil {
 		log.Printf("error descargando imagen de combinación: %v", err)
 		b.Send("🔓 *SESIÓN TERMINADA*\n\nNo pude obtener la imagen de combinación. Revisa Chaster directamente.")
-		return
+	} else {
+		photoMsg := tgbotapi.NewPhoto(b.chatID, tgbotapi.FileBytes{
+			Name:  "combinacion.jpg",
+			Bytes: imgBytes,
+		})
+		photoMsg.Caption = "▪️ *SESIÓN TERMINADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\nEsta es tu combinación.\nYa puedes liberarte."
+		photoMsg.ParseMode = "Markdown"
+		if _, err := b.api.Send(photoMsg); err != nil {
+			log.Printf("error enviando foto de combinación: %v", err)
+			b.Send("🔓 *SESIÓN TERMINADA* — revisa Chaster para ver tu combinación.")
+		}
 	}
 
-	// Mandar imagen por Telegram
-	photoMsg := tgbotapi.NewPhoto(b.chatID, tgbotapi.FileBytes{
-		Name:  "combinacion.jpg",
-		Bytes: imgBytes,
-	})
-	photoMsg.Caption = "▪️ *SESIÓN TERMINADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\nEsta es tu combinación.\nYa puedes liberarte."
-	photoMsg.ParseMode = "Markdown"
-	if _, err := b.api.Send(photoMsg); err != nil {
-		log.Printf("error enviando foto de combinación: %v", err)
-		b.Send("🔓 *SESIÓN TERMINADA* — revisa Chaster para ver tu combinación.")
-	}
-
-	// Archivar el lock
 	if err := b.chaster.ArchiveLock(b.state.CurrentLockID); err != nil {
 		log.Printf("error archivando lock: %v", err)
 	}
 
 	b.state.CurrentLockID = ""
-	b.saveState()
+	b.mustSaveState()
 }

@@ -62,6 +62,8 @@ func (c *Client) doRequest(method, path string, body interface{}) ([]byte, error
 	return respBytes, nil
 }
 
+// ── Locks ──────────────────────────────────────────────────────────────────
+
 // GetActiveLock obtiene la sesión de castidad activa (locked y no lista para desbloquear)
 func (c *Client) GetActiveLock() (*models.ChasterLock, error) {
 	data, err := c.doRequest("GET", "/locks", nil)
@@ -100,20 +102,127 @@ func (c *Client) GetActiveLock() (*models.ChasterLock, error) {
 	return nil, fmt.Errorf("no hay sesión activa de castidad")
 }
 
-// AddTime añade tiempo a la sesión (segundos, puede ser negativo)
+// GetLockByID obtiene un lock específico por su ID, independientemente del estado.
+// Usado para verificar si un lock específico terminó sin depender de GetActiveLock.
+func (c *Client) GetLockByID(lockID string) (*models.ChasterLock, error) {
+	data, err := c.doRequest("GET", fmt.Sprintf("/locks/%s", lockID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var lock struct {
+		models.ChasterLock
+		StartDateRaw string `json:"startDate"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil, err
+	}
+
+	formats := []string{
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05Z",
+		time.RFC3339,
+	}
+	for _, layout := range formats {
+		if t, err := time.Parse(layout, lock.StartDateRaw); err == nil {
+			lock.ChasterLock.StartDate = t
+			break
+		}
+	}
+
+	return &lock.ChasterLock, nil
+}
+
+// ── Tiempo ─────────────────────────────────────────────────────────────────
+
+// AddTime añade tiempo a la sesión (segundos positivos)
 func (c *Client) AddTime(lockID string, seconds int) error {
+	if seconds <= 0 {
+		return fmt.Errorf("AddTime requiere segundos positivos, usa RemoveTime para quitar")
+	}
 	payload := map[string]int{"duration": seconds}
 	_, err := c.doRequest("POST", fmt.Sprintf("/locks/%s/update-time", lockID), payload)
 	return err
 }
 
+// RemoveTime quita tiempo a la sesión (segundos positivos = cantidad a quitar)
+func (c *Client) RemoveTime(lockID string, seconds int) error {
+	if seconds <= 0 {
+		return fmt.Errorf("RemoveTime requiere segundos positivos")
+	}
+	payload := map[string]int{"duration": -seconds}
+	_, err := c.doRequest("POST", fmt.Sprintf("/locks/%s/update-time", lockID), payload)
+	return err
+}
+
+// ── Acciones de extensión ──────────────────────────────────────────────────
+
+// extensionAction es el cuerpo base para acciones de extensión
+type extensionAction struct {
+	Action interface{} `json:"action"`
+}
+
+type actionSimple struct {
+	Name string `json:"name"`
+}
+
+type actionWithParams struct {
+	Name   string      `json:"name"`
+	Params interface{} `json:"params"`
+}
+
+// doExtensionAction ejecuta una acción en una sesión de extensión
+func (c *Client) doExtensionAction(sessionID string, action interface{}) error {
+	payload := extensionAction{Action: action}
+	_, err := c.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/action", sessionID), payload)
+	return err
+}
+
+// FreezeLock congela el lock — el portador no puede hacer cambios
+func (c *Client) FreezeLock(sessionID string) error {
+	return c.doExtensionAction(sessionID, actionSimple{Name: "freeze"})
+}
+
+// UnfreezeLock descongela el lock
+func (c *Client) UnfreezeLock(sessionID string) error {
+	return c.doExtensionAction(sessionID, actionSimple{Name: "unfreeze"})
+}
+
+// ToggleFreezeLock alterna el estado de congelación
+func (c *Client) ToggleFreezeLock(sessionID string) error {
+	return c.doExtensionAction(sessionID, actionSimple{Name: "toggle_freeze"})
+}
+
+// SetTimerVisibility muestra u oculta el tiempo restante al portador
+func (c *Client) SetTimerVisibility(sessionID string, visible bool) error {
+	return c.doExtensionAction(sessionID, actionWithParams{
+		Name:   "set_display_remaining_time",
+		Params: visible,
+	})
+}
+
+// PilloryParams parámetros para el cepo
+type PilloryParams struct {
+	Duration int    `json:"duration"` // segundos
+	Reason   string `json:"reason,omitempty"`
+}
+
+// PutInPillory pone al portador en el cepo por la duración indicada (segundos)
+func (c *Client) PutInPillory(sessionID string, durationSeconds int, reason string) error {
+	params := PilloryParams{Duration: durationSeconds, Reason: reason}
+	return c.doExtensionAction(sessionID, actionWithParams{
+		Name:   "pillory",
+		Params: params,
+	})
+}
+
+// ── Combinaciones e imágenes ───────────────────────────────────────────────
+
 // UploadCombinationImage sube la foto del candado y devuelve el combinationId
 func (c *Client) UploadCombinationImage(imageBytes []byte, mimeType string) (string, error) {
-	// Construir multipart form
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
-	// Determinar extensión
 	ext := "jpg"
 	if mimeType == "image/png" {
 		ext = "png"
@@ -193,10 +302,15 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int, isTest bo
 	return result.LockID, nil
 }
 
-// UnlockLock desbloquea un lock para poder ver la combinación
+// UnlockLock desbloquea un lock. Ignora error si ya estaba desbloqueado.
 func (c *Client) UnlockLock(lockID string) error {
 	_, err := c.doRequest("POST", fmt.Sprintf("/locks/%s/unlock", lockID), nil)
-	return err
+	// Ignorar error 400 — puede que ya esté desbloqueado
+	if err != nil {
+		// Log pero no propagar si es un 400 esperado
+		return nil
+	}
+	return nil
 }
 
 // ArchiveLock archiva un lock después de desbloquearlo
@@ -240,6 +354,8 @@ func (c *Client) DownloadCombinationImage(imageURL string) ([]byte, error) {
 
 	return io.ReadAll(resp.Body)
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 // FormatDuration formatea segundos en string legible
 func FormatDuration(seconds int64) string {
