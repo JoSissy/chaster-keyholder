@@ -2357,23 +2357,28 @@ func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
 
 	b.Send("_Enviando evidencia a Chaster..._")
 
-	// Subir foto a Cloudinary para nuestro registro
-	var photoURL string
+	// Subir foto a Cloudinary para nuestro registro (paralelo, no bloquea)
 	if b.cloudinary != nil {
-		url, cerr := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks")
-		if cerr != nil {
-			log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", cerr)
-		} else {
-			photoURL = url
-			_ = photoURL
-		}
+		go func() {
+			if _, err := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks"); err != nil {
+				log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", err)
+			}
+		}()
 	}
 
-	// Marcar tarea como completada en Chaster (triggers community voting)
-	sessionID := b.state.ChasterTaskSessionID
-	if err := b.chaster.CompleteChasterTask(sessionID, true); err != nil {
+	// 1. Subir foto a Chaster y obtener el verificationPictureToken
+	token, err := b.chaster.UploadVerificationPhoto(imgBytes, mime)
+	if err != nil {
+		log.Printf("[ChasterTask] error subiendo foto de verificación: %v", err)
+		b.Send(fmt.Sprintf("❌ Error subiendo la foto a Chaster: %v", err))
+		return
+	}
+
+	// 2. Completar la tarea con el token (user endpoint)
+	lockID := b.state.ChasterTaskLockID
+	if err := b.chaster.CompleteTaskWithVerification(lockID, token); err != nil {
 		log.Printf("[ChasterTask] error completando tarea: %v", err)
-		b.Send(fmt.Sprintf("❌ Error enviando la tarea a Chaster: %v", err))
+		b.Send(fmt.Sprintf("❌ Error completando la tarea en Chaster: %v", err))
 		return
 	}
 

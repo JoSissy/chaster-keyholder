@@ -620,16 +620,68 @@ func (c *Client) AssignChasterTask(sessionID, taskDescription string) error {
 	return err
 }
 
-// CompleteChasterTask marca una tarea como completada (o rechazada) usando la Extensions API.
-func (c *Client) CompleteChasterTask(sessionID string, isCompleted bool) error {
-	if !c.HasExtension() {
-		return fmt.Errorf("extensión no configurada: falta CHASTER_EXTENSION_TOKEN o CHASTER_EXTENSION_SLUG")
+// UploadVerificationPhoto sube una foto al endpoint /files/upload y devuelve el verificationPictureToken.
+func (c *Client) UploadVerificationPhoto(imageBytes []byte, mimeType string) (string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	ext := "jpg"
+	if mimeType == "image/png" {
+		ext = "png"
+	} else if mimeType == "image/webp" {
+		ext = "webp"
 	}
+
+	part, err := writer.CreateFormFile("files", "verification."+ext)
+	if err != nil {
+		return "", err
+	}
+	if _, err := part.Write(imageBytes); err != nil {
+		return "", err
+	}
+	writer.WriteField("type", "peer_verification")
+	writer.Close()
+
+	req, err := http.NewRequest("POST", baseURL+"/files/upload", &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("error subiendo foto: %d %s", resp.StatusCode, string(respBytes))
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(respBytes, &result); err != nil {
+		return "", fmt.Errorf("error parseando respuesta de upload: %w — body: %s", err, string(respBytes))
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("token vacío en respuesta: %s", string(respBytes))
+	}
+	return result.Token, nil
+}
+
+// CompleteTaskWithVerification completa una tarea con foto de verificación usando el user token.
+func (c *Client) CompleteTaskWithVerification(lockID, verificationPictureToken string) error {
 	payload := map[string]interface{}{
-		"actor":       "extension",
-		"isCompleted": isCompleted,
+		"isCompleted":              true,
+		"verificationPictureToken": verificationPictureToken,
 	}
-	_, err := c.ext.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/tasks/complete", sessionID), payload)
+	_, err := c.doRequest("POST", fmt.Sprintf("/extensions/tasks/%s/complete-task", lockID), payload)
 	return err
 }
 
