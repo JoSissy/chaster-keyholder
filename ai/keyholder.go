@@ -1068,6 +1068,36 @@ Streak: %d. Reference her belonging to him. Maximum 2 lines. In Spanish.`,
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
 
+// ── Tarea comunitaria de Chaster ───────────────────────────────────────────
+
+// GenerateChasterTask genera una tarea simple en inglés para verificación comunitaria en Chaster.
+// La tarea debe ser corta, clara, con foto requerida y apropiada para la plataforma.
+func (c *Client) GenerateChasterTask(daysLocked int, toys []models.Toy) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	system := `You generate short submission task descriptions in English for a chastity community app.
+The task will be reviewed by the community — keep it tasteful but clearly submissive.
+Respond ONLY with the task text, nothing else. No quotes, no preamble.`
+
+	prompt := fmt.Sprintf(`%s
+Generate ONE submission task for a locked sissy. Requirements:
+- Under 160 characters (strict limit)
+- Requires a photo as proof
+- Specific: what to show, from what angle or position
+- Appropriate for a community platform — submissive but not explicit nudity
+- Direct instruction, no name used
+
+Good examples:
+"Show your chastity cage while kneeling, photographed from above"
+"Photograph your locked device against a plain background, feet visible"
+"Display your cage from below while standing with hands behind your back"
+"Show your locked device with both hands visible at your sides"
+
+Write ONLY the task text.`, ctx)
+
+	return c.chat("llama-3.3-70b-versatile", system, prompt)
+}
+
 // ── Juicio dominical ────────────────────────────────────────────────────────
 
 // WeeklyJudgmentResult the verdict El Señor pronounces each Sunday

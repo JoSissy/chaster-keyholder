@@ -542,6 +542,63 @@ func (c *Client) DownloadCombinationImage(imageURL string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// ── Tasks de extensión ────────────────────────────────────────────────────
+
+// TaskHistoryEntry entrada en el historial de tareas de la extensión
+type TaskHistoryEntry struct {
+	Status string `json:"status"` // "verified"|"pending_verification"|"abandoned"|"rejected"|"completed"
+	Task   struct {
+		Task string `json:"task"`
+	} `json:"task"`
+	PeerVerification *struct {
+		Status string `json:"status"` // "ongoing"|"verified"|"rejected"
+	} `json:"peerVerification,omitempty"`
+}
+
+// AssignChasterTask asigna una tarea al portador usando la Extensions API.
+// La tarea requiere verificación comunitaria.
+func (c *Client) AssignChasterTask(sessionID, taskDescription string) error {
+	if !c.HasExtension() {
+		return fmt.Errorf("extensión no configurada: falta CHASTER_EXTENSION_TOKEN o CHASTER_EXTENSION_SLUG")
+	}
+	payload := map[string]interface{}{
+		"task": map[string]interface{}{
+			"task":                 taskDescription,
+			"points":               1,
+			"verificationRequired": true,
+		},
+		"actor": "keyholder",
+	}
+	_, err := c.ext.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/tasks/assign", sessionID), payload)
+	return err
+}
+
+// CompleteChasterTask marca una tarea como completada (o rechazada) usando la Extensions API.
+func (c *Client) CompleteChasterTask(sessionID string, isCompleted bool) error {
+	if !c.HasExtension() {
+		return fmt.Errorf("extensión no configurada: falta CHASTER_EXTENSION_TOKEN o CHASTER_EXTENSION_SLUG")
+	}
+	payload := map[string]interface{}{
+		"actor":       "keyholder",
+		"isCompleted": isCompleted,
+	}
+	_, err := c.ext.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/tasks/complete", sessionID), payload)
+	return err
+}
+
+// GetTaskHistory obtiene el historial de tareas de un lock.
+func (c *Client) GetTaskHistory(lockID string) ([]TaskHistoryEntry, error) {
+	data, err := c.doRequest("GET", fmt.Sprintf("/extensions/tasks/%s/history", lockID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var entries []TaskHistoryEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 // FormatDuration formatea segundos en string legible

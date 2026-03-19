@@ -137,6 +137,14 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
+	// Verificar voto comunitario de tareas de Chaster — cada 15 minutos
+	s.NewJob(
+		gocron.CronJob("*/15 * * * *", false),
+		gocron.NewTask(func() {
+			bot.CheckChasterTaskVote()
+		}),
+	)
+
 	s.Start()
 	log.Println("✅ Scheduler iniciado")
 }

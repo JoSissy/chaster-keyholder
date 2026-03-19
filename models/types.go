@@ -120,6 +120,12 @@ type AppState struct {
 	WeeklyDebt        int      `json:"weekly_debt"`
 	WeeklyDebtDetails []string `json:"weekly_debt_details,omitempty"`
 	LastJudgmentDate  string   `json:"last_judgment_date"` // "2006-01-02" COT
+
+	// Tarea comunitaria de Chaster (asignada via extension API, verificada por la comunidad)
+	PendingChasterTask   string     `json:"pending_chaster_task,omitempty"`
+	ChasterTaskSessionID string     `json:"chaster_task_session_id,omitempty"`
+	ChasterTaskLockID    string     `json:"chaster_task_lock_id,omitempty"`
+	ChasterTaskAssignedAt *time.Time `json:"chaster_task_assigned_at,omitempty"`
 }
 
 // GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual

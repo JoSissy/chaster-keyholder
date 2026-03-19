@@ -78,6 +78,8 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 		b.pendingAction = "checkin_photo"
 	case b.state.AssignedPlugID != "" && !b.state.PlugConfirmed && b.state.AssignedPlugDate == todayStr():
 		b.pendingAction = "plug_photo"
+	case b.state.PendingChasterTask != "":
+		b.pendingAction = "chaster_task_photo"
 	}
 	return b, nil
 }
@@ -1043,6 +1045,7 @@ func (b *Bot) HandleHelp() {
 /explain — Cómo fotografiar la tarea
 /fail — Confesar que fallaste
 /ruleta — Girar la ruleta diaria 🎰
+/chatask — Tarea comunitaria de Chaster
 
 🧸 *INVENTARIO*
 /toys — Ver tus juguetes
@@ -1119,6 +1122,9 @@ func (b *Bot) Start() {
 			} else if b.pendingAction == "checkin_photo" {
 				b.deleteMessage(msgID)
 				b.HandleCheckinPhoto(imgBytes, mime)
+			} else if b.pendingAction == "chaster_task_photo" {
+				b.deleteMessage(msgID)
+				b.HandleChasterTaskPhoto(imgBytes, mime)
 			} else {
 				b.deleteMessage(msgID)
 				b.HandlePhoto(imgBytes, mime)
@@ -1178,6 +1184,8 @@ func (b *Bot) Start() {
 			b.SendRandomMessageTest()
 		case text == "/ruleta":
 			b.HandleRuleta()
+		case text == "/chatask":
+			b.HandleChasterTaskCommand()
 		case text == "/testjuicio":
 			b.state.LastJudgmentDate = "" // forzar re-ejecución
 			b.HandleWeeklyJudgment()
@@ -2276,6 +2284,186 @@ func (b *Bot) HandleRuleta() {
 	default:
 		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", stripMarkdown(outcome.Message)))
 	}
+}
+
+// ── Tareas comunitarias de Chaster ─────────────────────────────────────────
+
+// HandleChasterTaskCommand asigna una nueva tarea comunitaria de Chaster.
+// Genera una tarea simple en inglés, la asigna via Extensions API y pide foto al usuario.
+func (b *Bot) HandleChasterTaskCommand() {
+	if !b.chaster.HasExtension() {
+		b.Send("❌ La extensión de Chaster no está configurada. Necesitas CHASTER_EXTENSION_TOKEN y CHASTER_EXTENSION_SLUG.")
+		return
+	}
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa en Chaster.")
+		return
+	}
+	if b.state.PendingChasterTask != "" {
+		b.Send(fmt.Sprintf(
+			"📋 *TAREA COMUNITARIA ACTIVA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Manda la foto para completarla._",
+			b.state.PendingChasterTask,
+		))
+		return
+	}
+
+	b.Send("_El Señor está preparando una tarea para la comunidad..._")
+
+	taskDesc, err := b.ai.GenerateChasterTask(b.daysLocked(), b.state.Toys)
+	if err != nil {
+		b.Send("❌ Error generando la tarea.")
+		return
+	}
+	taskDesc = strings.TrimSpace(taskDesc)
+	// Limitar a 160 caracteres por restricción de Chaster
+	if len(taskDesc) > 160 {
+		taskDesc = taskDesc[:160]
+	}
+
+	sessionID, err := b.chaster.GetSessionByLockID(lock.ID)
+	if err != nil {
+		b.Send(fmt.Sprintf("❌ No se pudo obtener la sesión de extensión: %v", err))
+		return
+	}
+
+	if err := b.chaster.AssignChasterTask(sessionID, taskDesc); err != nil {
+		b.Send(fmt.Sprintf("❌ Error asignando la tarea en Chaster: %v", err))
+		return
+	}
+
+	now := time.Now()
+	b.state.PendingChasterTask = taskDesc
+	b.state.ChasterTaskSessionID = sessionID
+	b.state.ChasterTaskLockID = lock.ID
+	b.state.ChasterTaskAssignedAt = &now
+	b.mustSaveState()
+	b.pendingAction = "chaster_task_photo"
+
+	b.Send(fmt.Sprintf(
+		"📋 *TAREA COMUNITARIA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad de Chaster la está viendo. Complétala y manda la foto._",
+		taskDesc,
+	))
+}
+
+// HandleChasterTaskPhoto procesa la foto de la tarea comunitaria.
+// Marca la tarea como completada en Chaster y espera votación de la comunidad.
+func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
+	if b.state.PendingChasterTask == "" {
+		b.pendingAction = ""
+		return
+	}
+
+	b.Send("_Enviando evidencia a Chaster..._")
+
+	// Subir foto a Cloudinary para nuestro registro
+	var photoURL string
+	if b.cloudinary != nil {
+		url, cerr := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks")
+		if cerr != nil {
+			log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", cerr)
+		} else {
+			photoURL = url
+			_ = photoURL
+		}
+	}
+
+	// Marcar tarea como completada en Chaster (triggers community voting)
+	sessionID := b.state.ChasterTaskSessionID
+	if err := b.chaster.CompleteChasterTask(sessionID, true); err != nil {
+		log.Printf("[ChasterTask] error completando tarea: %v", err)
+		b.Send(fmt.Sprintf("❌ Error enviando la tarea a Chaster: %v", err))
+		return
+	}
+
+	// Limpiar el estado de "pendiente de foto" pero mantener lockID/assignedAt para polling
+	b.state.PendingChasterTask = ""
+	b.state.ChasterTaskSessionID = ""
+	b.pendingAction = ""
+	b.mustSaveState()
+
+	b.Send(
+		"📤 *EVIDENCIA ENVIADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" +
+			"_La comunidad de Chaster está votando. Tienes hasta 6 horas para la aprobación._\n" +
+			"▬▬▬▬▬▬▬▬▬▬▬▬\n" +
+			"_Te aviso cuando salga el resultado._",
+	)
+}
+
+// CheckChasterTaskVote verifica si hay un voto comunitario pendiente y reporta el resultado.
+// Llamado por el scheduler cada 15 minutos.
+func (b *Bot) CheckChasterTaskVote() {
+	if b.state.ChasterTaskLockID == "" || b.state.ChasterTaskAssignedAt == nil {
+		return
+	}
+
+	// Timeout: si pasaron más de 8 horas sin resultado, abandonar
+	if time.Since(*b.state.ChasterTaskAssignedAt) > 8*time.Hour {
+		log.Printf("[ChasterTask] timeout esperando voto — limpiando estado")
+		b.clearChasterTaskState()
+		b.Send("⏰ *TAREA COMUNITARIA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo de votación expiró sin resultado definitivo._")
+		return
+	}
+
+	entries, err := b.chaster.GetTaskHistory(b.state.ChasterTaskLockID)
+	if err != nil {
+		log.Printf("[ChasterTask] error consultando historial: %v", err)
+		return
+	}
+	if len(entries) == 0 {
+		return
+	}
+
+	// Tomar la entrada más reciente
+	latest := entries[0]
+
+	switch latest.Status {
+	case "verified":
+		b.clearChasterTaskState()
+		// Recompensa: quitar 1 hora
+		lock, err := b.chaster.GetActiveLock()
+		if err == nil {
+			if err := b.chaster.RemoveTime(lock.ID, 3600); err != nil {
+				log.Printf("[ChasterTask] error quitando tiempo: %v", err)
+			} else {
+				b.state.TotalTimeRemovedHours++
+				b.mustSaveState()
+			}
+		}
+		b.Send("✅ *COMUNIDAD APROBÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad verificó tu tarea. El Señor está... satisfecho._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*-1h* quitada de tu condena.")
+
+	case "rejected":
+		b.clearChasterTaskState()
+		// Penalización: añadir 1 hora
+		lock, err := b.chaster.GetActiveLock()
+		if err == nil {
+			if err := b.chaster.AddTime(lock.ID, 3600); err != nil {
+				log.Printf("[ChasterTask] error añadiendo tiempo: %v", err)
+			} else {
+				b.state.TotalTimeAddedHours++
+				b.mustSaveState()
+			}
+		}
+		b.addWeeklyDebt("tarea comunitaria rechazada por la comunidad de Chaster")
+		b.Send("❌ *COMUNIDAD RECHAZÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad no quedó satisfecha con tu evidencia. El Señor tampoco._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+1h* añadida a tu condena.")
+
+	case "abandoned":
+		b.clearChasterTaskState()
+		b.addWeeklyDebt("tarea comunitaria abandonada")
+		b.Send("💀 *TAREA ABANDONADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La tarea fue marcada como abandonada. Consecuencias._")
+
+	case "pending_verification":
+		// Todavía esperando — silencio
+		log.Printf("[ChasterTask] votación en curso para lock %s", b.state.ChasterTaskLockID)
+	}
+}
+
+func (b *Bot) clearChasterTaskState() {
+	b.state.ChasterTaskLockID = ""
+	b.state.ChasterTaskAssignedAt = nil
+	b.state.PendingChasterTask = ""
+	b.state.ChasterTaskSessionID = ""
+	b.mustSaveState()
 }
 
 // handleEventNegotiation maneja un ruego para terminar un evento activo antes de tiempo
