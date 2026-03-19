@@ -444,6 +444,12 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int) (string, 
 			"mode":       "unlimited",
 			"regularity": 3600,
 		},
+		map[string]interface{}{
+			"slug":       "tasks",
+			"config":     map[string]interface{}{},
+			"mode":       "unlimited",
+			"regularity": 3600,
+		},
 	}
 
 	// Añadir extensión de chaster-ai solo si está configurada
