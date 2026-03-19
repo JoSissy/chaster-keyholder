@@ -263,22 +263,78 @@ func (b *Bot) HandleStatus() {
 
 	intensity := models.GetIntensity(days)
 
-	frozenStr := ""
+	// ── Estado del lock ──
+	stateLines := ""
 	if lock.Frozen {
-		frozenStr = "\n❄️ Estado — *CONGELADA*"
+		stateLines += "\n❄️ *CONGELADA*"
+	}
+	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
+		mins := int(time.Until(b.state.ActiveEvent.ExpiresAt).Minutes())
+		switch b.state.ActiveEvent.Type {
+		case "hidetime":
+			stateLines += fmt.Sprintf("\n🙈 Timer oculto — *%d min*", mins)
+		}
 	}
 
+	// ── Tarea diaria ──
 	taskStatus := "sin asignar"
 	if b.state.CurrentTask != nil {
 		if b.state.CurrentTask.Completed {
-			taskStatus = "completada"
+			taskStatus = "✅ completada"
 		} else if b.state.CurrentTask.Failed {
-			taskStatus = "fallida"
+			taskStatus = "💀 fallida"
 		} else if b.state.CurrentTask.AwaitingPhoto {
-			taskStatus = "_esperando evidencia..._"
+			taskStatus = "📸 _esperando foto..._"
 		} else {
 			taskStatus = fmt.Sprintf("⏳ _%s_", b.state.CurrentTask.Description)
 		}
+	}
+
+	// ── Tarea comunitaria ──
+	chasterTaskLine := ""
+	if b.state.PendingChasterTask != "" {
+		chasterTaskLine = "\n🌐 Tarea comunidad — 📸 _esperando foto..._"
+	} else if b.state.ChasterTaskLockID != "" {
+		chasterTaskLine = "\n🌐 Tarea comunidad — ⏳ _votando..._"
+	}
+
+	// ── Plug del día ──
+	plugLine := ""
+	if b.state.AssignedPlugID != "" && b.state.AssignedPlugDate == todayStr() {
+		plugName := b.getAssignedPlugName()
+		if b.state.PlugConfirmed {
+			plugLine = fmt.Sprintf("\n🔌 Plug — *%s* ✅", plugName)
+		} else {
+			plugLine = fmt.Sprintf("\n🔌 Plug — *%s* ⏳", plugName)
+		}
+	}
+
+	// ── Check-in ──
+	checkinLine := ""
+	if b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt) {
+		minsLeft := int(time.Until(*b.state.CheckinExpiresAt).Minutes())
+		checkinLine = fmt.Sprintf("\n📸 Check-in pendiente — *%d min*", minsLeft)
+	}
+
+	// ── Obediencia y orgasmo ──
+	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	orgasmStatus := "bloqueado"
+	if b.state.TasksStreak >= 8 {
+		orgasmStatus = "puede concederse"
+	} else if b.state.TasksStreak >= 5 {
+		orgasmStatus = "difícil"
+	}
+
+	// ── Ruleta ──
+	ruletaLine := ""
+	if b.state.LastRuletaDate != todayStr() {
+		ruletaLine = "\n🎰 Ruleta — _disponible_"
+	}
+
+	// ── Deuda semanal ──
+	debtLine := ""
+	if b.state.WeeklyDebt > 0 {
+		debtLine = fmt.Sprintf("\n⚠️ Deuda semanal — *%d infracciones*", b.state.WeeklyDebt)
 	}
 
 	msg := fmt.Sprintf(
@@ -286,19 +342,23 @@ func (b *Bot) HandleStatus() {
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
 			"⏱ Encerrada — *%dd %dh %dm*\n"+
 			"⌛ Restante — *%s*\n"+
-			"🌡 Nivel — *%s*\n"+
-			"🧸 Juguetes — *%d*\n"+
-			"📊 Balance — *+%dh / -%dh*%s\n"+
+			"🌡 Nivel — *%s*%s\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
-			"📋 Tarea — %s",
+			"📋 Tarea — %s%s\n"+
+			"✅ Completadas — *%d* | 💀 Fallidas — *%d*\n"+
+			"🔥 Racha — *%d* tareas | Obediencia — *%s*%s%s\n"+
+			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
+			"💦 Orgasmo — _%s_\n"+
+			"📊 Balance — *+%dh / -%dh*%s%s",
 		days, hours, mins,
 		timeRemaining,
-		intensity.String(),
-		len(b.state.Toys),
-		b.state.TotalTimeAddedHours,
-		b.state.TotalTimeRemovedHours,
-		frozenStr,
-		taskStatus,
+		intensity.String(), stateLines,
+		taskStatus, chasterTaskLine,
+		b.state.TasksCompleted, b.state.TasksFailed,
+		b.state.TasksStreak, models.ObedienceLevelString(obedienceLevel), plugLine, checkinLine,
+		orgasmStatus,
+		b.state.TotalTimeAddedHours, b.state.TotalTimeRemovedHours,
+		ruletaLine, debtLine,
 	)
 	b.Send(msg)
 }
