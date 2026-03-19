@@ -85,21 +85,6 @@ func (db *DB) migrate() error {
 		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS state (
-		id                      INTEGER PRIMARY KEY DEFAULT 1,
-		current_lock_id         TEXT,
-		current_task_id         TEXT,
-		active_event_type       TEXT,
-		active_event_expires_at DATETIME,
-		tasks_streak            INTEGER DEFAULT 0,
-		total_time_added_hours  INTEGER DEFAULT 0,
-		total_time_removed_hours INTEGER DEFAULT 0,
-		days_locked             INTEGER DEFAULT 0,
-		manual_duration_seconds INTEGER DEFAULT 0,
-		awaiting_lock_photo     INTEGER DEFAULT 0
-	);
-
-	INSERT OR IGNORE INTO state (id) VALUES (1);
 	`)
 	return err
 }
@@ -335,74 +320,6 @@ func (db *DB) SaveNegotiation(n *Negotiation) error {
 	return err
 }
 
-// ── State ─────────────────────────────────────────────────────────────────
-
-type State struct {
-	CurrentLockID         string
-	CurrentTaskID         string
-	ActiveEventType       string
-	ActiveEventExpiresAt  *time.Time
-	TasksStreak           int
-	TotalTimeAddedHours   int
-	TotalTimeRemovedHours int
-	DaysLocked            int
-	ManualDurationSeconds int
-	AwaitingLockPhoto     bool
-}
-
-func (db *DB) LoadState() (*State, error) {
-	s := &State{}
-	var awaitingInt int
-	var activeEventType sql.NullString
-	var activeEventExpires sql.NullTime
-	var currentLockID sql.NullString
-	var currentTaskID sql.NullString
-
-	err := db.conn.QueryRow(`
-		SELECT current_lock_id, current_task_id, active_event_type, active_event_expires_at,
-		tasks_streak, total_time_added_hours, total_time_removed_hours,
-		days_locked, manual_duration_seconds, awaiting_lock_photo
-		FROM state WHERE id=1`,
-	).Scan(
-		&currentLockID, &currentTaskID, &activeEventType, &activeEventExpires,
-		&s.TasksStreak, &s.TotalTimeAddedHours, &s.TotalTimeRemovedHours,
-		&s.DaysLocked, &s.ManualDurationSeconds, &awaitingInt,
-	)
-	if err != nil {
-		return s, err
-	}
-
-	s.CurrentLockID = currentLockID.String
-	s.CurrentTaskID = currentTaskID.String
-	s.ActiveEventType = activeEventType.String
-	s.AwaitingLockPhoto = awaitingInt == 1
-	if activeEventExpires.Valid {
-		t := activeEventExpires.Time
-		s.ActiveEventExpiresAt = &t
-	}
-	return s, nil
-}
-
-func (db *DB) SaveState(s *State) error {
-	awaitingInt := 0
-	if s.AwaitingLockPhoto {
-		awaitingInt = 1
-	}
-	_, err := db.conn.Exec(`
-		UPDATE state SET
-			current_lock_id=?, current_task_id=?,
-			active_event_type=?, active_event_expires_at=?,
-			tasks_streak=?, total_time_added_hours=?, total_time_removed_hours=?,
-			days_locked=?, manual_duration_seconds=?, awaiting_lock_photo=?
-		WHERE id=1`,
-		nullStr(s.CurrentLockID), nullStr(s.CurrentTaskID),
-		nullStr(s.ActiveEventType), s.ActiveEventExpiresAt,
-		s.TasksStreak, s.TotalTimeAddedHours, s.TotalTimeRemovedHours,
-		s.DaysLocked, s.ManualDurationSeconds, awaitingInt,
-	)
-	return err
-}
-
 // ── Stats ─────────────────────────────────────────────────────────────────
 
 type Stats struct {
@@ -430,8 +347,3 @@ func (db *DB) GetStats() (*Stats, error) {
 	return s, nil
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-func nullStr(s string) sql.NullString {
-	return sql.NullString{String: s, Valid: s != ""}
-}

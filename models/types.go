@@ -99,7 +99,4 @@ type AppState struct {
 	TasksFailed           int          `json:"tasks_failed"`
 	ActiveEvent           *ActiveEvent `json:"active_event,omitempty"`
 	TasksStreak           int          `json:"tasks_streak"`
-	// Foto pendiente de subir a Cloudinary
-	PendingToyPhoto []byte `json:"-"`
-	PendingToyMime  string `json:"-"`
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -41,8 +42,8 @@ type Bot struct {
 	cachedDaysLocked   int
 	cachedDaysLockedAt time.Time
 
-	// Flujo de agregar juguete con foto
-	awaitingToyPhoto bool
+	// Estado de UI transitorio — no se persiste entre reinicios
+	pendingAction string
 }
 
 func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient *ai.Client, db *storage.DB, cloudinary *storage.CloudinaryClient) (*Bot, error) {
@@ -62,13 +63,9 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 	b.state = b.loadState()
 	// Cargar juguetes desde DB
 	if toys, err := db.GetToys(); err == nil {
-		b.state.Toys = []models.Toy{}
+		b.state.Toys = make([]models.Toy, 0, len(toys))
 		for _, t := range toys {
-			b.state.Toys = append(b.state.Toys, models.Toy{
-				ID: t.ID, Name: t.Name,
-				Description: t.Description, PhotoURL: t.PhotoURL,
-				AddedAt: t.CreatedAt,
-			})
+			b.state.Toys = append(b.state.Toys, storageToyToModel(t))
 		}
 	}
 	return b, nil
@@ -511,12 +508,24 @@ func (b *Bot) HandleFail() {
 	b.state.CurrentTask.Failed = true
 	b.state.CurrentTask.AwaitingPhoto = false
 	b.state.TotalTimeAddedHours += penaltyHours
+	b.state.TasksFailed++
+	b.state.TasksStreak = 0
 	b.mustSaveState()
 
 	if lock, err := b.chaster.GetActiveLock(); err == nil {
 		if err := b.chaster.AddTime(lock.ID, penaltyHours*3600); err != nil {
 			log.Printf("error añadiendo tiempo en Chaster: %v", err)
 		}
+	}
+
+	if b.db != nil {
+		b.db.SaveTask(&storage.Task{
+			ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
+			Description: b.state.CurrentTask.Description,
+			AssignedAt:  b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
+			Status:       "failed",
+			PenaltyHours: penaltyHours, RewardHours: b.state.CurrentTask.RewardHours,
+		})
 	}
 
 	msg, _ := b.ai.GenerateTaskPenalty(penaltyHours, "confesó que no pudo completar la tarea")
@@ -630,7 +639,7 @@ func (b *Bot) handleToyRemoveSelection(text string) {
 		}
 	}
 	b.state.Toys = newToys
-	b.state.PendingToyMime = ""
+	b.pendingAction = ""
 	b.mustSaveState()
 
 	b.Send(fmt.Sprintf("🗑 *%s* eliminado.", selected.Name))
@@ -639,14 +648,14 @@ func (b *Bot) handleToyRemoveSelection(text string) {
 // handleCageSelection procesa la selección de jaula durante el flujo de newlock
 func (b *Bot) handleCageSelection(text string) {
 	if b.db == nil {
-		b.state.PendingToyMime = ""
+		b.pendingAction = ""
 		b.startNewLockFlow()
 		return
 	}
 
 	cages, err := b.db.GetCages()
 	if err != nil || len(cages) == 0 {
-		b.state.PendingToyMime = ""
+		b.pendingAction = ""
 		b.startNewLockFlow()
 		return
 	}
@@ -665,7 +674,7 @@ func (b *Bot) handleCageSelection(text string) {
 	selected := cages[num-1]
 	b.db.SetToyInUse(selected.ID, true)
 	b.reloadToysFromDB()
-	b.state.PendingToyMime = ""
+	b.pendingAction = ""
 	b.mustSaveState()
 
 	b.Send(fmt.Sprintf("_Jaula seleccionada: *%s*_", selected.Name))
@@ -701,14 +710,12 @@ func (b *Bot) HandleExplain() {
 // HandleToyPhoto procesa la foto de un juguete nuevo, llama a la IA para nombre/descripción
 // y lo guarda en DB + Cloudinary
 func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
-	b.awaitingToyPhoto = false
-	hint := b.state.PendingToyMime // nombre hint que dio el usuario
-	b.state.PendingToyMime = ""
+	b.pendingAction = ""
 
 	b.Send("_Analizando el juguete..._")
 
 	// IA genera nombre y descripción
-	toyInfo, err := b.ai.DescribeToy(imageBytes, mimeType, hint)
+	toyInfo, err := b.ai.DescribeToy(imageBytes, mimeType, "")
 	if err != nil || toyInfo == nil {
 		b.Send("❌ Error analizando la foto del juguete.")
 		return
@@ -770,13 +777,13 @@ func (b *Bot) HandleChat(text string) {
 	textLower := strings.ToLower(text)
 
 	// Detectar selección de jaula durante flujo de newlock
-	if b.state.PendingToyMime == "selecting_cage" {
+	if b.pendingAction == "selecting_cage" {
 		b.handleCageSelection(text)
 		return
 	}
 
 	// Detectar selección de juguete a eliminar
-	if b.state.PendingToyMime == "removing_toy" {
+	if b.pendingAction == "removing_toy" {
 		b.handleToyRemoveSelection(text)
 		return
 	}
@@ -905,10 +912,7 @@ func (b *Bot) HandleToys(args string) {
 
 	switch subCmd {
 	case "add", "agregar":
-		// Pedir foto directamente — la IA genera todo
-		b.state.PendingToyPhoto = nil
-		b.state.PendingToyMime = "new_toy"
-		b.awaitingToyPhoto = true
+		b.pendingAction = "new_toy"
 		b.Send("▪️ *NUEVO JUGUETE*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda la foto del juguete.\n_La IA generará nombre, descripción y tipo automáticamente._")
 
 	case "remove", "quitar":
@@ -923,8 +927,7 @@ func (b *Bot) HandleToys(args string) {
 		}
 		lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
 		b.Send(strings.Join(lines, "\n"))
-		b.state.PendingToyMime = "removing_toy"
-		b.mustSaveState()
+		b.pendingAction = "removing_toy"
 
 	default:
 		if len(b.state.Toys) == 0 {
@@ -1071,7 +1074,7 @@ func (b *Bot) Start() {
 
 			if b.state.AwaitingLockPhoto {
 				b.HandleLockPhoto(imgBytes, mime, msgID)
-			} else if b.awaitingToyPhoto {
+			} else if b.pendingAction == "new_toy" {
 				b.deleteMessage(msgID)
 				b.HandleToyPhoto(imgBytes, mime)
 			} else {
@@ -1280,14 +1283,22 @@ func (b *Bot) HandleNewLock(args string) {
 				}
 				lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
 				b.Send(strings.Join(lines, "\n"))
-				b.state.PendingToyMime = "selecting_cage"
-				b.mustSaveState()
+				b.pendingAction = "selecting_cage"
+				b.mustSaveState() // persiste ManualDurationSeconds
 				return
 			}
 		}
 	}
 
 	b.startNewLockFlow()
+}
+
+func storageToyToModel(t *storage.Toy) models.Toy {
+	return models.Toy{
+		ID: t.ID, Name: t.Name, Description: t.Description,
+		PhotoURL: t.PhotoURL, Type: t.Type, InUse: t.InUse,
+		AddedAt: t.CreatedAt,
+	}
 }
 
 // reloadToysFromDB recarga los juguetes desde la DB al estado en memoria
@@ -1299,13 +1310,9 @@ func (b *Bot) reloadToysFromDB() {
 	if err != nil {
 		return
 	}
-	b.state.Toys = []models.Toy{}
+	b.state.Toys = make([]models.Toy, 0, len(toys))
 	for _, t := range toys {
-		b.state.Toys = append(b.state.Toys, models.Toy{
-			ID: t.ID, Name: t.Name, Description: t.Description,
-			PhotoURL: t.PhotoURL, Type: t.Type, InUse: t.InUse,
-			AddedAt: t.CreatedAt,
-		})
+		b.state.Toys = append(b.state.Toys, storageToyToModel(t))
 	}
 }
 
@@ -1546,27 +1553,20 @@ func probabilidadEvento(hour, daysLocked int) int {
 // Llamado por el scheduler cada 30 minutos en horario activo.
 func (b *Bot) HandleRandomEvent() {
 	loc, _ := time.LoadLocation("America/Bogota")
-	now := time.Now().In(loc)
-	hour := now.Hour()
+	hour := time.Now().In(loc).Hour()
 
-	days := b.daysLocked()
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		return
+	}
+	days := int(time.Since(lock.StartDate).Hours()) / 24
+
 	prob := probabilidadEvento(hour, days)
 	if prob == 0 {
 		return
 	}
 
-	// Tirar el dado — distribución uniforme 0-99
-	nano := now.UnixNano()
-	if nano < 0 {
-		nano = -nano
-	}
-	roll := int(nano % 100)
-	if roll >= prob {
-		return
-	}
-
-	lock, err := b.chaster.GetActiveLock()
-	if err != nil {
+	if rand.Intn(100) >= prob {
 		return
 	}
 
@@ -1690,16 +1690,14 @@ func (b *Bot) executeRandomEvent(lockID string, decision *ai.RandomEventDecision
 
 // ── Mensajes random ───────────────────────────────────────────────────────
 
-// SendRandomMessage manda un mensaje espontáneo del keyholder.
-// Llamado por el scheduler en horario activo.
-// Si hay lock activo, mensaje de control. Si no, mensaje incentivando a encerrarse.
-func (b *Bot) SendRandomMessage() {
+// sendRandomMessageInternal construye y envía el mensaje espontáneo del keyholder.
+func (b *Bot) sendRandomMessageInternal() {
 	_, lockErr := b.chaster.GetActiveLock()
 	locked := lockErr == nil
 
 	hasActive := b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt)
 	activeType := ""
-	if hasActive && b.state.ActiveEvent != nil {
+	if hasActive {
 		activeType = b.state.ActiveEvent.Type
 	}
 
@@ -1718,6 +1716,12 @@ func (b *Bot) SendRandomMessage() {
 	}
 
 	b.Send(stripMarkdown(msg))
+}
+
+// SendRandomMessage manda un mensaje espontáneo del keyholder.
+// Llamado por el scheduler en horario activo.
+func (b *Bot) SendRandomMessage() {
+	b.sendRandomMessageInternal()
 }
 
 // HandleTestRemoveTime quita N horas de la condena — /testremove [horas]
@@ -1745,7 +1749,6 @@ func (b *Bot) HandleTestRemoveTime(args string) {
 
 // SendRandomMessageTest fuerza un mensaje random — solo para testing con /testmsg
 func (b *Bot) SendRandomMessageTest() {
-	// Rate limiting — evitar múltiples ejecuciones seguidas
 	b.chatMu.Lock()
 	if time.Since(b.lastChatTime) < 5*time.Second {
 		b.chatMu.Unlock()
@@ -1754,30 +1757,7 @@ func (b *Bot) SendRandomMessageTest() {
 	b.lastChatTime = time.Now()
 	b.chatMu.Unlock()
 
-	_, lockErr := b.chaster.GetActiveLock()
-	locked := lockErr == nil
-
-	hasActive := b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt)
-	activeType := ""
-	if hasActive && b.state.ActiveEvent != nil {
-		activeType = b.state.ActiveEvent.Type
-	}
-
-	msg, err := b.ai.GenerateRandomMessage(
-		b.daysLocked(),
-		b.state.Toys,
-		b.state.TasksCompleted,
-		b.state.TasksFailed,
-		hasActive,
-		activeType,
-		locked,
-	)
-	if err != nil {
-		b.Send(fmt.Sprintf("❌ Error: %v", err))
-		return
-	}
-
-	b.Send(stripMarkdown(msg))
+	b.sendRandomMessageInternal()
 }
 
 // CheckActiveEventExpiry verifica si hay un evento activo que haya expirado y lo revierte.
