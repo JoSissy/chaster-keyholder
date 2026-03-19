@@ -567,7 +567,7 @@ func (c *Client) AssignChasterTask(sessionID, taskDescription string) error {
 			"points":               1,
 			"verificationRequired": true,
 		},
-		"actor": "keyholder",
+		"actor": "extension",
 	}
 	_, err := c.ext.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/tasks/assign", sessionID), payload)
 	return err
@@ -579,7 +579,7 @@ func (c *Client) CompleteChasterTask(sessionID string, isCompleted bool) error {
 		return fmt.Errorf("extensión no configurada: falta CHASTER_EXTENSION_TOKEN o CHASTER_EXTENSION_SLUG")
 	}
 	payload := map[string]interface{}{
-		"actor":       "keyholder",
+		"actor":       "extension",
 		"isCompleted": isCompleted,
 	}
 	_, err := c.ext.doRequest("POST", fmt.Sprintf("/api/extensions/sessions/%s/tasks/complete", sessionID), payload)
