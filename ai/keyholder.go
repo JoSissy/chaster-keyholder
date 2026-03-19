@@ -1078,23 +1078,29 @@ Streak: %d. Reference her belonging to him. Maximum 2 lines. In Spanish.`,
 func (c *Client) GenerateChasterTask(daysLocked int, toys []models.Toy) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 
-	system := `You generate short submission task descriptions in English for a chastity community app.
-The task will be reviewed by the community — keep it tasteful but clearly submissive.
-Respond ONLY with the task text, nothing else. No quotes, no preamble.`
+	system := `You generate short, simple task descriptions in English for a chastity community app.
+Tasks must be easy to understand and complete. Respond ONLY with the task text, nothing else.`
 
 	prompt := fmt.Sprintf(`%s
-Generate ONE submission task for a locked sissy. Requirements:
-- Under 160 characters (strict limit)
-- Requires a photo as proof
-- Specific: what to show, from what angle or position
-- Appropriate for a community platform — submissive but not explicit nudity
-- Direct instruction, no name used
+Generate ONE simple task. It must be a basic, direct action — no complex poses or setups.
 
-Good examples:
-"Show your chastity cage while kneeling, photographed from above"
-"Photograph your locked device against a plain background, feet visible"
-"Display your cage from below while standing with hands behind your back"
-"Show your locked device with both hands visible at your sides"
+TASK TYPES (pick one randomly):
+- Chastity check: show the cage is locked and worn ("Show your chastity cage is locked")
+- Toy in use: use one of the available toys and show it ("Insert the plug and show it in use")
+- Wear something specific: cage visible under or without clothing
+- Simple action: kneel, stand, hands behind back — ONE simple instruction, not a combination
+
+RULES:
+- Under 100 characters
+- One clear action only — no "and also" or multiple steps
+- No complex angles or setups ("from below while standing with hands crossed behind your neck" = bad)
+- Photo required as proof
+- In English, direct imperative
+
+Good: "Show your chastity cage is locked and worn"
+Good: "Insert the plug and photograph it in use"
+Good: "Kneel and show your locked cage"
+Bad: "Kneel on the floor and photograph your cage from above with feet crossed"
 
 Write ONLY the task text.`, ctx)
 

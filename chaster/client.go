@@ -449,13 +449,13 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int) (string, 
 			"config": map[string]interface{}{
 				"tasks": []interface{}{
 					map[string]interface{}{
-						"task":                 "Kneel on the floor and photograph your cage from above",
+						"task":                 "Show your chastity cage is locked and worn",
 						"points":               0,
 						"verificationRequired": true,
 						"duration":             1800,
 					},
 					map[string]interface{}{
-						"task":                 "Stand straight and photograph your locked device from below",
+						"task":                 "Insert your plug and show it in use",
 						"points":               0,
 						"verificationRequired": true,
 						"duration":             1800,
