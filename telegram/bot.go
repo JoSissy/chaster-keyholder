@@ -873,7 +873,7 @@ func (b *Bot) HandleToys(args string) {
 	_ = parts // toyName ya no se usa — la IA genera todo desde la foto
 
 	switch subCmd {
-	case "add", "agregar", "":
+	case "add", "agregar":
 		// Pedir foto directamente — la IA genera todo
 		b.state.PendingToyPhoto = nil
 		b.state.PendingToyMime = "new_toy"
