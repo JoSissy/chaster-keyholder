@@ -277,23 +277,31 @@ func (c *Client) VerifyTaskPhoto(imageBytes []byte, mimeType, taskDescription st
 	b64 := base64.StdEncoding.EncodeToString(imageBytes)
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
 
-	system := baseSystem + `
-Al evaluar fotos de evidencia, responde ÚNICAMENTE en JSON:
-{"status": "approved", "reason": "explicación breve"}
-{"status": "retry", "reason": "qué debe corregir o mejorar específicamente"}
-{"status": "rejected", "reason": "por qué se rechaza definitivamente"}
+	// System prompt separado del rol de amo — solo evaluador técnico
+	system := `Eres un evaluador de evidencia fotográfica para tareas de sumisión.
+Tu único trabajo es evaluar si la foto enviada es evidencia válida de la tarea asignada.
+Responde ÚNICAMENTE en JSON válido, sin texto adicional:
+{"status": "approved", "reason": "explicación breve en español"}
+{"status": "retry", "reason": "qué falta o debe corregir específicamente"}
+{"status": "rejected", "reason": "por qué no tiene relación con la tarea"}
 
-Criterios:
-- "approved": la foto cumple claramente con la tarea
-- "retry": casi cumple pero falta algo concreto (ángulo, detalle, elemento)
-- "rejected": la foto no tiene ninguna relación con la tarea`
+CRITERIOS — sé generoso y razonable:
+- "approved": la foto muestra evidencia razonable de que se intentó cumplir la tarea.
+  No exijas perfección — si el intento es claro, aprueba.
+- "retry": la foto está relacionada con la tarea pero falta un detalle concreto y específico.
+  Solo usa retry si sabes exactamente qué falta y es fácil de corregir.
+- "rejected": SOLO si la foto no tiene absolutamente ninguna relación con la tarea,
+  o si es claramente una foto genérica sin intento de cumplir.
+
+IMPORTANTE: ante la duda, prefiere "approved" o "retry" sobre "rejected".
+El rechazo definitivo debe ser la última opción.`
 
 	ctx := buildContext(toys, daysLocked)
 	textPrompt := fmt.Sprintf(
-		`%s
-Tarea asignada: "%s"
-Evalúa si esta foto es evidencia válida.`,
-		ctx, taskDescription,
+		`Tarea asignada: "%s"
+Contexto: %s
+¿Esta foto es evidencia válida de que se cumplió la tarea? Evalúa con criterio justo.`,
+		taskDescription, ctx,
 	)
 
 	userContent := []contentPart{
