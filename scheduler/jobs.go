@@ -128,6 +128,15 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
+	// Juicio dominical — domingos a las 9pm
+	s.NewJob(
+		gocron.CronJob("0 21 * * 0", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Ejecutando juicio dominical...")
+			bot.HandleWeeklyJudgment()
+		}),
+	)
+
 	s.Start()
 	log.Println("✅ Scheduler iniciado")
 }

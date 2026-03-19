@@ -115,6 +115,11 @@ type AppState struct {
 
 	// Ruleta
 	LastRuletaDate string `json:"last_ruleta_date"` // "2006-01-02" COT
+
+	// Deuda semanal
+	WeeklyDebt        int      `json:"weekly_debt"`
+	WeeklyDebtDetails []string `json:"weekly_debt_details,omitempty"`
+	LastJudgmentDate  string   `json:"last_judgment_date"` // "2006-01-02" COT
 }
 
 // GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual

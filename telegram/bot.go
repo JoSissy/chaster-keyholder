@@ -512,6 +512,7 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 			"▪️ *EVIDENCIA RECHAZADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n\n*+%dh* añadidas a tu condena.",
 			aiMsg, verdict.Reason, penaltyHours,
 		))
+		b.addWeeklyDebt("evidencia de tarea rechazada")
 		b.autoPillory("evidencia de tarea rechazada")
 	}
 }
@@ -548,6 +549,7 @@ func (b *Bot) HandleFail() {
 
 	msg, _ := b.ai.GenerateTaskPenalty(penaltyHours, "confesó que no pudo completar la tarea")
 	b.Send("▪️ *TAREA ABANDONADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + msg + fmt.Sprintf("\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+%dh* añadidas.", penaltyHours))
+	b.addWeeklyDebt("tarea abandonada voluntariamente")
 	b.autoPillory("confesó que no pudo completar la tarea")
 }
 
@@ -1170,6 +1172,9 @@ func (b *Bot) Start() {
 			b.SendRandomMessageTest()
 		case text == "/ruleta":
 			b.HandleRuleta()
+		case text == "/testjuicio":
+			b.state.LastJudgmentDate = "" // forzar re-ejecución
+			b.HandleWeeklyJudgment()
 		case text != "" && !strings.HasPrefix(text, "/"):
 			b.HandleChat(text)
 		}
@@ -1234,6 +1239,7 @@ func (b *Bot) SendNightStatus() {
 		b.state.TotalTimeAddedHours += penaltyHours
 		b.state.TasksFailed++
 		b.state.TasksStreak = 0
+		b.addWeeklyDebt("tarea del día no completada")
 		// Guardar tarea fallida en DB
 		if b.db != nil {
 			b.db.SaveTask(&storage.Task{
@@ -1836,6 +1842,13 @@ func (b *Bot) CheckActiveEventExpiry() {
 
 // ── Helpers de nuevas funcionalidades ─────────────────────────────────────
 
+// addWeeklyDebt registra una infracción en la deuda semanal
+func (b *Bot) addWeeklyDebt(detail string) {
+	b.state.WeeklyDebt++
+	b.state.WeeklyDebtDetails = append(b.state.WeeklyDebtDetails, detail)
+	b.mustSaveState()
+}
+
 func todayStr() string {
 	loc, err := time.LoadLocation("America/Bogota")
 	if err != nil {
@@ -1993,6 +2006,7 @@ func (b *Bot) HandlePlugPhoto(imgBytes []byte, mime string) {
 	case "rejected":
 		b.pendingAction = ""
 		b.Send(fmt.Sprintf("❌ *Plug no detectado*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.Reason))
+		b.addWeeklyDebt(fmt.Sprintf("plug %s no confirmado", plugName))
 		b.autoPillory(fmt.Sprintf("no llevó el %s asignado", plugName))
 	}
 }
@@ -2049,6 +2063,7 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 		b.state.CheckinExpiresAt = nil
 		b.mustSaveState()
 		b.Send(fmt.Sprintf("❌ *CHECK-IN RECHAZADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.Reason))
+		b.addWeeklyDebt("check-in rechazado — evidencia inválida")
 		b.autoPillory("check-in rechazado — evidencia no válida")
 	}
 }
@@ -2065,6 +2080,7 @@ func (b *Bot) CheckCheckinExpiry() {
 	b.pendingAction = ""
 	b.mustSaveState()
 	b.Send("⏰ *CHECK-IN IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No respondiste a tiempo. Consecuencias._")
+	b.addWeeklyDebt("check-in ignorado — no respondió a tiempo")
 	b.autoPillory("no respondió al check-in a tiempo")
 }
 
@@ -2082,6 +2098,84 @@ func (b *Bot) SendConditioningMessage() {
 		return
 	}
 	b.Send(stripMarkdown(msg))
+}
+
+// ── Juicio dominical ───────────────────────────────────────────────────────
+
+func (b *Bot) HandleWeeklyJudgment() {
+	today := todayStr()
+	if b.state.LastJudgmentDate == today {
+		return
+	}
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		return
+	}
+
+	b.Send("⚖️ *EL SEÑOR HACE EL RECUENTO DE LA SEMANA...*")
+
+	verdict, err := b.ai.GenerateWeeklyJudgment(
+		b.daysLocked(),
+		b.state.Toys,
+		b.state.WeeklyDebt,
+		b.state.WeeklyDebtDetails,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+	)
+	if err != nil {
+		b.Send("❌ Error en el juicio.")
+		return
+	}
+
+	b.state.LastJudgmentDate = today
+	b.state.WeeklyDebt = 0
+	b.state.WeeklyDebtDetails = nil
+	b.mustSaveState()
+
+	b.Send("⚖️ *SENTENCIA SEMANAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(verdict.Message))
+
+	if verdict.AddTimeHours > 0 {
+		if err := b.chaster.AddTime(lock.ID, verdict.AddTimeHours*3600); err != nil {
+			log.Printf("[Judgment] error addtime: %v", err)
+		} else {
+			b.state.TotalTimeAddedHours += verdict.AddTimeHours
+			b.mustSaveState()
+			b.Send(fmt.Sprintf("⏳ *+%dh* añadidas a tu condena.", verdict.AddTimeHours))
+		}
+	}
+
+	if verdict.PilloryMins > 0 {
+		reason, _ := b.ai.GeneratePilloryReason(b.daysLocked(), b.state.Toys, "weekly judgment")
+		if strings.TrimSpace(reason) == "" {
+			reason = "Weekly judgment by her keyholder"
+		}
+		b.chaster.PutInPillory(lock.ID, verdict.PilloryMins*60, strings.TrimSpace(reason))
+		b.Send(fmt.Sprintf("⛓ *Cepo* — %d minutos.", verdict.PilloryMins))
+	}
+
+	if verdict.FreezeHours > 0 {
+		b.chaster.FreezeLock(lock.ID)
+		expiresAt := time.Now().Add(time.Duration(verdict.FreezeHours) * time.Hour)
+		b.state.ActiveEvent = &models.ActiveEvent{Type: "freeze", ExpiresAt: expiresAt}
+		b.mustSaveState()
+		b.Send(fmt.Sprintf("❄️ *Congelada* — %dh.", verdict.FreezeHours))
+	}
+
+	if strings.TrimSpace(verdict.SpecialTask) != "" {
+		b.Send(fmt.Sprintf("📋 *TAREA ESPECIAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.SpecialTask))
+		loc, _ := time.LoadLocation("America/Bogota")
+		now := time.Now().In(loc)
+		b.state.CurrentTask = &models.Task{
+			ID:            fmt.Sprintf("judgment-%d", now.Unix()),
+			Description:   verdict.SpecialTask,
+			AssignedAt:    now,
+			DueAt:         now.Add(2 * time.Hour),
+			PenaltyHours:  3,
+			RewardHours:   0,
+			AwaitingPhoto: true,
+		}
+		b.mustSaveState()
+	}
 }
 
 // ── Ruleta diaria ──────────────────────────────────────────────────────────
