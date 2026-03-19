@@ -766,3 +766,47 @@ Respond with ONLY the reason text, nothing else.`,
 	)
 	return c.chat("llama-3.3-70b-versatile", "You generate short, humiliating pillory reasons in English for a chastity keyholder app. Respond only with the reason text.", prompt)
 }
+
+// ── Juguetes ───────────────────────────────────────────────────────────────
+
+// ToyInfo nombre y descripción generados por la IA para un juguete
+type ToyInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// DescribeToy analiza la foto de un juguete y genera nombre y descripción
+func (c *Client) DescribeToy(imageBytes []byte, mimeType, hint string) (*ToyInfo, error) {
+	b64 := base64.StdEncoding.EncodeToString(imageBytes)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
+
+	system := `You analyze photos of sex toys and generate a short name and description.
+Respond ONLY in JSON: {"name": "short name", "description": "1-2 sentence description"}
+Be direct and descriptive. Name should be concise (2-4 words max).
+Description should mention material, size if visible, and main use.`
+
+	prompt := fmt.Sprintf(
+		`Analyze this sex toy photo. The user calls it "%s". Generate a precise name and description.`,
+		hint,
+	)
+
+	userContent := []contentPart{
+		{Type: "text", Text: prompt},
+		{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
+	}
+
+	raw, err := c.chat("meta-llama/llama-4-scout-17b-16e-instruct", system, userContent)
+	if err != nil {
+		return nil, err
+	}
+
+	raw = extractJSON(raw)
+	var info ToyInfo
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		return &ToyInfo{Name: hint, Description: "Juguete registrado."}, nil
+	}
+	if info.Name == "" {
+		info.Name = hint
+	}
+	return &info, nil
+}

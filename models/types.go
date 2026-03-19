@@ -14,10 +14,12 @@ type ChasterLock struct {
 	Frozen        bool       `json:"isFrozen"`
 }
 
-// Task representa una tarea diaria asignada por el keyholder IA.
+// Task representa una tarea diaria — se persiste en DB
 type Task struct {
 	ID            string    `json:"id"`
+	LockID        string    `json:"lock_id"`
 	Description   string    `json:"description"`
+	PhotoURL      string    `json:"photo_url,omitempty"`
 	AssignedAt    time.Time `json:"assigned_at"`
 	DueAt         time.Time `json:"due_at"`
 	Completed     bool      `json:"completed"`
@@ -27,26 +29,30 @@ type Task struct {
 	AwaitingPhoto bool      `json:"awaiting_photo"`
 }
 
-// Toy representa un juguete en el inventario
+// Toy representa un juguete — se persiste en DB
 type Toy struct {
-	Name    string    `json:"name"`
-	AddedAt time.Time `json:"added_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	PhotoURL    string    `json:"photo_url"`
+	AddedAt     time.Time `json:"added_at"`
 }
 
 // ActiveEvent representa un evento random activo con auto-reversión
 type ActiveEvent struct {
-	Type      string    `json:"type"`       // "freeze" | "hidetime"
-	ExpiresAt time.Time `json:"expires_at"` // cuándo revertir
+	ID        string    `json:"id"`
+	Type      string    `json:"type"` // "freeze" | "hidetime"
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // IntensityLevel nivel de intensidad según días encerrada
 type IntensityLevel int
 
 const (
-	IntensityLight    IntensityLevel = 1 // días 1-3
-	IntensityModerate IntensityLevel = 2 // días 4-7
-	IntensityIntense  IntensityLevel = 3 // días 8-14
-	IntensityMaximum  IntensityLevel = 4 // días 15+
+	IntensityLight    IntensityLevel = 1
+	IntensityModerate IntensityLevel = 2
+	IntensityIntense  IntensityLevel = 3
+	IntensityMaximum  IntensityLevel = 4
 )
 
 func (i IntensityLevel) String() string {
@@ -63,7 +69,6 @@ func (i IntensityLevel) String() string {
 	return "suave"
 }
 
-// GetIntensity calcula el nivel de intensidad según días encerrada
 func GetIntensity(daysLocked int) IntensityLevel {
 	switch {
 	case daysLocked >= 15:
@@ -77,7 +82,7 @@ func GetIntensity(daysLocked int) IntensityLevel {
 	}
 }
 
-// AppState estado global de la app (persiste en state.json).
+// AppState estado en memoria — se sincroniza con la DB periódicamente
 type AppState struct {
 	CurrentTask           *Task        `json:"current_task,omitempty"`
 	TotalTimeAddedHours   int          `json:"total_time_added_hours"`
@@ -90,11 +95,8 @@ type AppState struct {
 	TasksCompleted        int          `json:"tasks_completed"`
 	TasksFailed           int          `json:"tasks_failed"`
 	ActiveEvent           *ActiveEvent `json:"active_event,omitempty"`
-}
-
-// LockSession datos de la sesión de lock activa creada por el bot
-type LockSession struct {
-	LockID    string    `json:"lock_id"`
-	StartedAt time.Time `json:"started_at"`
-	Duration  int       `json:"duration_hours"`
+	TasksStreak           int          `json:"tasks_streak"`
+	// Foto pendiente de subir a Cloudinary
+	PendingToyPhoto []byte `json:"-"`
+	PendingToyMime  string `json:"-"`
 }

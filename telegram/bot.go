@@ -16,34 +16,53 @@ import (
 	"chaster-keyholder/ai"
 	"chaster-keyholder/chaster"
 	"chaster-keyholder/models"
+	"chaster-keyholder/storage"
 )
 
 type Bot struct {
-	api       *tgbotapi.BotAPI
-	chatID    int64
-	chaster   *chaster.Client
-	ai        *ai.Client
-	state     *models.AppState
-	statePath string
+	api        *tgbotapi.BotAPI
+	chatID     int64
+	chaster    *chaster.Client
+	ai         *ai.Client
+	state      *models.AppState
+	statePath  string
+	db         *storage.DB
+	cloudinary *storage.CloudinaryClient
 
-	// Rate limiting para chat libre — máximo 1 mensaje cada 3 segundos
+	// Rate limiting
 	lastChatTime time.Time
 	chatMu       sync.Mutex
+
+	// Flujo de agregar juguete con foto
+	awaitingToyPhoto bool
 }
 
-func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient *ai.Client) (*Bot, error) {
+func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient *ai.Client, db *storage.DB, cloudinary *storage.CloudinaryClient) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
 	}
 	b := &Bot{
-		api:       api,
-		chatID:    chatID,
-		chaster:   chasterClient,
-		ai:        aiClient,
-		statePath: "state.json",
+		api:        api,
+		chatID:     chatID,
+		chaster:    chasterClient,
+		ai:         aiClient,
+		statePath:  "state.json",
+		db:         db,
+		cloudinary: cloudinary,
 	}
 	b.state = b.loadState()
+	// Cargar juguetes desde DB
+	if toys, err := db.GetToys(); err == nil {
+		b.state.Toys = []models.Toy{}
+		for _, t := range toys {
+			b.state.Toys = append(b.state.Toys, models.Toy{
+				ID: t.ID, Name: t.Name,
+				Description: t.Description, PhotoURL: t.PhotoURL,
+				AddedAt: t.CreatedAt,
+			})
+		}
+	}
 	return b, nil
 }
 
@@ -373,13 +392,37 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 	switch verdict.Status {
 	case "approved":
 		rewardHours := b.state.CurrentTask.RewardHours
+
+		// Subir foto a Cloudinary
+		var photoURL string
+		if b.cloudinary != nil {
+			url, cerr := b.cloudinary.Upload(imageBytes, mimeType, "chaster/tasks")
+			if cerr != nil {
+				log.Printf("error subiendo foto de tarea: %v", cerr)
+			} else {
+				photoURL = url
+			}
+		}
+
 		b.state.CurrentTask.Completed = true
 		b.state.CurrentTask.AwaitingPhoto = false
 		b.state.TotalTimeRemovedHours += rewardHours
 		b.state.TasksCompleted++
+		b.state.TasksStreak++
 		b.mustSaveState()
 
-		// Usar RemoveTime con segundos positivos
+		// Guardar en DB
+		if b.db != nil {
+			now := time.Now()
+			b.db.SaveTask(&storage.Task{
+				ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
+				Description: b.state.CurrentTask.Description, PhotoURL: photoURL,
+				AssignedAt: b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
+				CompletedAt: &now, Status: "completed",
+				PenaltyHours: b.state.CurrentTask.PenaltyHours, RewardHours: rewardHours,
+			})
+		}
+
 		if err := b.chaster.RemoveTime(lock.ID, rewardHours*3600); err != nil {
 			log.Printf("error quitando tiempo en Chaster: %v", err)
 		}
@@ -401,7 +444,19 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 		b.state.CurrentTask.Failed = true
 		b.state.CurrentTask.AwaitingPhoto = false
 		b.state.TotalTimeAddedHours += penaltyHours
+		b.state.TasksStreak = 0
 		b.mustSaveState()
+
+		// Guardar en DB
+		if b.db != nil {
+			b.db.SaveTask(&storage.Task{
+				ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
+				Description: b.state.CurrentTask.Description,
+				AssignedAt:  b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
+				Status:       "failed",
+				PenaltyHours: penaltyHours, RewardHours: b.state.CurrentTask.RewardHours,
+			})
+		}
 
 		if err := b.chaster.AddTime(lock.ID, penaltyHours*3600); err != nil {
 			log.Printf("error añadiendo tiempo en Chaster: %v", err)
@@ -540,6 +595,61 @@ func (b *Bot) HandleExplain() {
 		"▪️ *CÓMO COMPLETAR LA TAREA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_",
 		b.state.CurrentTask.Description,
 		stripMarkdown(explanation),
+	))
+}
+
+// HandleToyPhoto procesa la foto de un juguete nuevo, llama a la IA para nombre/descripción
+// y lo guarda en DB + Cloudinary
+func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
+	b.awaitingToyPhoto = false
+	hint := b.state.PendingToyMime // nombre hint que dio el usuario
+	b.state.PendingToyMime = ""
+
+	b.Send("_Analizando el juguete..._")
+
+	// IA genera nombre y descripción
+	toyInfo, err := b.ai.DescribeToy(imageBytes, mimeType, hint)
+	if err != nil || toyInfo == nil {
+		b.Send("❌ Error analizando la foto del juguete.")
+		return
+	}
+
+	// Subir foto a Cloudinary
+	var photoURL string
+	if b.cloudinary != nil {
+		url, err := b.cloudinary.Upload(imageBytes, mimeType, "chaster/toys")
+		if err != nil {
+			log.Printf("error subiendo foto de juguete: %v", err)
+		} else {
+			photoURL = url
+		}
+	}
+
+	// Generar ID único
+	toyID := fmt.Sprintf("toy-%d", time.Now().UnixNano())
+
+	// Guardar en DB
+	if b.db != nil {
+		b.db.SaveToy(&storage.Toy{
+			ID: toyID, Name: toyInfo.Name,
+			Description: toyInfo.Description,
+			PhotoURL:    photoURL,
+			CreatedAt:   time.Now(),
+		})
+	}
+
+	// Añadir al estado en memoria
+	b.state.Toys = append(b.state.Toys, models.Toy{
+		ID: toyID, Name: toyInfo.Name,
+		Description: toyInfo.Description,
+		PhotoURL:    photoURL,
+		AddedAt:     time.Now(),
+	})
+	b.mustSaveState()
+
+	b.Send(fmt.Sprintf(
+		"✅ *%s* añadido al inventario.\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_",
+		toyInfo.Name, toyInfo.Description,
 	))
 }
 
@@ -688,12 +798,14 @@ func (b *Bot) HandleToys(args string) {
 			b.Send("Uso: `/toys add [nombre]`\nEjemplo: `/toys add plug mediano`")
 			return
 		}
-		b.state.Toys = append(b.state.Toys, models.Toy{
-			Name:    toyName,
-			AddedAt: time.Now(),
-		})
-		b.mustSaveState()
-		b.Send(fmt.Sprintf("✅ *%s* añadido al inventario.", toyName))
+		// Guardar nombre temporalmente y pedir foto
+		b.state.PendingToyPhoto = nil
+		b.state.PendingToyMime = toyName // reutilizamos el campo para guardar el nombre
+		b.awaitingToyPhoto = true
+		b.Send(fmt.Sprintf(
+			"▪️ *NUEVO JUGUETE*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda una foto de *%s* para registrarlo.\n_La IA generará el nombre y descripción automáticamente._",
+			toyName,
+		))
 
 	case "remove", "quitar":
 		if toyName == "" {
@@ -703,8 +815,12 @@ func (b *Bot) HandleToys(args string) {
 		found := false
 		newToys := []models.Toy{}
 		for _, t := range b.state.Toys {
-			if strings.EqualFold(t.Name, toyName) {
+			if strings.EqualFold(t.Name, toyName) || strings.EqualFold(t.ID, toyName) {
 				found = true
+				// Borrar de DB
+				if b.db != nil {
+					b.db.DeleteToy(t.ID)
+				}
 			} else {
 				newToys = append(newToys, t)
 			}
@@ -801,6 +917,9 @@ func (b *Bot) Start() {
 
 			if b.state.AwaitingLockPhoto {
 				b.HandleLockPhoto(imgBytes, mime, msgID)
+			} else if b.awaitingToyPhoto {
+				b.deleteMessage(msgID)
+				b.HandleToyPhoto(imgBytes, mime)
 			} else {
 				b.deleteMessage(msgID)
 				b.HandlePhoto(imgBytes, mime)
@@ -1037,6 +1156,16 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 	b.state.CurrentLockID = lockID
 	b.mustSaveState()
 
+	// Guardar lock en DB
+	if b.db != nil {
+		b.db.SaveLock(&storage.Lock{
+			ID:            fmt.Sprintf("lock-%s", lockID),
+			ChasterID:     lockID,
+			StartedAt:     time.Now(),
+			DurationHours: durationSeconds / 3600,
+		})
+	}
+
 	hours := durationSeconds / 3600
 	mins := (durationSeconds % 3600) / 60
 	var durStr string
@@ -1101,6 +1230,19 @@ func (b *Bot) CheckLockFinished() {
 
 	if err := b.chaster.ArchiveLock(b.state.CurrentLockID); err != nil {
 		log.Printf("error archivando lock: %v", err)
+	}
+
+	// Actualizar lock en DB con datos finales
+	if b.db != nil {
+		b.db.UpdateLockEnd(
+			fmt.Sprintf("lock-%s", b.state.CurrentLockID),
+			time.Now(),
+			b.state.TasksCompleted,
+			b.state.TasksFailed,
+			b.state.TotalTimeAddedHours,
+			b.state.TotalTimeRemovedHours,
+			0,
+		)
 	}
 
 	b.state.CurrentLockID = ""
