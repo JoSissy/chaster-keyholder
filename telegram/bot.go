@@ -222,6 +222,13 @@ func (b *Bot) HandleStatus() {
 		return
 	}
 
+	// Si el lock está listo para desbloquear, ejecutarlo automáticamente
+	if lock.IsReadyToUnlock {
+		b.Send("🔓 *LISTA PARA DESBLOQUEAR*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejecutando desbloqueo automático..._")
+		b.finishLock(lock.ID)
+		return
+	}
+
 	var elapsed time.Duration
 	if !lock.StartDate.IsZero() {
 		elapsed = time.Since(lock.StartDate)
@@ -1389,6 +1396,59 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 	))
 }
 
+// finishLock ejecuta el cierre completo de una sesión: manda la combinación,
+// archiva el lock en Chaster, actualiza la DB y limpia el estado.
+// Llamado tanto desde CheckLockFinished como desde HandleStatus (auto-unlock).
+func (b *Bot) finishLock(lockID string) {
+	combo, err := b.chaster.GetCombination(lockID)
+	if err != nil {
+		log.Printf("[finishLock] error obteniendo combinación: %v", err)
+		b.Send("❌ No pude obtener la combinación. Revisa Chaster directamente.")
+		return
+	}
+
+	imgBytes, err := b.chaster.DownloadCombinationImage(combo.ImageFullURL)
+	if err != nil {
+		log.Printf("[finishLock] error descargando imagen: %v", err)
+		b.Send("🔓 *SESIÓN TERMINADA*\n\nNo pude obtener la imagen de combinación. Revisa Chaster directamente.")
+	} else {
+		photoMsg := tgbotapi.NewPhoto(b.chatID, tgbotapi.FileBytes{
+			Name:  "combinacion.jpg",
+			Bytes: imgBytes,
+		})
+		photoMsg.Caption = "▪️ *SESIÓN TERMINADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\nEsta es tu combinación.\nYa puedes liberarte."
+		photoMsg.ParseMode = "Markdown"
+		if _, err := b.api.Send(photoMsg); err != nil {
+			log.Printf("[finishLock] error enviando foto: %v", err)
+			b.Send("🔓 *SESIÓN TERMINADA* — revisa Chaster para ver tu combinación.")
+		}
+	}
+
+	if err := b.chaster.ArchiveLock(lockID); err != nil {
+		log.Printf("[finishLock] error archivando lock: %v", err)
+	}
+
+	if b.db != nil {
+		b.db.UpdateLockEnd(
+			fmt.Sprintf("lock-%s", lockID),
+			time.Now(),
+			b.state.TasksCompleted,
+			b.state.TasksFailed,
+			b.state.TotalTimeAddedHours,
+			b.state.TotalTimeRemovedHours,
+			0,
+		)
+	}
+
+	if b.db != nil {
+		b.db.ClearAllInUse()
+		b.reloadToysFromDB()
+	}
+
+	b.state.CurrentLockID = ""
+	b.mustSaveState()
+}
+
 // CheckLockFinished verifica si el lock específico terminó.
 // IMPORTANTE: Chaster NO hace unlock automático al vencer el tiempo.
 // El usuario debe abrir la app y presionar desbloquear manualmente.
@@ -1429,55 +1489,7 @@ func (b *Bot) CheckLockFinished() {
 
 	// El lock fue desbloqueado por el usuario en Chaster
 	b.state.CurrentLockID = lockID
-
-	combo, err := b.chaster.GetCombination(lockID)
-	if err != nil {
-		log.Printf("error obteniendo combinación: %v", err)
-		return
-	}
-
-	imgBytes, err := b.chaster.DownloadCombinationImage(combo.ImageFullURL)
-	if err != nil {
-		log.Printf("error descargando imagen de combinación: %v", err)
-		b.Send("🔓 *SESIÓN TERMINADA*\n\nNo pude obtener la imagen de combinación. Revisa Chaster directamente.")
-	} else {
-		photoMsg := tgbotapi.NewPhoto(b.chatID, tgbotapi.FileBytes{
-			Name:  "combinacion.jpg",
-			Bytes: imgBytes,
-		})
-		photoMsg.Caption = "▪️ *SESIÓN TERMINADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\nEsta es tu combinación.\nYa puedes liberarte."
-		photoMsg.ParseMode = "Markdown"
-		if _, err := b.api.Send(photoMsg); err != nil {
-			log.Printf("error enviando foto de combinación: %v", err)
-			b.Send("🔓 *SESIÓN TERMINADA* — revisa Chaster para ver tu combinación.")
-		}
-	}
-
-	if err := b.chaster.ArchiveLock(lockID); err != nil {
-		log.Printf("error archivando lock: %v", err)
-	}
-
-	// Actualizar lock en DB con datos finales
-	if b.db != nil {
-		b.db.UpdateLockEnd(
-			fmt.Sprintf("lock-%s", lockID),
-			time.Now(),
-			b.state.TasksCompleted,
-			b.state.TasksFailed,
-			b.state.TotalTimeAddedHours,
-			b.state.TotalTimeRemovedHours,
-			0,
-		)
-	}
-
-	// Desmarcar jaula al terminar el lock
-	if b.db != nil {
-		b.db.ClearAllInUse()
-		b.reloadToysFromDB()
-	}
-
-	b.state.CurrentLockID = ""
-	b.mustSaveState()
+	b.finishLock(lockID)
 }
 
 // ── Eventos random ─────────────────────────────────────────────────────────

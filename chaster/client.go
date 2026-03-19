@@ -101,7 +101,8 @@ func doHTTPRequest(httpClient *http.Client, token, method, url string, body inte
 
 // ── Locks ──────────────────────────────────────────────────────────────────
 
-// GetActiveLock obtiene la sesión de castidad activa (locked y no lista para desbloquear)
+// GetActiveLock obtiene la sesión de castidad activa.
+// Incluye locks "ready to unlock" para que el bot pueda detectar el fin de sesión.
 func (c *Client) GetActiveLock() (*models.ChasterLock, error) {
 	data, err := c.doRequest("GET", "/locks", nil)
 	if err != nil {
@@ -110,16 +111,15 @@ func (c *Client) GetActiveLock() (*models.ChasterLock, error) {
 
 	var locks []struct {
 		models.ChasterLock
-		IsReadyToUnlock bool   `json:"isReadyToUnlock"`
-		CanBeUnlocked   bool   `json:"canBeUnlocked"`
-		StartDateRaw    string `json:"startDate"`
+		CanBeUnlocked bool   `json:"canBeUnlocked"`
+		StartDateRaw  string `json:"startDate"`
 	}
 	if err := json.Unmarshal(data, &locks); err != nil {
 		return nil, err
 	}
 
 	for i := range locks {
-		if locks[i].Status == "locked" && !locks[i].IsReadyToUnlock {
+		if locks[i].Status == "locked" {
 			formats := []string{
 				"2006-01-02T15:04:05.000Z",
 				"2006-01-02T15:04:05Z",

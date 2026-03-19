@@ -4,14 +4,15 @@ import "time"
 
 // ChasterLock representa una sesión de castidad activa
 type ChasterLock struct {
-	ID            string     `json:"_id"`
-	Status        string     `json:"status"`
-	StartDate     time.Time  `json:"-"`
-	EndDate       *time.Time `json:"endDate,omitempty"`
-	TotalDuration int64      `json:"totalDuration"`
-	Title         string     `json:"title"`
-	Combination   string     `json:"combination,omitempty"`
-	Frozen        bool       `json:"isFrozen"`
+	ID              string     `json:"_id"`
+	Status          string     `json:"status"`
+	StartDate       time.Time  `json:"-"`
+	EndDate         *time.Time `json:"endDate,omitempty"`
+	TotalDuration   int64      `json:"totalDuration"`
+	Title           string     `json:"title"`
+	Combination     string     `json:"combination,omitempty"`
+	Frozen          bool       `json:"isFrozen"`
+	IsReadyToUnlock bool       `json:"isReadyToUnlock"`
 }
 
 // Task representa una tarea diaria — se persiste en DB
