@@ -572,6 +572,42 @@ func (b *Bot) HandlePillory(durationMinutes int, reason string) {
 	))
 }
 
+// handleCageSelection procesa la selección de jaula durante el flujo de newlock
+func (b *Bot) handleCageSelection(text string) {
+	if b.db == nil {
+		b.state.PendingToyMime = ""
+		b.startNewLockFlow()
+		return
+	}
+
+	cages, err := b.db.GetCages()
+	if err != nil || len(cages) == 0 {
+		b.state.PendingToyMime = ""
+		b.startNewLockFlow()
+		return
+	}
+
+	var num int
+	fmt.Sscanf(strings.TrimSpace(text), "%d", &num)
+	if num < 1 || num > len(cages) {
+		lines := []string{"❌ Número inválido. ¿Cuál jaula tienes puesta?"}
+		for i, c := range cages {
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, c.Name))
+		}
+		b.Send(strings.Join(lines, "\n"))
+		return
+	}
+
+	selected := cages[num-1]
+	b.db.SetToyInUse(selected.ID, true)
+	b.reloadToysFromDB()
+	b.state.PendingToyMime = ""
+	b.mustSaveState()
+
+	b.Send(fmt.Sprintf("_Jaula seleccionada: *%s*_", selected.Name))
+	b.startNewLockFlow()
+}
+
 // HandleExplain explica cómo completar y fotografiar la tarea actual
 func (b *Bot) HandleExplain() {
 	if b.state.CurrentTask == nil || b.state.CurrentTask.Completed || b.state.CurrentTask.Failed {
@@ -634,6 +670,7 @@ func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
 			ID: toyID, Name: toyInfo.Name,
 			Description: toyInfo.Description,
 			PhotoURL:    photoURL,
+			Type:        toyInfo.Type,
 			CreatedAt:   time.Now(),
 		})
 	}
@@ -643,6 +680,7 @@ func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
 		ID: toyID, Name: toyInfo.Name,
 		Description: toyInfo.Description,
 		PhotoURL:    photoURL,
+		Type:        toyInfo.Type,
 		AddedAt:     time.Now(),
 	})
 	b.mustSaveState()
@@ -666,6 +704,12 @@ func (b *Bot) HandleChat(text string) {
 	b.chatMu.Unlock()
 
 	textLower := strings.ToLower(text)
+
+	// Detectar selección de jaula durante flujo de newlock
+	if b.state.PendingToyMime == "selecting_cage" {
+		b.handleCageSelection(text)
+		return
+	}
 
 	// Detectar ruegos sobre evento activo (freeze/hidetime)
 	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
@@ -1095,8 +1139,54 @@ func (b *Bot) HandleNewLock(args string) {
 		b.state.ManualDurationSeconds = 0
 	}
 
-	b.Send("▪️ *NUEVA SESIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\nCierra el candado. Gira los diales sin mirar.\n\nCuando esté listo, manda la foto.\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La imagen será eliminada automáticamente._")
+	// Si hay jaulas registradas, preguntar cuál tiene puesta
+	if b.db != nil {
+		cages, err := b.db.GetCages()
+		if err == nil && len(cages) > 0 {
+			if len(cages) == 1 {
+				// Solo una jaula — marcarla automáticamente
+				b.db.SetToyInUse(cages[0].ID, true)
+				b.reloadToysFromDB()
+				b.Send(fmt.Sprintf("_Jaula registrada: *%s*_", cages[0].Name))
+			} else {
+				// Varias jaulas — preguntar cuál tiene puesta
+				lines := []string{"▪️ *¿CUÁL JAULA TIENES PUESTA?*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
+				for i, c := range cages {
+					lines = append(lines, fmt.Sprintf("%d. %s", i+1, c.Name))
+				}
+				lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
+				b.Send(strings.Join(lines, "\n"))
+				b.state.PendingToyMime = "selecting_cage"
+				b.mustSaveState()
+				return
+			}
+		}
+	}
 
+	b.startNewLockFlow()
+}
+
+// reloadToysFromDB recarga los juguetes desde la DB al estado en memoria
+func (b *Bot) reloadToysFromDB() {
+	if b.db == nil {
+		return
+	}
+	toys, err := b.db.GetToys()
+	if err != nil {
+		return
+	}
+	b.state.Toys = []models.Toy{}
+	for _, t := range toys {
+		b.state.Toys = append(b.state.Toys, models.Toy{
+			ID: t.ID, Name: t.Name, Description: t.Description,
+			PhotoURL: t.PhotoURL, Type: t.Type, InUse: t.InUse,
+			AddedAt: t.CreatedAt,
+		})
+	}
+}
+
+func (b *Bot) startNewLockFlow() {
+	b.Send("▪️ *NUEVA SESIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\nCierra el candado. Gira los diales sin mirar.\n\nCuando esté listo, manda la foto.\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La imagen será eliminada automáticamente._")
 	b.state.AwaitingLockPhoto = true
 	b.mustSaveState()
 }
@@ -1243,6 +1333,12 @@ func (b *Bot) CheckLockFinished() {
 			b.state.TotalTimeRemovedHours,
 			0,
 		)
+	}
+
+	// Desmarcar jaula al terminar el lock
+	if b.db != nil {
+		b.db.ClearAllInUse()
+		b.reloadToysFromDB()
 	}
 
 	b.state.CurrentLockID = ""

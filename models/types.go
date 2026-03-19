@@ -35,6 +35,8 @@ type Toy struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	PhotoURL    string    `json:"photo_url"`
+	Type        string    `json:"type"`   // "cage", "plug", "vibrator", "restraint", "other"
+	InUse       bool      `json:"in_use"` // true si está puesto ahora mismo
 	AddedAt     time.Time `json:"added_at"`
 }
 

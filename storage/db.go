@@ -28,7 +28,6 @@ func NewDB(path string) (*DB, error) {
 	return db, nil
 }
 
-// Migrations
 func (db *DB) migrate() error {
 	_, err := db.conn.Exec(`
 	CREATE TABLE IF NOT EXISTS toys (
@@ -36,6 +35,8 @@ func (db *DB) migrate() error {
 		name        TEXT NOT NULL,
 		description TEXT,
 		photo_url   TEXT,
+		type        TEXT DEFAULT 'other',
+		in_use      INTEGER DEFAULT 0,
 		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -110,20 +111,26 @@ type Toy struct {
 	Name        string
 	Description string
 	PhotoURL    string
+	Type        string // "cage", "plug", "vibrator", "restraint", "other"
+	InUse       bool
 	CreatedAt   time.Time
 }
 
 func (db *DB) SaveToy(t *Toy) error {
+	inUse := 0
+	if t.InUse {
+		inUse = 1
+	}
 	_, err := db.conn.Exec(`
-		INSERT OR REPLACE INTO toys (id, name, description, photo_url, created_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		t.ID, t.Name, t.Description, t.PhotoURL, t.CreatedAt,
+		INSERT OR REPLACE INTO toys (id, name, description, photo_url, type, in_use, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Name, t.Description, t.PhotoURL, t.Type, inUse, t.CreatedAt,
 	)
 	return err
 }
 
 func (db *DB) GetToys() ([]*Toy, error) {
-	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, created_at FROM toys ORDER BY created_at`)
+	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, type, in_use, created_at FROM toys ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -132,12 +139,52 @@ func (db *DB) GetToys() ([]*Toy, error) {
 	var toys []*Toy
 	for rows.Next() {
 		t := &Toy{}
-		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.PhotoURL, &t.CreatedAt); err != nil {
+		var inUseInt int
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.PhotoURL, &t.Type, &inUseInt, &t.CreatedAt); err != nil {
 			return nil, err
 		}
+		t.InUse = inUseInt == 1
 		toys = append(toys, t)
 	}
 	return toys, nil
+}
+
+func (db *DB) GetCages() ([]*Toy, error) {
+	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, type, in_use, created_at FROM toys WHERE type='cage' ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var toys []*Toy
+	for rows.Next() {
+		t := &Toy{}
+		var inUseInt int
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.PhotoURL, &t.Type, &inUseInt, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		t.InUse = inUseInt == 1
+		toys = append(toys, t)
+	}
+	return toys, nil
+}
+
+func (db *DB) SetToyInUse(id string, inUse bool) error {
+	val := 0
+	if inUse {
+		val = 1
+	}
+	// Primero desmarcar todas las jaulas si vamos a marcar una
+	if inUse {
+		db.conn.Exec(`UPDATE toys SET in_use=0 WHERE type='cage'`)
+	}
+	_, err := db.conn.Exec(`UPDATE toys SET in_use=? WHERE id=?`, val, id)
+	return err
+}
+
+func (db *DB) ClearAllInUse() error {
+	_, err := db.conn.Exec(`UPDATE toys SET in_use=0`)
+	return err
 }
 
 func (db *DB) DeleteToy(id string) error {

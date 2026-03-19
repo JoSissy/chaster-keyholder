@@ -151,20 +151,29 @@ func buildSystemPrompt(locked bool) string {
 func buildContext(toys []models.Toy, daysLocked int) string {
 	intensity := models.GetIntensity(daysLocked)
 
-	toyNames := []string{}
+	inUse := []string{}
+	available := []string{}
 	for _, t := range toys {
-		toyNames = append(toyNames, t.Name)
+		if t.InUse {
+			inUse = append(inUse, t.Name)
+		} else {
+			available = append(available, t.Name)
+		}
 	}
 
-	toyContext := "sin juguetes registrados"
-	if len(toyNames) > 0 {
-		toyContext = strings.Join(toyNames, ", ")
+	ctx := fmt.Sprintf("Jolie lleva %d días encerrada. Nivel de intensidad: %s.", daysLocked, intensity.String())
+
+	if len(inUse) > 0 {
+		ctx += fmt.Sprintf(" Juguetes puestos ahora mismo: %s.", strings.Join(inUse, ", "))
+	}
+	if len(available) > 0 {
+		ctx += fmt.Sprintf(" Juguetes disponibles: %s.", strings.Join(available, ", "))
+	}
+	if len(inUse) == 0 && len(available) == 0 {
+		ctx += " Sin juguetes registrados."
 	}
 
-	return fmt.Sprintf(
-		"Jolie lleva %d días encerrada. Nivel de intensidad: %s. Juguetes disponibles: %s.",
-		daysLocked, intensity.String(), toyContext,
-	)
+	return ctx
 }
 
 // buildContextFree contexto cuando no hay sesión activa
@@ -769,24 +778,33 @@ Respond with ONLY the reason text, nothing else.`,
 
 // ── Juguetes ───────────────────────────────────────────────────────────────
 
-// ToyInfo nombre y descripción generados por la IA para un juguete
+// ToyInfo nombre, descripción y tipo generados por la IA para un juguete
 type ToyInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Type        string `json:"type"` // "cage", "plug", "vibrator", "restraint", "other"
 }
 
-// DescribeToy analiza la foto de un juguete y genera nombre y descripción
+// DescribeToy analiza la foto de un juguete y genera nombre, descripción y tipo
 func (c *Client) DescribeToy(imageBytes []byte, mimeType, hint string) (*ToyInfo, error) {
 	b64 := base64.StdEncoding.EncodeToString(imageBytes)
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
 
-	system := `You analyze photos of sex toys and generate a short name and description.
-Respond ONLY in JSON: {"name": "short name", "description": "1-2 sentence description"}
+	system := `You analyze photos of sex toys and generate a short name, description and type.
+Respond ONLY in JSON: {"name": "short name", "description": "1-2 sentence description", "type": "cage|plug|vibrator|restraint|other"}
+
+Type definitions:
+- "cage": chastity cage or device that encloses genitals
+- "plug": anal or vaginal plug/dildo
+- "vibrator": vibrating device
+- "restraint": handcuffs, rope, collar, leash, or any restraint
+- "other": anything else
+
 Be direct and descriptive. Name should be concise (2-4 words max).
-Description should mention material, size if visible, and main use.`
+Description should mention material, color if visible, size, and main use.`
 
 	prompt := fmt.Sprintf(
-		`Analyze this sex toy photo. The user calls it "%s". Generate a precise name and description.`,
+		`Analyze this sex toy photo. The user calls it "%s". Generate a precise name, description and classify its type.`,
 		hint,
 	)
 
