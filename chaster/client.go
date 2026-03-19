@@ -447,19 +447,45 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int) (string, 
 		map[string]interface{}{
 			"slug": "tasks",
 			"config": map[string]interface{}{
-				"tasks":                          []interface{}{},
-				"voteEnabled":                    true,
+				"tasks": []interface{}{
+					map[string]interface{}{
+						"task":                 "Kneel on the floor and photograph your cage from above",
+						"points":               0,
+						"verificationRequired": true,
+						"duration":             1800,
+					},
+					map[string]interface{}{
+						"task":                 "Stand straight and photograph your locked device from below",
+						"points":               0,
+						"verificationRequired": true,
+						"duration":             1800,
+					},
+				},
+				"voteEnabled":                    false,
 				"voteDuration":                   1800, // 30 minutos en segundos
 				"startVoteAfterLastVote":         false,
 				"enablePoints":                   false,
 				"pointsRequired":                 0,
-				"allowWearerToEditTasks":         false,
+				"allowWearerToEditTasks":         true,
 				"allowWearerToConfigureTasks":    false,
-				"preventWearerFromAssigningTasks": true,
+				"preventWearerFromAssigningTasks": false,
 				"allowWearerToChooseTasks":       false,
-				"actionsOnAbandonedTask": map[string]interface{}{
-					"name":   "add_time",
-					"params": 3600,
+				"actionsOnAbandonedTask": []interface{}{
+					map[string]interface{}{
+						"name": "pillory",
+						"params": map[string]interface{}{
+							"duration": 900, // 15 min en cepo
+						},
+					},
+				},
+				"peerVerification": map[string]interface{}{
+					"enabled": true,
+					"punishments": []interface{}{
+						map[string]interface{}{
+							"name":   "add_time",
+							"params": 3600, // +1h si la comunidad rechaza
+						},
+					},
 				},
 			},
 			"mode":       "unlimited",
