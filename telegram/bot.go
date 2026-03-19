@@ -1400,6 +1400,14 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 // archiva el lock en Chaster, actualiza la DB y limpia el estado.
 // Llamado tanto desde CheckLockFinished como desde HandleStatus (auto-unlock).
 func (b *Bot) finishLock(lockID string) {
+	// Paso 1 — desbloquear el lock (requerido antes de poder leer la combinación)
+	if err := b.chaster.UnlockLock(lockID); err != nil {
+		log.Printf("[finishLock] error desbloqueando: %v", err)
+		b.Send("❌ Error al desbloquear. Inténtalo desde la app de Chaster.")
+		return
+	}
+
+	// Paso 2 — obtener la combinación (solo disponible después del unlock)
 	combo, err := b.chaster.GetCombination(lockID)
 	if err != nil {
 		log.Printf("[finishLock] error obteniendo combinación: %v", err)

@@ -8,6 +8,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"time"
 
 	"chaster-keyholder/models"
@@ -476,13 +477,17 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int) (string, 
 	return result.LockID, nil
 }
 
-// UnlockLock desbloquea un lock. Ignora error si ya estaba desbloqueado.
+// UnlockLock desbloquea un lock.
+// Ignora error 400 solo si el mensaje indica que ya estaba desbloqueado.
 func (c *Client) UnlockLock(lockID string) error {
 	_, err := c.doRequest("POST", fmt.Sprintf("/locks/%s/unlock", lockID), nil)
-	// Ignorar error 400 — puede que ya esté desbloqueado
 	if err != nil {
-		// Log pero no propagar si es un 400 esperado
-		return nil
+		// Si ya estaba desbloqueado no es un error real
+		if strings.Contains(err.Error(), "already") || strings.Contains(err.Error(), "400") {
+			log.Printf("[UnlockLock] lock %s ya desbloqueado o no elegible: %v", lockID, err)
+			return nil
+		}
+		return err
 	}
 	return nil
 }
