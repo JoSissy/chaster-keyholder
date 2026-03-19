@@ -275,6 +275,23 @@ func (db *DB) GetTasksByLock(lockID string) ([]*Task, error) {
 	return tasks, nil
 }
 
+func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
+	rows, err := db.conn.Query(`SELECT description FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var descs []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		descs = append(descs, d)
+	}
+	return descs, nil
+}
+
 // ── Events ────────────────────────────────────────────────────────────────
 
 type Event struct {

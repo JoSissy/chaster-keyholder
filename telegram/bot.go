@@ -68,6 +68,17 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 			b.state.Toys = append(b.state.Toys, storageToyToModel(t))
 		}
 	}
+	// Restaurar pendingAction desde el estado para recuperación tras reinicio
+	switch {
+	case b.state.RitualStep == 1:
+		b.pendingAction = "ritual_photo"
+	case b.state.RitualStep == 2:
+		b.pendingAction = "ritual_message"
+	case b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt):
+		b.pendingAction = "checkin_photo"
+	case b.state.AssignedPlugID != "" && !b.state.PlugConfirmed && b.state.AssignedPlugDate == todayStr():
+		b.pendingAction = "plug_photo"
+	}
 	return b, nil
 }
 
@@ -344,7 +355,11 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 		intensity = forcedLevel
 	}
 
-	taskDesc, err := b.ai.GenerateDailyTask(days, b.state.Toys, intensity)
+	var recentTasks []string
+	if b.db != nil {
+		recentTasks, _ = b.db.GetRecentTaskDescriptions(10)
+	}
+	taskDesc, err := b.ai.GenerateDailyTask(days, b.state.Toys, intensity, recentTasks)
 	if err != nil {
 		b.Send("❌ Error generando tarea.")
 		return
@@ -437,7 +452,9 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 		b.state.TotalTimeRemovedHours += rewardHours
 		b.state.TasksCompleted++
 		b.state.TasksStreak++
+		newStreak := b.state.TasksStreak
 		b.mustSaveState()
+		defer b.checkStreakMilestone(newStreak)
 
 		// Guardar en DB
 		if b.db != nil {
@@ -495,6 +512,7 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 			"▪️ *EVIDENCIA RECHAZADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n\n*+%dh* añadidas a tu condena.",
 			aiMsg, verdict.Reason, penaltyHours,
 		))
+		b.autoPillory("evidencia de tarea rechazada")
 	}
 }
 
@@ -530,6 +548,7 @@ func (b *Bot) HandleFail() {
 
 	msg, _ := b.ai.GenerateTaskPenalty(penaltyHours, "confesó que no pudo completar la tarea")
 	b.Send("▪️ *TAREA ABANDONADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + msg + fmt.Sprintf("\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+%dh* añadidas.", penaltyHours))
+	b.autoPillory("confesó que no pudo completar la tarea")
 }
 
 // ── Freeze / Timer visibility ──────────────────────────────────────────────
@@ -775,6 +794,12 @@ func (b *Bot) HandleChat(text string) {
 	b.chatMu.Unlock()
 
 	textLower := strings.ToLower(text)
+
+	// Ritual matutino — respuesta de texto
+	if b.pendingAction == "ritual_message" {
+		b.HandleRitualMessage(text)
+		return
+	}
 
 	// Detectar selección de jaula durante flujo de newlock
 	if b.pendingAction == "selecting_cage" {
@@ -1077,6 +1102,15 @@ func (b *Bot) Start() {
 			} else if b.pendingAction == "new_toy" {
 				b.deleteMessage(msgID)
 				b.HandleToyPhoto(imgBytes, mime)
+			} else if b.pendingAction == "ritual_photo" {
+				b.deleteMessage(msgID)
+				b.HandleRitualPhoto(imgBytes, mime)
+			} else if b.pendingAction == "plug_photo" {
+				b.deleteMessage(msgID)
+				b.HandlePlugPhoto(imgBytes, mime)
+			} else if b.pendingAction == "checkin_photo" {
+				b.deleteMessage(msgID)
+				b.HandleCheckinPhoto(imgBytes, mime)
 			} else {
 				b.deleteMessage(msgID)
 				b.HandlePhoto(imgBytes, mime)
@@ -1134,6 +1168,8 @@ func (b *Bot) Start() {
 			b.HandleTestRemoveTime(strings.TrimPrefix(text, "/testremove "))
 		case text == "/testmsg":
 			b.SendRandomMessageTest()
+		case text == "/ruleta":
+			b.HandleRuleta()
 		case text != "" && !strings.HasPrefix(text, "/"):
 			b.HandleChat(text)
 		}
@@ -1795,6 +1831,334 @@ func (b *Bot) CheckActiveEventExpiry() {
 			return
 		}
 		b.Send("👁 *TIMER RESTAURADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ya puedes ver el tiempo de nuevo. Disfruta mientras dura._")
+	}
+}
+
+// ── Helpers de nuevas funcionalidades ─────────────────────────────────────
+
+func todayStr() string {
+	loc, err := time.LoadLocation("America/Bogota")
+	if err != nil {
+		loc = time.FixedZone("COT", -5*60*60)
+	}
+	return time.Now().In(loc).Format("2006-01-02")
+}
+
+func (b *Bot) getAssignedPlugName() string {
+	if b.state.AssignedPlugID == "" {
+		return ""
+	}
+	for _, t := range b.state.Toys {
+		if t.ID == b.state.AssignedPlugID {
+			return t.Name
+		}
+	}
+	return ""
+}
+
+func (b *Bot) autoPillory(reason string) {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		return
+	}
+	pilloryReason, perr := b.ai.GeneratePilloryReason(b.daysLocked(), b.state.Toys, reason)
+	if perr != nil || strings.TrimSpace(pilloryReason) == "" {
+		pilloryReason = reason
+	}
+	pilloryReason = strings.TrimSpace(pilloryReason)
+	if err := b.chaster.PutInPillory(lock.ID, 30*60, pilloryReason); err != nil {
+		log.Printf("[autoPillory] error: %v", err)
+		return
+	}
+	b.Send(fmt.Sprintf("⛓ *AL CEPO — 30 minutos*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", reason))
+}
+
+func (b *Bot) checkStreakMilestone(newStreak int) {
+	if newStreak != 3 && newStreak != 6 && newStreak != 10 {
+		return
+	}
+	msg, err := b.ai.GenerateStreakReward(newStreak, b.daysLocked(), b.state.Toys)
+	if err != nil || strings.TrimSpace(msg) == "" {
+		return
+	}
+	b.Send(fmt.Sprintf("🏆 *RACHA DE %d TAREAS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", newStreak, stripMarkdown(msg)))
+}
+
+// ── Ritual matutino ────────────────────────────────────────────────────────
+
+func (b *Bot) StartMorningRitual() {
+	if b.state.LastRitualDate == todayStr() {
+		return
+	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
+	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	msg, err := b.ai.GenerateRitualIntro(b.daysLocked(), b.state.Toys, obedienceLevel)
+	if err != nil {
+		return
+	}
+	b.state.RitualStep = 1
+	b.mustSaveState()
+	b.pendingAction = "ritual_photo"
+	b.Send("🌅 *RITUAL MATUTINO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(msg) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Manda la foto de tu jaula puesta._")
+}
+
+func (b *Bot) HandleRitualPhoto(imgBytes []byte, mime string) {
+	b.Send("_Verificando..._")
+	verdict, err := b.ai.VerifyCheckinPhoto(imgBytes, mime, b.getAssignedPlugName())
+	if err != nil {
+		b.Send("❌ Error verificando la foto. Inténtalo de nuevo.")
+		return
+	}
+	switch verdict.Status {
+	case "approved":
+		b.state.RitualStep = 2
+		b.mustSaveState()
+		b.pendingAction = "ritual_message"
+		b.Send("✅ _Foto verificada._\n\nAhora escríbeme cómo empiezas el día. ¿Cómo te sientes con la jaula puesta?")
+	case "retry", "rejected":
+		b.Send(fmt.Sprintf("❌ *Foto rechazada*\n\n_%s_\n\nInténtalo de nuevo.", verdict.Reason))
+	}
+}
+
+func (b *Bot) HandleRitualMessage(text string) {
+	b.pendingAction = ""
+	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	response, err := b.ai.GenerateRitualResponse(text, b.daysLocked(), b.state.Toys, obedienceLevel)
+	if err != nil {
+		response = "Bien. Tienes permiso para seguir con tu día. No olvides quién manda."
+	}
+	b.state.RitualStep = 0
+	b.state.LastRitualDate = todayStr()
+	b.mustSaveState()
+	b.Send(stripMarkdown(response))
+}
+
+// ── Plug del día ───────────────────────────────────────────────────────────
+
+func (b *Bot) SendPlugAssignment() {
+	if b.state.AssignedPlugDate == todayStr() {
+		return
+	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
+	var plugs []models.Toy
+	for _, t := range b.state.Toys {
+		if t.Type == "plug" {
+			plugs = append(plugs, t)
+		}
+	}
+	if len(plugs) == 0 {
+		return
+	}
+	selected := plugs[rand.Intn(len(plugs))]
+	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	msg, err := b.ai.GeneratePlugAssignment(selected.Name, b.daysLocked(), obedienceLevel)
+	if err != nil {
+		return
+	}
+	b.state.AssignedPlugID = selected.ID
+	b.state.AssignedPlugDate = todayStr()
+	b.state.PlugConfirmed = false
+	b.mustSaveState()
+	b.pendingAction = "plug_photo"
+	b.Send(fmt.Sprintf(
+		"🔌 *PLUG DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\nPlug asignado: *%s*\n\n_Cuando lo tengas puesto, manda la foto._",
+		stripMarkdown(msg), selected.Name,
+	))
+}
+
+func (b *Bot) HandlePlugPhoto(imgBytes []byte, mime string) {
+	b.Send("_Verificando..._")
+	plugName := b.getAssignedPlugName()
+	if plugName == "" {
+		b.pendingAction = ""
+		return
+	}
+	verdict, err := b.ai.VerifyPlugPhoto(imgBytes, mime, plugName)
+	if err != nil {
+		b.Send("❌ Error verificando la foto. Inténtalo de nuevo.")
+		return
+	}
+	switch verdict.Status {
+	case "approved":
+		b.pendingAction = ""
+		b.state.PlugConfirmed = true
+		b.mustSaveState()
+		b.Send(fmt.Sprintf("✅ *PLUG CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s puesto, como debe ser. Que dure todo el día._", plugName))
+	case "retry":
+		b.Send(fmt.Sprintf("⚠️ *Intenta de nuevo*\n\n_%s_", verdict.Reason))
+	case "rejected":
+		b.pendingAction = ""
+		b.Send(fmt.Sprintf("❌ *Plug no detectado*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.Reason))
+		b.autoPillory(fmt.Sprintf("no llevó el %s asignado", plugName))
+	}
+}
+
+// ── Check-ins espontáneos ──────────────────────────────────────────────────
+
+func (b *Bot) TriggerCheckin() {
+	if b.state.PendingCheckin {
+		return
+	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
+	plugName := b.getAssignedPlugName()
+	msg, err := b.ai.GenerateCheckinRequest(b.daysLocked(), plugName)
+	if err != nil {
+		return
+	}
+	expiresAt := time.Now().Add(30 * time.Minute)
+	b.state.PendingCheckin = true
+	b.state.CheckinExpiresAt = &expiresAt
+	b.mustSaveState()
+	b.pendingAction = "checkin_photo"
+	b.Send(fmt.Sprintf(
+		"📸 *CHECK-IN REQUERIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Tienes 30 minutos para responder._",
+		stripMarkdown(msg),
+	))
+}
+
+func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
+	if !b.state.PendingCheckin {
+		b.pendingAction = ""
+		return
+	}
+	b.Send("_Verificando..._")
+	plugName := b.getAssignedPlugName()
+	verdict, err := b.ai.VerifyCheckinPhoto(imgBytes, mime, plugName)
+	if err != nil {
+		b.Send("❌ Error verificando la foto. Inténtalo de nuevo.")
+		return
+	}
+	switch verdict.Status {
+	case "approved":
+		b.pendingAction = ""
+		b.state.PendingCheckin = false
+		b.state.CheckinExpiresAt = nil
+		b.mustSaveState()
+		b.Send("✅ *CHECK-IN VERIFICADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todo en orden. Puedes seguir._")
+	case "retry":
+		b.Send(fmt.Sprintf("⚠️ *Intenta de nuevo*\n\n_%s_", verdict.Reason))
+	case "rejected":
+		b.pendingAction = ""
+		b.state.PendingCheckin = false
+		b.state.CheckinExpiresAt = nil
+		b.mustSaveState()
+		b.Send(fmt.Sprintf("❌ *CHECK-IN RECHAZADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.Reason))
+		b.autoPillory("check-in rechazado — evidencia no válida")
+	}
+}
+
+func (b *Bot) CheckCheckinExpiry() {
+	if !b.state.PendingCheckin || b.state.CheckinExpiresAt == nil {
+		return
+	}
+	if time.Now().Before(*b.state.CheckinExpiresAt) {
+		return
+	}
+	b.state.PendingCheckin = false
+	b.state.CheckinExpiresAt = nil
+	b.pendingAction = ""
+	b.mustSaveState()
+	b.Send("⏰ *CHECK-IN IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No respondiste a tiempo. Consecuencias._")
+	b.autoPillory("no respondió al check-in a tiempo")
+}
+
+// ── Condicionamiento ───────────────────────────────────────────────────────
+
+func (b *Bot) SendConditioningMessage() {
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
+	loc, _ := time.LoadLocation("America/Bogota")
+	hour := time.Now().In(loc).Hour()
+	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	msg, err := b.ai.GenerateConditioningMessage(b.daysLocked(), b.state.Toys, hour, obedienceLevel)
+	if err != nil {
+		return
+	}
+	b.Send(stripMarkdown(msg))
+}
+
+// ── Ruleta diaria ──────────────────────────────────────────────────────────
+
+func (b *Bot) HandleRuleta() {
+	if b.state.LastRuletaDate == todayStr() {
+		b.Send("Ya giraste la ruleta hoy. Vuelve mañana.")
+		return
+	}
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	b.Send("_Girando la ruleta..._")
+	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	outcome, err := b.ai.SpinRuleta(b.daysLocked(), b.state.Toys, b.state.TasksCompleted, b.state.TasksFailed, obedienceLevel)
+	if err != nil {
+		b.Send("❌ Error girando la ruleta.")
+		return
+	}
+	b.state.LastRuletaDate = todayStr()
+	b.mustSaveState()
+
+	switch outcome.Action {
+	case "remove_time":
+		if err := b.chaster.RemoveTime(lock.ID, outcome.Value*3600); err != nil {
+			log.Printf("[Ruleta] error remove_time: %v", err)
+		} else {
+			b.state.TotalTimeRemovedHours += outcome.Value
+			b.mustSaveState()
+		}
+		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n*-%dh* quitadas de tu condena.", stripMarkdown(outcome.Message), outcome.Value))
+	case "add_time":
+		if err := b.chaster.AddTime(lock.ID, outcome.Value*3600); err != nil {
+			log.Printf("[Ruleta] error add_time: %v", err)
+		} else {
+			b.state.TotalTimeAddedHours += outcome.Value
+			b.mustSaveState()
+		}
+		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+%dh* añadidas a tu condena.", stripMarkdown(outcome.Message), outcome.Value))
+	case "pillory":
+		mins := outcome.Value
+		if mins <= 0 {
+			mins = 15
+		}
+		reason, _ := b.ai.GeneratePilloryReason(b.daysLocked(), b.state.Toys, "ruleta")
+		if strings.TrimSpace(reason) == "" {
+			reason = "Roulette sent her to pillory"
+		}
+		b.chaster.PutInPillory(lock.ID, mins*60, strings.TrimSpace(reason))
+		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n⛓ Cepo por *%d minutos*.", stripMarkdown(outcome.Message), mins))
+	case "freeze":
+		mins := outcome.Value
+		if mins <= 0 {
+			mins = 60
+		}
+		b.chaster.FreezeLock(lock.ID)
+		expiresAt := time.Now().Add(time.Duration(mins) * time.Minute)
+		b.state.ActiveEvent = &models.ActiveEvent{Type: "freeze", ExpiresAt: expiresAt}
+		b.mustSaveState()
+		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n❄️ Congelada por *%d minutos*.", stripMarkdown(outcome.Message), mins))
+	case "hide_time":
+		mins := outcome.Value
+		if mins <= 0 {
+			mins = 120
+		}
+		b.chaster.SetTimerVisibility(lock.ID, false)
+		expiresAt := time.Now().Add(time.Duration(mins) * time.Minute)
+		b.state.ActiveEvent = &models.ActiveEvent{Type: "hidetime", ExpiresAt: expiresAt}
+		b.mustSaveState()
+		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n🙈 Timer oculto por *%d minutos*.", stripMarkdown(outcome.Message), mins))
+	case "extra_task":
+		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Una tarea extra te espera._", stripMarkdown(outcome.Message)))
+		b.handleTaskInternal(models.GetIntensity(b.daysLocked()))
+	default:
+		b.Send(fmt.Sprintf("🎰 *RULETA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", stripMarkdown(outcome.Message)))
 	}
 }
 

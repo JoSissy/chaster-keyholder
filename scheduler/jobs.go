@@ -75,6 +75,59 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
+	// Ritual matutino — 8:30 AM
+	s.NewJob(
+		gocron.CronJob("30 8 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Iniciando ritual matutino...")
+			bot.StartMorningRitual()
+		}),
+	)
+
+	// Asignación de plug — 8:45 AM
+	s.NewJob(
+		gocron.CronJob("45 8 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Asignando plug del día...")
+			bot.SendPlugAssignment()
+		}),
+	)
+
+	// Mensajes de condicionamiento — 10am y 2pm
+	s.NewJob(
+		gocron.CronJob("0 10,14 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Enviando mensaje de condicionamiento...")
+			bot.SendConditioningMessage()
+		}),
+	)
+
+	// Check-ins espontáneos — 11am y 3pm
+	s.NewJob(
+		gocron.CronJob("0 11,15 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Disparando check-in...")
+			bot.TriggerCheckin()
+		}),
+	)
+
+	// Ruleta diaria — 6pm
+	s.NewJob(
+		gocron.CronJob("0 18 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Girando ruleta diaria...")
+			bot.HandleRuleta()
+		}),
+	)
+
+	// Verificar expiración de check-ins — cada 5 minutos
+	s.NewJob(
+		gocron.CronJob("*/5 * * * *", false),
+		gocron.NewTask(func() {
+			bot.CheckCheckinExpiry()
+		}),
+	)
+
 	s.Start()
 	log.Println("✅ Scheduler iniciado")
 }
