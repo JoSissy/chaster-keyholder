@@ -99,4 +99,48 @@ type AppState struct {
 	TasksFailed           int          `json:"tasks_failed"`
 	ActiveEvent           *ActiveEvent `json:"active_event,omitempty"`
 	TasksStreak           int          `json:"tasks_streak"`
+
+	// Ritual matutino
+	LastRitualDate string `json:"last_ritual_date"` // "2006-01-02" COT
+	RitualStep     int    `json:"ritual_step"`       // 0=none/done, 1=awaiting photo, 2=awaiting message
+
+	// Control de plug diario
+	AssignedPlugID   string `json:"assigned_plug_id"`
+	AssignedPlugDate string `json:"assigned_plug_date"` // "2006-01-02" COT
+	PlugConfirmed    bool   `json:"plug_confirmed"`
+
+	// Check-ins espontáneos
+	PendingCheckin  bool       `json:"pending_checkin"`
+	CheckinExpiresAt *time.Time `json:"checkin_expires_at,omitempty"`
+
+	// Ruleta
+	LastRuletaDate string `json:"last_ruleta_date"` // "2006-01-02" COT
+}
+
+// GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual
+func GetObedienceLevel(tasksStreak int) int {
+	switch {
+	case tasksStreak >= 10:
+		return 3
+	case tasksStreak >= 6:
+		return 2
+	case tasksStreak >= 3:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// ObedienceLevelString devuelve el nombre del nivel de obediencia
+func ObedienceLevelString(level int) string {
+	switch level {
+	case 3:
+		return "máximo"
+	case 2:
+		return "intenso"
+	case 1:
+		return "moderado"
+	default:
+		return "básico"
+	}
 }

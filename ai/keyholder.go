@@ -220,17 +220,25 @@ Remind her that tomorrow she is still under your control. Use a degrading nickna
 
 // ── Tasks ──────────────────────────────────────────────────────────────────
 
-func (c *Client) GenerateDailyTask(daysLocked int, toys []models.Toy, level models.IntensityLevel) (string, error) {
+func (c *Client) GenerateDailyTask(daysLocked int, toys []models.Toy, level models.IntensityLevel, recentTasks []string) (string, error) {
 	ctx := buildContext(toys, daysLocked)
+
+	recentCtx := ""
+	if len(recentTasks) > 0 {
+		recentCtx = "\n\nRECENT TASKS — do NOT repeat these or anything similar:\n"
+		for i, t := range recentTasks {
+			recentCtx += fmt.Sprintf("%d. %s\n", i+1, t)
+		}
+	}
 
 	prompt := fmt.Sprintf(
 		`%s
-Generate ONE order at intensity level %s. Must be specific, degrading and verifiable with a photo.
+Generate ONE order at intensity level %s. Must be specific, degrading and verifiable with a photo.%s
 
 TYPES (vary, do not repeat):
 - Submissive posture: specific position, humiliating, showing submission
 - Clothing or nudity: wearing or not wearing something specific in a certain way
-- Exposure: showing herself from a specific angle, specific body area
+- Exposure: showing a SPECIFIC body area from a SPECIFIC angle — include "photograph from [angle]"
 - Restraint: immobilizing or limiting herself in a visible way
 - Toy IN USE: if toys are available, use them actively — not just showing them,
   but using them visibly and specifically in the photo
@@ -247,7 +255,7 @@ LEVEL: %s
 RULES:
 - The photo must show something CONCRETE and VISIBLE
 - No "for X minutes"
-- What, how, where — specific
+- Always specify: WHAT to show, HOW, from WHAT ANGLE — this helps the camera frame correctly
 - Maximum 2 lines. Direct order, no introduction.
 - Use degrading nicknames in Spanish when giving the order
 - VERY IMPORTANT: the task must be possible to photograph ALONE — without help.
@@ -258,7 +266,7 @@ RULES:
 - Do NOT require the face to be visible — tasks must be completable without showing the face.
   Focus on the body, posture, toy or requested element, never the face.
 - Write the order in Spanish.`,
-		ctx, level.String(), level.String(),
+		ctx, level.String(), recentCtx, level.String(),
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
@@ -336,7 +344,13 @@ IMPORTANT: when in doubt, prefer "approved" or "retry" over "rejected".
 Definitive rejection must be the last resort.
 Do NOT evaluate head position, face, or facial expression.
 Do NOT require the face to be visible or the head to be in a specific position.
-Evaluate only the concrete elements of the task: body, posture, toy, clothing, requested area.`
+Evaluate only the concrete elements of the task: body, posture, toy, clothing, requested area.
+
+CHASTITY CAGE DETECTION — when the task involves the cage:
+A chastity cage is a plastic or metal device worn on the male genitals.
+It consists of a tube/cage structure and a ring around the base — it may look like a small device
+at the groin area. It does NOT need to be the main focus — if it is visible at the edge or partially,
+that is sufficient. Do NOT reject solely because the cage is small or partially visible in the frame.`
 
 	ctx := buildContext(toys, daysLocked)
 	textPrompt := fmt.Sprintf(
@@ -829,4 +843,243 @@ Description should mention material, color if visible, size, and main use. Write
 		info.Name = hint
 	}
 	return &info, nil
+}
+
+// ── Obediencia ─────────────────────────────────────────────────────────────
+
+func obedienceContext(level int) string {
+	switch level {
+	case 3:
+		return " Her obedience is at maximum — she has been completing tasks consistently. Demand more."
+	case 2:
+		return " Her obedience is high — she has been performing well. Push her limits."
+	case 1:
+		return " Her obedience is moderate — she has some consistency. Keep the pressure up."
+	default:
+		return " Her obedience is basic — she is just starting or has been failing."
+	}
+}
+
+// ── Ritual matutino ────────────────────────────────────────────────────────
+
+// GenerateRitualIntro sends the morning ritual instruction (step 1: photo)
+func (c *Client) GenerateRitualIntro(daysLocked int, toys []models.Toy, obedienceLevel int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	prompt := fmt.Sprintf(
+		`%s%s
+Start the morning ritual. She must complete two steps before she is allowed to work:
+1. Send a photo showing she is properly caged
+2. Write a brief submission message to you
+Tell her this in your dominant style. Make it feel like a mandatory check-in, not optional.
+Maximum 3 lines. Respond in Spanish.`,
+		ctx, obedienceContext(obedienceLevel),
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
+// GenerateRitualResponse responds after ritual is complete and grants permission to work
+func (c *Client) GenerateRitualResponse(userMessage string, daysLocked int, toys []models.Toy, obedienceLevel int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	prompt := fmt.Sprintf(
+		`%s%s
+Jolie completed her morning ritual. She submitted: "%s"
+Grant her "permission to work" — not kindly, just acknowledging she did what she was told.
+Condescending, dominant. Maximum 2 lines. Respond in Spanish.`,
+		ctx, obedienceContext(obedienceLevel), userMessage,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
+// ── Plug diario ────────────────────────────────────────────────────────────
+
+// GeneratePlugAssignment generates the plug assignment message for the day
+func (c *Client) GeneratePlugAssignment(plugName string, daysLocked int, obedienceLevel int) (string, error) {
+	prompt := fmt.Sprintf(
+		`Jolie has been locked for %d days.%s
+Today she must wear the %s all day while she works from home.
+Tell her to put it on now and send a photo confirmation within 20 minutes.
+Direct, commanding. Maximum 2 lines. Respond in Spanish.`,
+		daysLocked, obedienceContext(obedienceLevel), plugName,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
+// VerifyPlugPhoto verifies that the photo shows the assigned plug in use
+func (c *Client) VerifyPlugPhoto(imageBytes []byte, mimeType, plugName string) (*PhotoVerdict, error) {
+	b64 := base64.StdEncoding.EncodeToString(imageBytes)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
+
+	system := fmt.Sprintf(`You are verifying a plug confirmation photo.
+Respond ONLY in valid JSON:
+{"status": "approved", "reason": "brief explanation in Spanish"}
+or
+{"status": "rejected", "reason": "what is missing, in Spanish"}
+
+The user must show the %s clearly inserted/in use on their body.
+Be generous: if the toy is reasonably visible and appears to be in use, approve.
+Do NOT evaluate the face or head. Do NOT reject for lighting or angle unless the toy is completely invisible.
+Only reject if the toy is clearly absent or the photo is obviously unrelated.`, plugName)
+
+	userContent := []contentPart{
+		{Type: "text", Text: fmt.Sprintf("Does this photo clearly show the %s in use?", plugName)},
+		{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
+	}
+
+	raw, err := c.chat("meta-llama/llama-4-scout-17b-16e-instruct", system, userContent)
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var verdict PhotoVerdict
+	if err := json.Unmarshal([]byte(raw), &verdict); err != nil {
+		return &PhotoVerdict{Status: "rejected", Reason: raw}, nil
+	}
+	if verdict.Status == "" {
+		verdict.Status = "rejected"
+	}
+	return &verdict, nil
+}
+
+// ── Check-ins espontáneos ──────────────────────────────────────────────────
+
+// GenerateCheckinRequest generates a sudden check-in demand
+func (c *Client) GenerateCheckinRequest(daysLocked int, assignedPlugName string) (string, error) {
+	plugInfo := ""
+	if assignedPlugName != "" {
+		plugInfo = fmt.Sprintf(" The %s she is wearing must also be visible.", assignedPlugName)
+	}
+	prompt := fmt.Sprintf(
+		`Jolie has been locked for %d days and is working from home right now.
+Send a sudden check-in demand. She has 10 minutes to send a photo showing her cage clearly.%s
+Be sudden and dominant — no explanation, no warning. Maximum 2 lines. Respond in Spanish.`,
+		daysLocked, plugInfo,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
+// VerifyCheckinPhoto verifies the check-in photo shows cage (and plug if assigned)
+func (c *Client) VerifyCheckinPhoto(imageBytes []byte, mimeType, assignedPlugName string) (*PhotoVerdict, error) {
+	b64 := base64.StdEncoding.EncodeToString(imageBytes)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
+
+	plugReq := ""
+	if assignedPlugName != "" {
+		plugReq = fmt.Sprintf("\n2. The %s must also be visible and clearly in use.", assignedPlugName)
+	}
+
+	system := fmt.Sprintf(`You are verifying a spontaneous check-in photo for a chastity slave.
+Respond ONLY in valid JSON:
+{"status": "approved", "reason": "brief explanation in Spanish"}
+or
+{"status": "rejected", "reason": "what is missing, in Spanish"}
+
+Requirements:
+1. A chastity cage must be visible on the body — look for a plastic or metal device at the groin area, cage structure or rings.%s
+
+Be generous: if the cage is reasonably visible (even partially), approve.
+Do NOT evaluate the face. Only reject if the cage is completely absent.`, plugReq)
+
+	userContent := []contentPart{
+		{Type: "text", Text: "Does this check-in photo meet the requirements?"},
+		{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
+	}
+
+	raw, err := c.chat("meta-llama/llama-4-scout-17b-16e-instruct", system, userContent)
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var verdict PhotoVerdict
+	if err := json.Unmarshal([]byte(raw), &verdict); err != nil {
+		return &PhotoVerdict{Status: "rejected", Reason: raw}, nil
+	}
+	if verdict.Status == "" {
+		verdict.Status = "rejected"
+	}
+	return &verdict, nil
+}
+
+// ── Condicionamiento ───────────────────────────────────────────────────────
+
+// GenerateConditioningMessage generates a spontaneous conditioning phrase during work hours
+func (c *Client) GenerateConditioningMessage(daysLocked int, toys []models.Toy, hour, obedienceLevel int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	prompt := fmt.Sprintf(
+		`%s%s Hour: %d:00. Jolie is working remotely from home right now.
+Send a brief conditioning message to interrupt her work mentally.
+Choose one type:
+- Psychological: make her think about what she is / her cage / her submission
+- Discreet order: something small at her desk, no photo (write something, say something out loud alone, etc.)
+- Humiliating reminder: about the toy she is wearing, her cage, her situation
+- Threat or preview: hint at what might happen — no details, just tension
+Rules: Maximum 2 lines. No task, no photo required. Just conditioning. Respond in Spanish.`,
+		ctx, obedienceContext(obedienceLevel), hour,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
+// ── Ruleta ─────────────────────────────────────────────────────────────────
+
+// RuletaOutcome the result of a roulette spin
+type RuletaOutcome struct {
+	Action  string `json:"action"`  // "remove_time"|"add_time"|"pillory"|"freeze"|"hide_time"|"extra_task"|"reward"
+	Value   int    `json:"value"`   // hours for time, minutes for events
+	Message string `json:"message"` // dominant message in Spanish
+}
+
+// SpinRuleta lets the AI decide a random roulette outcome
+func (c *Client) SpinRuleta(daysLocked int, toys []models.Toy, tasksCompleted, tasksFailed, obedienceLevel int) (*RuletaOutcome, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	system := baseSystemLocked + `
+Spin the roulette for Jolie. Decide one outcome. Respond ONLY in JSON:
+{"action": "...", "value": N, "message": "dominant message in Spanish announcing the outcome"}
+
+ACTIONS:
+- "remove_time": remove N hours from sentence (value: 1-3) — reward
+- "add_time": add N hours to sentence (value: 1-2) — punishment
+- "pillory": send to public pillory for N minutes (value: 10-30)
+- "freeze": freeze lock for N minutes (value: 30-90)
+- "hide_time": hide timer for N minutes (value: 60-240)
+- "extra_task": immediate extra task, describe it briefly in the message (value: 0)
+- "reward": special dominant acknowledgment, no time change (value: 0) — rare
+
+WEIGHTS: be unpredictable. Even good behavior can lead to punishment.
+"reward" should appear at most 10% of the time. Vary outcomes — never predictable.`
+
+	prompt := fmt.Sprintf(
+		`%s%s
+Tasks completed: %d | Failed: %d
+Spin the roulette. Be creative. The result must feel random and dominant.`,
+		ctx, obedienceContext(obedienceLevel), tasksCompleted, tasksFailed,
+	)
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var outcome RuletaOutcome
+	if err := json.Unmarshal([]byte(raw), &outcome); err != nil {
+		return &RuletaOutcome{Action: "add_time", Value: 1, Message: "La ruleta ha hablado. +1h."}, nil
+	}
+	if outcome.Value < 0 {
+		outcome.Value = -outcome.Value
+	}
+	return &outcome, nil
+}
+
+// ── Streak rewards ─────────────────────────────────────────────────────────
+
+// GenerateStreakReward generates a message for a task streak milestone
+func (c *Client) GenerateStreakReward(streak int, daysLocked int, toys []models.Toy) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	prompt := fmt.Sprintf(
+		`%s Jolie has completed %d tasks in a row without failing.
+Acknowledge this in your dominant style — not with praise, but condescending recognition.
+At 3: brief cold acknowledgment. At 5: slightly warmer but still contemptuous. At 7+: grudging respect wrapped in dominance.
+Streak: %d. Maximum 2 lines. Respond in Spanish.`,
+		ctx, streak, streak,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
