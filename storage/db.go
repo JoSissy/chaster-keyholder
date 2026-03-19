@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -89,6 +90,20 @@ func (db *DB) migrate() error {
 		decision        TEXT NOT NULL,
 		time_delta_hours INTEGER DEFAULT 0,
 		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS session_state (
+		id                      TEXT PRIMARY KEY DEFAULT 'current',
+		tasks_streak            INTEGER DEFAULT 0,
+		tasks_completed         INTEGER DEFAULT 0,
+		tasks_failed            INTEGER DEFAULT 0,
+		total_time_added_hours  INTEGER DEFAULT 0,
+		total_time_removed_hours INTEGER DEFAULT 0,
+		weekly_debt             INTEGER DEFAULT 0,
+		weekly_debt_details     TEXT DEFAULT '[]',
+		last_judgment_date      TEXT DEFAULT '',
+		current_lock_id         TEXT DEFAULT '',
+		updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	`)
@@ -296,6 +311,67 @@ func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 		descs = append(descs, d)
 	}
 	return descs, nil
+}
+
+// ── Session State ─────────────────────────────────────────────────────────
+
+type SessionState struct {
+	TasksStreak            int
+	TasksCompleted         int
+	TasksFailed            int
+	TotalTimeAddedHours    int
+	TotalTimeRemovedHours  int
+	WeeklyDebt             int
+	WeeklyDebtDetails      []string
+	LastJudgmentDate       string
+	CurrentLockID          string
+}
+
+func (db *DB) SaveSessionState(s *SessionState) error {
+	details, _ := json.Marshal(s.WeeklyDebtDetails)
+	_, err := db.conn.Exec(`
+		INSERT INTO session_state
+			(id, tasks_streak, tasks_completed, tasks_failed,
+			 total_time_added_hours, total_time_removed_hours,
+			 weekly_debt, weekly_debt_details, last_judgment_date, current_lock_id, updated_at)
+		VALUES ('current', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			tasks_streak=excluded.tasks_streak,
+			tasks_completed=excluded.tasks_completed,
+			tasks_failed=excluded.tasks_failed,
+			total_time_added_hours=excluded.total_time_added_hours,
+			total_time_removed_hours=excluded.total_time_removed_hours,
+			weekly_debt=excluded.weekly_debt,
+			weekly_debt_details=excluded.weekly_debt_details,
+			last_judgment_date=excluded.last_judgment_date,
+			current_lock_id=excluded.current_lock_id,
+			updated_at=excluded.updated_at`,
+		s.TasksStreak, s.TasksCompleted, s.TasksFailed,
+		s.TotalTimeAddedHours, s.TotalTimeRemovedHours,
+		s.WeeklyDebt, string(details), s.LastJudgmentDate, s.CurrentLockID,
+	)
+	return err
+}
+
+func (db *DB) LoadSessionState() (*SessionState, error) {
+	row := db.conn.QueryRow(`SELECT
+		tasks_streak, tasks_completed, tasks_failed,
+		total_time_added_hours, total_time_removed_hours,
+		weekly_debt, weekly_debt_details, last_judgment_date, current_lock_id
+		FROM session_state WHERE id='current'`)
+
+	var s SessionState
+	var detailsJSON string
+	err := row.Scan(
+		&s.TasksStreak, &s.TasksCompleted, &s.TasksFailed,
+		&s.TotalTimeAddedHours, &s.TotalTimeRemovedHours,
+		&s.WeeklyDebt, &detailsJSON, &s.LastJudgmentDate, &s.CurrentLockID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(detailsJSON), &s.WeeklyDebtDetails)
+	return &s, nil
 }
 
 // ── Chaster Tasks ─────────────────────────────────────────────────────────

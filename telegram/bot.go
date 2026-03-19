@@ -60,7 +60,7 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 		db:         db,
 		cloudinary: cloudinary,
 	}
-	b.state = b.loadState()
+	b.state = b.loadState() // usa b.db internamente como fallback
 	// Cargar juguetes desde DB
 	if toys, err := db.GetToys(); err == nil {
 		b.state.Toys = make([]models.Toy, 0, len(toys))
@@ -89,19 +89,58 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 func (b *Bot) loadState() *models.AppState {
 	data, err := os.ReadFile(b.statePath)
 	if err != nil {
-		return &models.AppState{
-			Toys: []models.Toy{},
-		}
+		return b.loadStateFromDB()
 	}
 	var s models.AppState
 	if err := json.Unmarshal(data, &s); err != nil {
-		log.Printf("error parseando state.json: %v — usando estado vacío", err)
-		return &models.AppState{Toys: []models.Toy{}}
+		log.Printf("error parseando state.json: %v — intentando DB", err)
+		return b.loadStateFromDB()
 	}
 	if s.Toys == nil {
 		s.Toys = []models.Toy{}
 	}
+	// Si el state.json existe pero los contadores están todos en cero,
+	// restaurar los campos críticos desde la DB por si acaso
+	if s.TasksStreak == 0 && s.TasksCompleted == 0 && b.db != nil {
+		if ss, err := b.db.LoadSessionState(); err == nil {
+			s.TasksStreak = ss.TasksStreak
+			s.TasksCompleted = ss.TasksCompleted
+			s.TasksFailed = ss.TasksFailed
+			s.TotalTimeAddedHours = ss.TotalTimeAddedHours
+			s.TotalTimeRemovedHours = ss.TotalTimeRemovedHours
+			s.WeeklyDebt = ss.WeeklyDebt
+			s.WeeklyDebtDetails = ss.WeeklyDebtDetails
+			s.LastJudgmentDate = ss.LastJudgmentDate
+			if s.CurrentLockID == "" {
+				s.CurrentLockID = ss.CurrentLockID
+			}
+			log.Println("✅ Contadores restaurados desde DB")
+		}
+	}
 	return &s
+}
+
+func (b *Bot) loadStateFromDB() *models.AppState {
+	s := &models.AppState{Toys: []models.Toy{}}
+	if b.db == nil {
+		return s
+	}
+	ss, err := b.db.LoadSessionState()
+	if err != nil {
+		log.Printf("no se encontró session_state en DB: %v", err)
+		return s
+	}
+	s.TasksStreak = ss.TasksStreak
+	s.TasksCompleted = ss.TasksCompleted
+	s.TasksFailed = ss.TasksFailed
+	s.TotalTimeAddedHours = ss.TotalTimeAddedHours
+	s.TotalTimeRemovedHours = ss.TotalTimeRemovedHours
+	s.WeeklyDebt = ss.WeeklyDebt
+	s.WeeklyDebtDetails = ss.WeeklyDebtDetails
+	s.LastJudgmentDate = ss.LastJudgmentDate
+	s.CurrentLockID = ss.CurrentLockID
+	log.Println("✅ Estado restaurado desde DB (state.json no disponible)")
+	return s
 }
 
 // saveState guarda el estado usando write atómico para evitar corrupción
@@ -128,6 +167,21 @@ func (b *Bot) mustSaveState() {
 	defer b.stateMu.Unlock()
 	if err := b.saveState(); err != nil {
 		log.Printf("CRÍTICO — error guardando estado: %v", err)
+	}
+	if b.db != nil {
+		if err := b.db.SaveSessionState(&storage.SessionState{
+			TasksStreak:           b.state.TasksStreak,
+			TasksCompleted:        b.state.TasksCompleted,
+			TasksFailed:           b.state.TasksFailed,
+			TotalTimeAddedHours:   b.state.TotalTimeAddedHours,
+			TotalTimeRemovedHours: b.state.TotalTimeRemovedHours,
+			WeeklyDebt:            b.state.WeeklyDebt,
+			WeeklyDebtDetails:     b.state.WeeklyDebtDetails,
+			LastJudgmentDate:      b.state.LastJudgmentDate,
+			CurrentLockID:         b.state.CurrentLockID,
+		}); err != nil {
+			log.Printf("error guardando session_state en DB: %v", err)
+		}
 	}
 }
 
