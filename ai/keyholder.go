@@ -244,7 +244,9 @@ REGLAS:
   Considera que necesita apoyar el teléfono o usar temporizador. Evita posiciones donde sea
   imposible sostener el teléfono y mantener la posición al mismo tiempo.
 - Si hay juguetes disponibles, DEBES incorporarlos en uso activo al menos el 60%% de las veces.
-  No basta con mostrarlos — deben usarse de forma visible en la foto.`,
+  No basta con mostrarlos — deben usarse de forma visible en la foto.
+- NO exijas que se vea el rostro — las tareas deben poder completarse sin mostrar la cara.
+  Enfócate en el cuerpo, la postura, el juguete o el elemento pedido, nunca en el rostro.`,
 		ctx, level.String(), level.String(),
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
@@ -321,7 +323,10 @@ CRITERIOS — sé generoso y razonable:
   o si es claramente una foto genérica sin intento de cumplir.
 
 IMPORTANTE: ante la duda, prefiere "approved" o "retry" sobre "rejected".
-El rechazo definitivo debe ser la última opción.`
+El rechazo definitivo debe ser la última opción.
+NO evalúes la posición de la cabeza, el rostro, ni la expresión facial.
+NO exijas que se vea el rostro o que la cabeza esté en una posición específica.
+Evalúa solo los elementos concretos de la tarea: cuerpo, postura, juguete, vestimenta, zona pedida.`
 
 	ctx := buildContext(toys, daysLocked)
 	textPrompt := fmt.Sprintf(
