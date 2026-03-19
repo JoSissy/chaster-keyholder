@@ -2398,8 +2398,8 @@ func (b *Bot) CheckChasterTaskVote() {
 		return
 	}
 
-	// Timeout: si pasaron más de 8 horas sin resultado, abandonar
-	if time.Since(*b.state.ChasterTaskAssignedAt) > 8*time.Hour {
+	// Timeout: si pasaron más de 2 horas sin resultado, abandonar
+	if time.Since(*b.state.ChasterTaskAssignedAt) > 2*time.Hour {
 		log.Printf("[ChasterTask] timeout esperando voto — limpiando estado")
 		b.clearChasterTaskState()
 		b.Send("⏰ *TAREA COMUNITARIA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo de votación expiró sin resultado definitivo._")

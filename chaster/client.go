@@ -449,7 +449,7 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int) (string, 
 			"config": map[string]interface{}{
 				"tasks":                          []interface{}{},
 				"voteEnabled":                    true,
-				"voteDuration":                   21600, // 6 horas en segundos
+				"voteDuration":                   1800, // 30 minutos en segundos
 				"startVoteAfterLastVote":         false,
 				"enablePoints":                   false,
 				"pointsRequired":                 0,
