@@ -15,7 +15,6 @@ type ChasterLock struct {
 }
 
 // Task representa una tarea diaria asignada por el keyholder IA.
-// PenaltyHours y RewardHours están en HORAS para consistencia.
 type Task struct {
 	ID            string    `json:"id"`
 	Description   string    `json:"description"`
@@ -28,19 +27,16 @@ type Task struct {
 	AwaitingPhoto bool      `json:"awaiting_photo"`
 }
 
-// GameResult representa el resultado de un minijuego
-type GameResult struct {
-	Dice1     int    `json:"dice1"`
-	Dice2     int    `json:"dice2"`
-	Total     int    `json:"total"`
-	TimeDelta int    `json:"time_delta_minutes"`
-	Message   string `json:"message"`
-}
-
 // Toy representa un juguete en el inventario
 type Toy struct {
 	Name    string    `json:"name"`
 	AddedAt time.Time `json:"added_at"`
+}
+
+// ActiveEvent representa un evento random activo con auto-reversión
+type ActiveEvent struct {
+	Type      string    `json:"type"`       // "freeze" | "hidetime"
+	ExpiresAt time.Time `json:"expires_at"` // cuándo revertir
 }
 
 // IntensityLevel nivel de intensidad según días encerrada
@@ -82,18 +78,18 @@ func GetIntensity(daysLocked int) IntensityLevel {
 }
 
 // AppState estado global de la app (persiste en state.json).
-// TotalTimeAddedHours y TotalTimeRemovedHours están en HORAS.
 type AppState struct {
-	CurrentTask           *Task  `json:"current_task,omitempty"`
-	TotalTimeAddedHours   int    `json:"total_time_added_hours"`
-	TotalTimeRemovedHours int    `json:"total_time_removed_hours"`
-	DaysLocked            int    `json:"days_locked"`
-	Toys                  []Toy  `json:"toys"`
-	AwaitingLockPhoto     bool   `json:"awaiting_lock_photo"`
-	CurrentLockID         string `json:"current_lock_id"`
-	ManualDurationSeconds int    `json:"manual_duration_seconds"`
-	TasksCompleted        int    `json:"tasks_completed"`
-	TasksFailed           int    `json:"tasks_failed"`
+	CurrentTask           *Task        `json:"current_task,omitempty"`
+	TotalTimeAddedHours   int          `json:"total_time_added_hours"`
+	TotalTimeRemovedHours int          `json:"total_time_removed_hours"`
+	DaysLocked            int          `json:"days_locked"`
+	Toys                  []Toy        `json:"toys"`
+	AwaitingLockPhoto     bool         `json:"awaiting_lock_photo"`
+	CurrentLockID         string       `json:"current_lock_id"`
+	ManualDurationSeconds int          `json:"manual_duration_seconds"`
+	TasksCompleted        int          `json:"tasks_completed"`
+	TasksFailed           int          `json:"tasks_failed"`
+	ActiveEvent           *ActiveEvent `json:"active_event,omitempty"`
 }
 
 // LockSession datos de la sesión de lock activa creada por el bot

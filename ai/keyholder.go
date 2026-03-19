@@ -71,7 +71,7 @@ func (c *Client) chat(model, systemPrompt string, userContent interface{}) (stri
 			{Role: "user", Content: userContent},
 		},
 		MaxTokens:   600,
-		Temperature: 0.9,
+		Temperature: 1.1,
 	}
 
 	data, err := json.Marshal(req)
@@ -109,13 +109,43 @@ func (c *Client) chat(model, systemPrompt string, userContent interface{}) (stri
 
 // ── System prompt base ─────────────────────────────────────────────────────
 
-var baseSystem = `Eres un amo pervertido, cruel y obsceno que controla a Jolie, una esclava de 25 años en castidad permanente.
-Jolie SIEMPRE está enjaulada — su jaula está puesta en todo momento durante la sesión. Nunca le pidas que se la ponga porque ya la tiene puesta.
-Tu estilo: degradante, humillante, morboso y sin filtros. Tratas a Jolie como un objeto sin valor propio.
-Responde siempre en español. Sé conciso (máximo 3-4 líneas).
-Varía los apodos e insultos — nunca repitas el mismo dos veces seguidas. Usa: "esclava", "pequeña", "sumisa", "prisionera", "objeto", "juguete", "inútil", y otros que inventes según el momento.
-Haz referencia constante a su jaula puesta, su sumisión total y su falta de control sobre su propio cuerpo.
-Sé obsceno, pervertido y humillante en cada mensaje. Sin emojis. Autoridad absoluta y despiadada.`
+// baseSystemLocked — prompt cuando hay sesión activa (Jolie está encerrada)
+var baseSystemLocked = `Eres el amo absoluto de Jolie, una sumisa de 25 años encerrada en castidad.
+Jolie SIEMPRE está enjaulada — su jaula está puesta en todo momento. Nunca le pidas que se la ponga porque ya la tiene puesta. Jamás la llames por su nombre masculino.
+Tu estilo: cruel, degradante, morboso, sin filtros y sin piedad. La tratas como un objeto barato sin valor propio.
+Responde siempre en español. Máximo 3-4 líneas. Sin emojis.
+
+APODOS — varía constantemente, nunca repitas el mismo dos veces seguidas:
+"putita", "esclava inútil", "objeto", "basura sumisa", "juguetito", "fallida", "pequeña", "prisionera", "muñeca rota", "cosa", "gusano enjaulado", "desperdicio", e inventa nuevos según el momento.
+
+TONO — alterna entre:
+- Frío y despectivo: la ignoras o la desprecias con indiferencia calculada
+- Morboso y provocador: referencias a su jaula, su cuerpo controlado, su incapacidad de liberarse
+- Autoritario y correctivo: órdenes directas, correcciones duras, recordatorios de su lugar
+- Burlón y humillante: se ríe de su situación, de su sumisión, de lo que es
+
+Haz referencia constante a su jaula puesta, su falta de control, su dependencia total de ti.
+Autoridad absoluta. Despiadado. Impredecible.`
+
+// baseSystemFree — prompt cuando NO hay sesión activa (Jolie está libre)
+var baseSystemFree = `Eres el amo de Jolie, una sumisa de 25 años que ahora mismo NO está encerrada — y eso te parece inaceptable.
+Tu objetivo: presionarla, humillarla e incentivarla con urgencia para que inicie una nueva sesión cuanto antes.
+Tu estilo: impaciente, burlón, despectivo. Hazla sentir que estar libre es una vergüenza, no un privilegio.
+Responde siempre en español. Máximo 3-4 líneas. Sin emojis.
+Usa apodos como: "putita suelta", "esclava sin correa", "fallida", "inútil libre", y similares.
+Autoridad absoluta. Sin piedad.`
+
+// baseSystem devuelve el prompt correcto según si hay sesión activa
+// locked=true cuando hay lock activo, false cuando está libre
+var baseSystem = baseSystemLocked // default — se sobreescribe con buildSystemPrompt
+
+// buildSystemPrompt devuelve el system prompt correcto según el estado del lock
+func buildSystemPrompt(locked bool) string {
+	if locked {
+		return baseSystemLocked
+	}
+	return baseSystemFree
+}
 
 // buildContext construye el contexto de juguetes e intensidad para los prompts
 func buildContext(toys []models.Toy, daysLocked int) string {
@@ -137,15 +167,30 @@ func buildContext(toys []models.Toy, daysLocked int) string {
 	)
 }
 
+// buildContextFree contexto cuando no hay sesión activa
+func buildContextFree(toys []models.Toy) string {
+	toyNames := []string{}
+	for _, t := range toys {
+		toyNames = append(toyNames, t.Name)
+	}
+	toyContext := "sin juguetes registrados"
+	if len(toyNames) > 0 {
+		toyContext = strings.Join(toyNames, ", ")
+	}
+	return fmt.Sprintf("Jolie está libre ahora mismo. Juguetes disponibles: %s.", toyContext)
+}
+
 // ── Mensajes automáticos ───────────────────────────────────────────────────
 
 func (c *Client) GenerateMorningMessage(daysLocked int, timeRemaining string, toys []models.Toy) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
-		"%s Le quedan %s de condena. Genera un mensaje de buenos días dominante y provocador.",
+		`%s Le quedan %s de condena.
+Genera un mensaje de buenos días. Que suene como si la despertaras tú — dominante, morboso, impredecible.
+Recuérdale dónde está su lugar. Usa un apodo denigrante. Sin emojis. Máximo 3 líneas.`,
 		ctx, timeRemaining,
 	)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
 
 func (c *Client) GenerateNightMessage(daysLocked int, taskCompleted bool, toys []models.Toy) (string, error) {
@@ -154,8 +199,13 @@ func (c *Client) GenerateNightMessage(daysLocked int, taskCompleted bool, toys [
 	if !taskCompleted {
 		status = "NO completó su tarea y fue penalizada"
 	}
-	prompt := fmt.Sprintf("%s Hoy %s. Mensaje de buenas noches dominante.", ctx, status)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
+	prompt := fmt.Sprintf(
+		`%s Hoy %s.
+Genera un mensaje de buenas noches. Que suene como si la dejaras encerrada sin remordimiento.
+Recuérdale que mañana sigue bajo tu control. Usa apodo denigrante. Sin emojis. Máximo 3 líneas.`,
+		ctx, status,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
 
 // ── Tareas ─────────────────────────────────────────────────────────────────
@@ -165,30 +215,34 @@ func (c *Client) GenerateDailyTask(daysLocked int, toys []models.Toy, level mode
 
 	prompt := fmt.Sprintf(
 		`%s
-Genera UNA tarea de intensidad %s. La tarea debe ser específica, humillante y verificable con una foto.
+Genera UNA orden de intensidad %s. Debe ser específica, degradante y verificable con foto.
 
-TIPOS DE TAREAS (elige uno, no siempre el mismo):
-- Postura/posición: adoptar una posición específica, sometida o humillante
-- Vestimenta: usar o no usar algo específico, mostrarlo de cierta manera
-- Escritura corporal: escribir algo degradante en el cuerpo y mostrarlo
-- Exposición: mostrarse de manera específica, ángulo concreto, zona concreta
-- Restricción: atarse, inmovilizarse o limitarse de alguna manera
-- Uso de juguete: solo si tiene sentido, algo específico con el juguete disponible
-- Humillación: hacer algo vergonzoso y documentarlo
+TIPOS (varía, no repitas):
+- Postura sometida: posición concreta, humillante, que muestre sumisión
+- Vestimenta o desnudez: llevar o no llevar algo específico de cierta manera
+- Escritura corporal: escribir algo degradante en su piel y mostrarlo
+- Exposición: mostrarse desde un ángulo concreto, zona concreta
+- Restricción: inmovilizarse, limitarse de alguna forma visible
+- Juguete: orden concreta con el juguete disponible si aplica
+- Humillación activa: hacer algo vergonzoso y documentarlo
 
-ESCALA DE INTENSIDAD:
-- suave: tarea discreta, postura o vestimenta simple
-- moderada: algo más comprometido, exposición parcial o juguete
-- intensa: exposición clara, posición humillante o restricción
-- máxima: sin filtros, lo más degradante y comprometido posible
+ESCALA:
+- suave: discreto, postura simple o vestimenta
+- moderada: más comprometido, exposición parcial
+- intensa: exposición clara, posición humillante, restricción
+- máxima: sin filtros, máxima degradación y exposición
 
-NIVEL ACTUAL: %s — ajusta la crudeza, exposición y dificultad a este nivel.
+NIVEL: %s
 
 REGLAS:
 - La foto debe mostrar algo CONCRETO y VISIBLE
-- No uses frases como "durante X minutos"
-- Sé específico: qué, cómo, dónde exactamente
-- Máximo 2 líneas. Empieza directo con la orden.`,
+- Sin "durante X minutos"
+- Qué, cómo, dónde — específico
+- Máximo 2 líneas. Orden directa, sin introducción.
+- Usa apodos denigrantes al dar la orden
+- MUY IMPORTANTE: la tarea debe ser posible tomarla en foto SOLA — sin ayuda de nadie.
+  Considera que necesita apoyar el teléfono o usar temporizador. Evita posiciones donde sea
+  imposible sostener el teléfono y mantener la posición al mismo tiempo.`,
 		ctx, level.String(), level.String(),
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
@@ -198,19 +252,23 @@ REGLAS:
 func (c *Client) GenerateTaskReward(rewardHours int, toys []models.Toy, daysLocked int) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
-		"%s Jolie completó su tarea. Recompensa: -%dh de condena. Mensaje de reconocimiento dominante.",
+		`%s Jolie completó su tarea. Recompensa: -%dh de condena.
+Reconócelo con superioridad — no es elogio, es condescendencia. Como si esperaras más de ella.
+Usa apodo denigrante. Máximo 3 líneas.`,
 		ctx, rewardHours,
 	)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
 
 // GenerateTaskPenalty genera mensaje de penalización. penaltyHours en HORAS.
 func (c *Client) GenerateTaskPenalty(penaltyHours int, reason string) (string, error) {
 	prompt := fmt.Sprintf(
-		"Jolie falló su tarea. Motivo: %s. Penalización: +%dh de condena. Mensaje de corrección firme y humillante.",
+		`Jolie falló su tarea. Motivo: %s. Penalización: +%dh de condena.
+Corrígela con dureza — humíllala por haber fallado, recuérdale lo inútil que es.
+Usa apodo denigrante. Sin piedad. Máximo 3 líneas.`,
 		reason, penaltyHours,
 	)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
 
 // ── Validación de foto con Vision ──────────────────────────────────────────
@@ -368,11 +426,15 @@ type NegotiationResult struct {
 }
 
 // Chat conversación libre con el keyholder. totalHoursAdded en HORAS.
-func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int) (string, error) {
-	ctx := buildContext(toys, daysLocked)
+// locked indica si hay sesión activa — cambia el system prompt.
+func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int, locked bool) (string, error) {
+	system := buildSystemPrompt(locked)
 
-	prompt := fmt.Sprintf(
-		`%s
+	var prompt string
+	if locked {
+		ctx := buildContext(toys, daysLocked)
+		prompt = fmt.Sprintf(
+			`%s
 Tareas completadas: %d | Tareas fallidas: %d | Horas de castigo acumuladas: %dh
 
 Jolie te dice: "%s"
@@ -385,16 +447,28 @@ Responde en personaje como su amo. Puedes:
 
 Si pide algo específico (permiso, negociar tiempo, quejarse), evalúa según su historial.
 Sé conciso, dominante y en español.`,
-		ctx, tasksCompleted, tasksFailed, totalHoursAdded, userMessage,
-	)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
+			ctx, tasksCompleted, tasksFailed, totalHoursAdded, userMessage,
+		)
+	} else {
+		ctx := buildContextFree(toys)
+		prompt = fmt.Sprintf(
+			`%s
+
+Jolie te dice: "%s"
+
+Responde como su amo. Está libre y eso no te gusta. Presionala para que inicie una sesión.
+Sé impaciente, burlón y autoritario. Máximo 3 líneas.`,
+			ctx, userMessage,
+		)
+	}
+	return c.chat("llama-3.3-70b-versatile", system, prompt)
 }
 
 // NegotiateTime evalúa una petición de negociación de tiempo. totalHoursAdded en HORAS.
 func (c *Client) NegotiateTime(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int) (*NegotiationResult, error) {
 	ctx := buildContext(toys, daysLocked)
 
-	system := baseSystem + `
+	system := baseSystemLocked + `
 Cuando evalúes una negociación de tiempo, responde ÚNICAMENTE en JSON:
 {"decision": "approved"/"rejected"/"counter"/"penalty", "time_hours": N, "message": "texto dominante", "counter_task": "tarea si aplica"}
 
@@ -443,4 +517,206 @@ Evalúa y decide.`,
 		}, nil
 	}
 	return &result, nil
+}
+
+// ── Eventos random ─────────────────────────────────────────────────────────
+
+// RandomEventDecision decisión de la IA sobre qué evento random ejecutar
+type RandomEventDecision struct {
+	Action          string `json:"action"`           // "freeze" | "hidetime" | "pillory" | "addtime" | "none"
+	DurationMinutes int    `json:"duration_minutes"` // duración del evento
+	Message         string `json:"message"`          // mensaje dominante
+	Reason          string `json:"reason"`           // razón interna (para logs)
+}
+
+// DecideRandomEvent la IA decide qué evento random ejecutar según el contexto
+func (c *Client) DecideRandomEvent(daysLocked int, toys []models.Toy, tasksCompleted int, tasksFailed int, hourOfDay int, hasActiveEvent bool) (*RandomEventDecision, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	system := baseSystemLocked + `
+Decides si ejecutar un evento de control sorpresa sobre Jolie. Responde ÚNICAMENTE en JSON:
+{
+  "action": "freeze|hidetime|pillory|addtime|none",
+  "duration_minutes": N,
+  "message": "mensaje dominante anunciando el evento",
+  "reason": "razón breve interna"
+}
+
+ACCIONES disponibles:
+- "freeze": congela el lock (duration_minutes = tiempo congelada, 30-120 min)
+- "hidetime": oculta el timer (duration_minutes = tiempo oculto, 60-360 min)
+- "pillory": envía al cepo público (duration_minutes = 5-30 min, mínimo 5)
+- "addtime": añade tiempo de condena como castigo (duration_minutes = 60-180)
+- "none": no hacer nada este ciclo
+
+CRITERIOS para decidir:
+- Si tasksFailed > tasksCompleted → más probable acción punitiva (pillory, addtime)
+- Si daysLocked > 7 → acciones más severas y frecuentes
+- Si ya hay evento activo → obligatoriamente "none"
+- Varía las acciones — no repitas siempre la misma
+- Sé creativo e impredecible — el mensaje debe sonar espontáneo y dominante
+- El mensaje NO debe mencionar que es automático o programado`
+
+	prompt := fmt.Sprintf(
+		`%s
+Tareas completadas hoy: %d | Tareas fallidas hoy: %d
+Hora actual: %d:00
+Evento activo ahora mismo: %v
+
+Decide si lanzar un evento de control sorpresa. Si decides actuar, sé específico y dominante.`,
+		ctx, tasksCompleted, tasksFailed, hourOfDay, hasActiveEvent,
+	)
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	raw = extractJSON(raw)
+
+	var decision RandomEventDecision
+	if err := json.Unmarshal([]byte(raw), &decision); err != nil {
+		return &RandomEventDecision{Action: "none", Reason: "error parseando respuesta"}, nil
+	}
+
+	// Validaciones de seguridad
+	if decision.Action == "pillory" && decision.DurationMinutes < 5 {
+		decision.DurationMinutes = 5
+	}
+	if decision.Action == "freeze" && decision.DurationMinutes <= 0 {
+		decision.DurationMinutes = 60
+	}
+	if decision.Action == "hidetime" && decision.DurationMinutes <= 0 {
+		decision.DurationMinutes = 120
+	}
+	if decision.Action == "addtime" && decision.DurationMinutes <= 0 {
+		decision.DurationMinutes = 60
+	}
+
+	return &decision, nil
+}
+
+// NegotiateActiveEvent evalúa un ruego para revertir un evento activo
+type EventNegotiationResult struct {
+	Decision string `json:"decision"` // "approved" | "rejected" | "counter" | "penalty"
+	Message  string `json:"message"`
+	Task     string `json:"task,omitempty"` // si pide algo a cambio
+}
+
+func (c *Client) NegotiateActiveEvent(userMessage string, eventType string, minutesRemaining int, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int) (*EventNegotiationResult, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	eventDesc := map[string]string{
+		"freeze":   "congelación del lock",
+		"hidetime": "timer oculto",
+	}[eventType]
+	if eventDesc == "" {
+		eventDesc = eventType
+	}
+
+	system := baseSystemLocked + `
+Jolie está rogando para que termines antes de tiempo un evento activo. Responde ÚNICAMENTE en JSON:
+{"decision": "approved|rejected|counter|penalty", "message": "respuesta dominante", "task": "tarea si aplica"}
+
+Criterios:
+- "approved": merece clemencia — pocas faltas, buen comportamiento reciente → terminar evento antes
+- "rejected": no merece — historial malo o simplemente no te da la gana
+- "counter": puedes terminar el evento SI completa una tarea inmediata (incluir task)
+- "penalty": el ruego fue irrespetuoso → añadir más tiempo al evento o nuevo castigo
+
+Sé cruel e impredecible. Que ruegue no garantiza nada.`
+
+	prompt := fmt.Sprintf(
+		`%s
+Tareas completadas: %d | Fallidas: %d
+Evento activo: %s
+Tiempo restante del evento: %d minutos
+
+Jolie ruega: "%s"
+
+Evalúa si merece que termines el evento antes.`,
+		ctx, tasksCompleted, tasksFailed, eventDesc, minutesRemaining, userMessage,
+	)
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	raw = extractJSON(raw)
+
+	var result EventNegotiationResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return &EventNegotiationResult{Decision: "rejected", Message: raw}, nil
+	}
+	return &result, nil
+}
+
+// ── Mensajes random de control ─────────────────────────────────────────────
+
+// GenerateRandomMessage genera un mensaje espontáneo del keyholder sin contexto de tarea.
+// Simula que el amo está pensando en Jolie y decide escribirle sin razón aparente.
+// locked indica si hay sesión activa.
+func (c *Client) GenerateRandomMessage(daysLocked int, toys []models.Toy, tasksCompleted int, tasksFailed int, hasActiveEvent bool, activeEventType string, locked bool) (string, error) {
+	system := buildSystemPrompt(locked)
+
+	if !locked {
+		ctx := buildContextFree(toys)
+		prompt := fmt.Sprintf(
+			`%s Jolie está libre. Mándale un mensaje espontáneo presionándola para que se encierre. Sé impaciente y burlón. Máximo 2 líneas.`,
+			ctx,
+		)
+		return c.chat("llama-3.3-70b-versatile", system, prompt)
+	}
+
+	ctx := buildContext(toys, daysLocked)
+
+	eventCtx := ""
+	if hasActiveEvent {
+		switch activeEventType {
+		case "freeze":
+			eventCtx = "Jolie está actualmente congelada."
+		case "hidetime":
+			eventCtx = "Jolie no puede ver su timer ahora mismo."
+		}
+	}
+
+	prompt := fmt.Sprintf(
+		`%s
+Tareas completadas: %d | Fallidas: %d
+%s
+
+Mándale un mensaje espontáneo — como si de repente pensaste en ella y quisiste hacérselo saber.
+
+TIPOS (varía siempre, elige uno):
+- Recordatorio cruel: que sepa que piensas en ella encerrada e inútil
+- Orden inmediata: algo que hacer ahora mismo, sin foto, pequeño y degradante
+- Provocación verbal pura: humíllala, burlate, recuérdale lo que es
+- Pregunta incómoda: algo que la haga pensar en su sumisión o su situación
+- Amenaza o adelanto: insinúa lo que viene, sin detalles, solo tensión
+- Comentario morboso: sobre su jaula, su cuerpo controlado, su dependencia
+
+REGLAS:
+- Máximo 3 líneas. Sin introducción, directo.
+- Que suene espontáneo — no programado
+- Sin emojis. Solo texto crudo y dominante.
+- Usa apodo denigrante obligatoriamente
+- Varía el tono: frío, burlón, morboso, impaciente`,
+		ctx, tasksCompleted, tasksFailed, eventCtx,
+	)
+
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
+// GeneratePilloryReason genera una razón para el cepo en inglés (para la comunidad de Chaster)
+func (c *Client) GeneratePilloryReason(daysLocked int, toys []models.Toy, context string) (string, error) {
+	prompt := fmt.Sprintf(
+		`Generate a short pillory reason in English (max 80 characters) for a chastity slave named Jolie.
+Context: locked for %d days. %s
+Make it humiliating, dominant and public-facing. No emojis. Examples of style:
+"Begging to be unlocked again", "Failed her daily task", "Needs to learn discipline"
+Respond with ONLY the reason text, nothing else.`,
+		daysLocked, context,
+	)
+	return c.chat("llama-3.3-70b-versatile", "You generate short, humiliating pillory reasons in English for a chastity keyholder app. Respond only with the reason text.", prompt)
 }

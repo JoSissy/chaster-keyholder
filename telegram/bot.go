@@ -493,12 +493,21 @@ func (b *Bot) HandleShowTime() {
 }
 
 func (b *Bot) HandlePillory(durationMinutes int, reason string) {
+	if durationMinutes < 5 {
+		durationMinutes = 5
+	}
 	lock, err := b.chaster.GetActiveLock()
 	if err != nil {
 		b.Send("❌ No hay sesión activa.")
 		return
 	}
-	if err := b.chaster.PutInPillory(lock.ID, durationMinutes*60, reason); err != nil {
+	// Generar razón en inglés para la comunidad de Chaster
+	engReason, err := b.ai.GeneratePilloryReason(b.daysLocked(), b.state.Toys, reason)
+	if err != nil || strings.TrimSpace(engReason) == "" {
+		engReason = reason
+	}
+	engReason = strings.TrimSpace(engReason)
+	if err := b.chaster.PutInPillory(lock.ID, durationMinutes*60, engReason); err != nil {
 		b.Send(fmt.Sprintf("❌ Error enviando al cepo: %v", err))
 		return
 	}
@@ -520,6 +529,23 @@ func (b *Bot) HandleChat(text string) {
 	b.lastChatTime = time.Now()
 	b.chatMu.Unlock()
 
+	textLower := strings.ToLower(text)
+
+	// Detectar ruegos sobre evento activo (freeze/hidetime)
+	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
+		eventKeywords := map[string][]string{
+			"freeze":   {"descongela", "unfreeze", "congela", "frío", "fría", "congelada", "libérame", "liberame"},
+			"hidetime": {"timer", "tiempo", "cuánto", "cuanto", "falta", "muéstrame", "muestrame", "ver el tiempo"},
+		}
+		for _, kw := range eventKeywords[b.state.ActiveEvent.Type] {
+			if strings.Contains(textLower, kw) {
+				b.handleEventNegotiation(text)
+				return
+			}
+		}
+	}
+
+	// Detectar negociación de tiempo
 	negotiationKeywords := []string{
 		"quitar", "reducir", "menos tiempo", "recompensa", "me porté",
 		"porte bien", "negociar", "tiempo", "horas", "minutos", "liberar",
@@ -527,7 +553,6 @@ func (b *Bot) HandleChat(text string) {
 	}
 
 	isNegotiation := false
-	textLower := strings.ToLower(text)
 	for _, kw := range negotiationKeywords {
 		if strings.Contains(textLower, kw) {
 			isNegotiation = true
@@ -540,6 +565,8 @@ func (b *Bot) HandleChat(text string) {
 		return
 	}
 
+	_, lockErr := b.chaster.GetActiveLock()
+	locked := lockErr == nil
 	response, err := b.ai.Chat(
 		text,
 		b.state.Toys,
@@ -547,6 +574,7 @@ func (b *Bot) HandleChat(text string) {
 		b.state.TasksCompleted,
 		b.state.TasksFailed,
 		b.state.TotalTimeAddedHours,
+		locked,
 	)
 	if err != nil {
 		b.Send("_..._")
@@ -791,6 +819,10 @@ func (b *Bot) Start() {
 			b.parsePilloryCommand(strings.TrimPrefix(text, "/pillory "))
 		case text == "/pillory":
 			b.Send("Uso: `/pillory [minutos] [razón opcional]`\nEjemplo: `/pillory 30 por no obedecer`")
+		case text == "/testevent":
+			b.HandleRandomEventTest()
+		case text == "/testmsg":
+			b.SendRandomMessageTest()
 		case text != "" && !strings.HasPrefix(text, "/"):
 			b.HandleChat(text)
 		}
@@ -962,7 +994,7 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 		return
 	}
 
-	lockID, err := b.chaster.CreateLock(combinationID, durationSeconds, true)
+	lockID, err := b.chaster.CreateLock(combinationID, durationSeconds)
 	if err != nil {
 		b.Send("❌ Error creando el lock en Chaster.")
 		return
@@ -1002,13 +1034,14 @@ func (b *Bot) CheckLockFinished() {
 		return
 	}
 
-	// Si sigue bloqueado, no hacer nada
-	if lock.Status == "locked" {
+	// Solo proceder si el lock está explícitamente unlocked
+	// "locked" incluye congelado, tiempo cumplido pero no desbloqueado, etc.
+	if lock.Status != "unlocked" {
+		log.Printf("[CheckLockFinished] status: %s — no proceder", lock.Status)
 		return
 	}
 
-	// El lock terminó — intentar desbloquear (puede ya estar desbloqueado por el usuario)
-	b.chaster.UnlockLock(b.state.CurrentLockID)
+	// El lock ya está desbloqueado por el usuario o por tiempo
 
 	combo, err := b.chaster.GetCombination(b.state.CurrentLockID)
 	if err != nil {
@@ -1039,4 +1072,350 @@ func (b *Bot) CheckLockFinished() {
 
 	b.state.CurrentLockID = ""
 	b.mustSaveState()
+}
+
+// ── Eventos random ─────────────────────────────────────────────────────────
+
+// probabilidadEvento calcula la probabilidad de evento según hora y días encerrada.
+// Horario activo: 8am-11pm. Fuera de ese rango siempre 0.
+func probabilidadEvento(hour, daysLocked int) int {
+	if hour < 8 || hour >= 23 {
+		return 0
+	}
+	// Base por horario
+	base := 0
+	switch {
+	case hour >= 18: // noche: 6pm-11pm
+		base = 55
+	case hour >= 12: // tarde: 12pm-6pm
+		base = 35
+	default: // mañana: 8am-12pm
+		base = 15
+	}
+	// Bonus por días encerrada (+5% cada 3 días, máx +20%)
+	bonus := (daysLocked / 3) * 5
+	if bonus > 20 {
+		bonus = 20
+	}
+	return base + bonus
+}
+
+// HandleRandomEvent evalúa si lanzar un evento random y lo ejecuta si procede.
+// Llamado por el scheduler cada 30 minutos en horario activo.
+func (b *Bot) HandleRandomEvent() {
+	loc, _ := time.LoadLocation("America/Bogota")
+	now := time.Now().In(loc)
+	hour := now.Hour()
+
+	days := b.daysLocked()
+	prob := probabilidadEvento(hour, days)
+	if prob == 0 {
+		return
+	}
+
+	// Tirar el dado
+	roll := int(now.UnixNano()%100 + 1)
+	if roll < 0 {
+		roll = -roll
+	}
+	roll = roll % 100
+	if roll >= prob {
+		return
+	}
+
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		return
+	}
+
+	hasActive := b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt)
+
+	decision, err := b.ai.DecideRandomEvent(
+		days,
+		b.state.Toys,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+		hour,
+		hasActive,
+	)
+	if err != nil || decision.Action == "none" {
+		return
+	}
+
+	b.executeRandomEvent(lock.ID, decision)
+}
+
+// HandleRandomEventTest fuerza un evento random ignorando probabilidad y horario.
+// Solo para testing — llamado con /testevent.
+func (b *Bot) HandleRandomEventTest() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+
+	loc, _ := time.LoadLocation("America/Bogota")
+	hour := time.Now().In(loc).Hour()
+	hasActive := b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt)
+
+	b.Send("_Generando evento de prueba..._")
+
+	decision, err := b.ai.DecideRandomEvent(
+		b.daysLocked(),
+		b.state.Toys,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+		hour,
+		hasActive,
+	)
+	if err != nil {
+		b.Send(fmt.Sprintf("❌ Error: %v", err))
+		return
+	}
+
+	if decision.Action == "none" {
+		b.Send("_La IA decidió no hacer nada este ciclo. Intenta de nuevo._")
+		return
+	}
+
+	b.executeRandomEvent(lock.ID, decision)
+}
+
+// executeRandomEvent ejecuta la acción decidida por la IA y gestiona la auto-reversión
+func (b *Bot) executeRandomEvent(lockID string, decision *ai.RandomEventDecision) {
+	log.Printf("[RandomEvent] acción=%s duración=%dm razón=%s", decision.Action, decision.DurationMinutes, decision.Reason)
+
+	switch decision.Action {
+
+	case "freeze":
+		if err := b.chaster.FreezeLock(lockID); err != nil {
+			log.Printf("[RandomEvent] error freeze: %v", err)
+			return
+		}
+		expiresAt := time.Now().Add(time.Duration(decision.DurationMinutes) * time.Minute)
+		b.state.ActiveEvent = &models.ActiveEvent{Type: "freeze", ExpiresAt: expiresAt}
+		b.mustSaveState()
+		b.Send(fmt.Sprintf(
+			"❄️ *CONGELADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Duración: %d minutos_",
+			stripMarkdown(decision.Message), decision.DurationMinutes,
+		))
+
+	case "hidetime":
+		if err := b.chaster.SetTimerVisibility(lockID, false); err != nil {
+			log.Printf("[RandomEvent] error hidetime: %v", err)
+			return
+		}
+		expiresAt := time.Now().Add(time.Duration(decision.DurationMinutes) * time.Minute)
+		b.state.ActiveEvent = &models.ActiveEvent{Type: "hidetime", ExpiresAt: expiresAt}
+		b.mustSaveState()
+		b.Send(fmt.Sprintf(
+			"🙈 *TIMER OCULTO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Duración: %d minutos_",
+			stripMarkdown(decision.Message), decision.DurationMinutes,
+		))
+
+	case "pillory":
+		pilloryReason, rerr := b.ai.GeneratePilloryReason(b.daysLocked(), b.state.Toys, decision.Reason)
+		if rerr != nil || strings.TrimSpace(pilloryReason) == "" {
+			pilloryReason = "Sent to pillory by her keyholder"
+		}
+		pilloryReason = strings.TrimSpace(pilloryReason)
+		if err := b.chaster.PutInPillory(lockID, decision.DurationMinutes*60, pilloryReason); err != nil {
+			log.Printf("[RandomEvent] error pillory: %v", err)
+			return
+		}
+		b.Send(fmt.Sprintf(
+			"⛓ *AL CEPO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Duración: %d minutos_",
+			stripMarkdown(decision.Message), decision.DurationMinutes,
+		))
+
+	case "addtime":
+		hours := decision.DurationMinutes / 60
+		if hours <= 0 {
+			hours = 1
+		}
+		if err := b.chaster.AddTime(lockID, hours*3600); err != nil {
+			log.Printf("[RandomEvent] error addtime: %v", err)
+			return
+		}
+		b.state.TotalTimeAddedHours += hours
+		b.mustSaveState()
+		b.Send(fmt.Sprintf(
+			"⏳ *TIEMPO AÑADIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+%dh* añadidas.",
+			stripMarkdown(decision.Message), hours,
+		))
+	}
+}
+
+// ── Mensajes random ───────────────────────────────────────────────────────
+
+// SendRandomMessage manda un mensaje espontáneo del keyholder.
+// Llamado por el scheduler en horario activo.
+// Si hay lock activo, mensaje de control. Si no, mensaje incentivando a encerrarse.
+func (b *Bot) SendRandomMessage() {
+	_, lockErr := b.chaster.GetActiveLock()
+	locked := lockErr == nil
+
+	hasActive := b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt)
+	activeType := ""
+	if hasActive && b.state.ActiveEvent != nil {
+		activeType = b.state.ActiveEvent.Type
+	}
+
+	msg, err := b.ai.GenerateRandomMessage(
+		b.daysLocked(),
+		b.state.Toys,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+		hasActive,
+		activeType,
+		locked,
+	)
+	if err != nil {
+		log.Printf("[SendRandomMessage] error: %v", err)
+		return
+	}
+
+	b.Send(stripMarkdown(msg))
+}
+
+// SendRandomMessageTest fuerza un mensaje random — solo para testing con /testmsg
+func (b *Bot) SendRandomMessageTest() {
+	// Rate limiting — evitar múltiples ejecuciones seguidas
+	b.chatMu.Lock()
+	if time.Since(b.lastChatTime) < 5*time.Second {
+		b.chatMu.Unlock()
+		return
+	}
+	b.lastChatTime = time.Now()
+	b.chatMu.Unlock()
+
+	_, lockErr := b.chaster.GetActiveLock()
+	locked := lockErr == nil
+
+	hasActive := b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt)
+	activeType := ""
+	if hasActive && b.state.ActiveEvent != nil {
+		activeType = b.state.ActiveEvent.Type
+	}
+
+	msg, err := b.ai.GenerateRandomMessage(
+		b.daysLocked(),
+		b.state.Toys,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+		hasActive,
+		activeType,
+		locked,
+	)
+	if err != nil {
+		b.Send(fmt.Sprintf("❌ Error: %v", err))
+		return
+	}
+
+	b.Send(stripMarkdown(msg))
+}
+
+// CheckActiveEventExpiry verifica si hay un evento activo que haya expirado y lo revierte.
+// Llamado por el scheduler cada 5 minutos.
+func (b *Bot) CheckActiveEventExpiry() {
+	if b.state.ActiveEvent == nil {
+		return
+	}
+	if time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
+		return
+	}
+
+	// El evento expiró — revertir
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		// Lock ya no activo — limpiar estado
+		b.state.ActiveEvent = nil
+		b.mustSaveState()
+		return
+	}
+
+	eventType := b.state.ActiveEvent.Type
+	b.state.ActiveEvent = nil
+	b.mustSaveState()
+
+	switch eventType {
+	case "freeze":
+		if err := b.chaster.UnfreezeLock(lock.ID); err != nil {
+			log.Printf("[CheckExpiry] error unfreeze: %v", err)
+			return
+		}
+		b.Send("🔥 *DESCONGELADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo de congelación terminó. Por ahora._")
+
+	case "hidetime":
+		if err := b.chaster.SetTimerVisibility(lock.ID, true); err != nil {
+			log.Printf("[CheckExpiry] error show time: %v", err)
+			return
+		}
+		b.Send("👁 *TIMER RESTAURADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ya puedes ver el tiempo de nuevo. Disfruta mientras dura._")
+	}
+}
+
+// handleEventNegotiation maneja un ruego para terminar un evento activo antes de tiempo
+func (b *Bot) handleEventNegotiation(text string) {
+	if b.state.ActiveEvent == nil {
+		return
+	}
+
+	minutesRemaining := int(time.Until(b.state.ActiveEvent.ExpiresAt).Minutes())
+	if minutesRemaining < 0 {
+		minutesRemaining = 0
+	}
+
+	b.Send("_Evaluando tu ruego..._")
+
+	result, err := b.ai.NegotiateActiveEvent(
+		text,
+		b.state.ActiveEvent.Type,
+		minutesRemaining,
+		b.state.Toys,
+		b.daysLocked(),
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+	)
+	if err != nil {
+		b.Send("_..._")
+		return
+	}
+
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		return
+	}
+
+	switch result.Decision {
+	case "approved":
+		eventType := b.state.ActiveEvent.Type
+		b.state.ActiveEvent = nil
+		b.mustSaveState()
+		switch eventType {
+		case "freeze":
+			b.chaster.UnfreezeLock(lock.ID)
+		case "hidetime":
+			b.chaster.SetTimerVisibility(lock.ID, true)
+		}
+		b.Send("▪️ *CONCEDIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message))
+
+	case "rejected":
+		b.Send("▪️ *RECHAZADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message))
+
+	case "counter":
+		b.Send(fmt.Sprintf(
+			"▪️ *CONTRAOFERTA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Tarea: %s_",
+			stripMarkdown(result.Message),
+			stripMarkdown(result.Task),
+		))
+
+	case "penalty":
+		// Extender el evento como castigo
+		if b.state.ActiveEvent != nil {
+			b.state.ActiveEvent.ExpiresAt = b.state.ActiveEvent.ExpiresAt.Add(30 * time.Minute)
+			b.mustSaveState()
+		}
+		b.Send("▪️ *PENALIZACIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_+30 minutos añadidos al evento._")
+	}
 }

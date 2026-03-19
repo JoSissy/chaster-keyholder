@@ -6,16 +6,16 @@
     "due_at": "2026-03-19T01:57:01.372642498-05:00",
     "completed": false,
     "failed": true,
-    "penalty_minutes": 2,
-    "reward_minutes": 1,
+    "penalty_hours": 0,
+    "reward_hours": 0,
     "awaiting_photo": false
   },
-  "total_time_added_minutes": 930,
-  "total_time_removed_minutes": 0,
+  "total_time_added_hours": 0,
+  "total_time_removed_hours": 0,
   "days_locked": 0,
   "toys": [
     {
-      "name": "plug con cola de zorro gris",
+      "name": "Plug con cola de zorro gris",
       "added_at": "2026-03-18T21:47:13.639459239-05:00"
     },
     {
@@ -23,24 +23,24 @@
       "added_at": "2026-03-19T00:46:19.925955473-05:00"
     },
     {
-      "name": "plug con cola de conejo",
+      "name": "Plug con cola de conejo",
       "added_at": "2026-03-19T00:46:39.584902242-05:00"
     },
     {
-      "name": "pinzas para pezones",
+      "name": "Pinzas para pezones",
       "added_at": "2026-03-19T00:47:01.910869173-05:00"
     },
     {
-      "name": "succionadores para pezones",
+      "name": "Succionadores para pezones",
       "added_at": "2026-03-19T00:47:17.987892825-05:00"
     },
     {
-      "name": "vibrador masajeador",
+      "name": "Vibrador masajeador",
       "added_at": "2026-03-19T00:47:31.302288969-05:00"
     }
   ],
   "awaiting_lock_photo": false,
-  "current_lock_id": "69bb7c9b1a6d6bdb0ace563b",
+  "current_lock_id": "69bbec791d0b8f94e6cceacf",
   "manual_duration_seconds": 0,
   "tasks_completed": 0,
   "tasks_failed": 0

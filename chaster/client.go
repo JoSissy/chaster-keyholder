@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"time"
@@ -207,11 +208,14 @@ type actionWithParams struct {
 }
 
 // ExtensionSession representa una sesión de extensión activa.
-// La API puede devolver lockId como campo directo o anidado en lock._id.
+// _id es el ID de la extensión dentro del lock (no útil para acciones).
+// sessionId es el ID real para el endpoint de acciones.
+// lockId puede venir directo o anidado en lock._id.
 type ExtensionSession struct {
-	ID     string `json:"_id"`
-	LockID string `json:"lockId"`
-	Lock   *struct {
+	ID        string `json:"_id"`
+	SessionID string `json:"sessionId"` // ← campo correcto para acciones
+	LockID    string `json:"lockId"`
+	Lock      *struct {
 		ID string `json:"_id"`
 	} `json:"lock"`
 	Status string `json:"status"`
@@ -226,6 +230,14 @@ func (s ExtensionSession) resolvedLockID() string {
 		return s.Lock.ID
 	}
 	return ""
+}
+
+// resolvedSessionID devuelve el sessionId correcto para el endpoint de acciones
+func (s ExtensionSession) resolvedSessionID() string {
+	if s.SessionID != "" {
+		return s.SessionID
+	}
+	return s.ID // fallback al _id si sessionId no existe
 }
 
 // GetSessionByLockID busca el sessionId de extensión correspondiente a un lockId.
@@ -246,6 +258,9 @@ func (c *Client) GetSessionByLockID(lockID string) (string, error) {
 		return "", fmt.Errorf("error buscando sesiones de extensión: %w", err)
 	}
 
+	// Loguear respuesta cruda completa para entender la estructura
+	log.Printf("[GetSessionByLockID] respuesta cruda: %s", string(data))
+
 	var result struct {
 		Results []ExtensionSession `json:"results"`
 		Count   int                `json:"count"`
@@ -255,8 +270,11 @@ func (c *Client) GetSessionByLockID(lockID string) (string, error) {
 	}
 
 	for _, s := range result.Results {
+		log.Printf("[GetSessionByLockID] sesión: id=%s sessionId=%s lockId=%s", s.ID, s.SessionID, s.resolvedLockID())
 		if s.resolvedLockID() == lockID {
-			return s.ID, nil
+			sessionID := s.resolvedSessionID()
+			log.Printf("[GetSessionByLockID] match! usando sessionId=%s", sessionID)
+			return sessionID, nil
 		}
 	}
 
@@ -391,8 +409,32 @@ func (c *Client) UploadCombinationImage(imageBytes []byte, mimeType string) (str
 	return result.CombinationID, nil
 }
 
-// CreateLock crea un nuevo lock con el combinationId dado
-func (c *Client) CreateLock(combinationID string, durationSeconds int, isTest bool) (string, error) {
+// CreateLock crea un nuevo lock con el combinationId dado.
+// Incluye las extensiones necesarias: pillory y chaster-ai-1.
+// durationSeconds se usa como min y max — la IA decide el valor exacto.
+func (c *Client) CreateLock(combinationID string, durationSeconds int) (string, error) {
+	extensions := []interface{}{
+		map[string]interface{}{
+			"slug": "pillory",
+			"config": map[string]interface{}{
+				"timeToAdd":          3600,
+				"limitToLoggedUsers": true,
+			},
+			"mode":       "unlimited",
+			"regularity": 3600,
+		},
+	}
+
+	// Añadir extensión de chaster-ai solo si está configurada
+	if c.HasExtension() {
+		extensions = append(extensions, map[string]interface{}{
+			"slug":       c.ext.extensionSlug,
+			"config":     map[string]interface{}{},
+			"mode":       "unlimited",
+			"regularity": 3600,
+		})
+	}
+
 	payload := map[string]interface{}{
 		"minDuration":          durationSeconds,
 		"maxDuration":          durationSeconds,
@@ -401,10 +443,10 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int, isTest bo
 		"displayRemainingTime": true,
 		"limitLockTime":        false,
 		"combinationId":        combinationID,
-		"extensions":           []interface{}{},
+		"extensions":           extensions,
 		"allowSessionOffer":    false,
 		"hideTimeLogs":         false,
-		"isTestLock":           isTest,
+		"isTestLock":           false,
 	}
 
 	data, err := c.doRequest("POST", "/locks", payload)
