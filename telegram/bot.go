@@ -1047,9 +1047,9 @@ func (b *Bot) Start() {
 		case text == "/testevent":
 			b.HandleRandomEventTest()
 		case text == "/testremove":
-			b.HandleTestRemoveTime()
+			b.HandleTestRemoveTime("")
 		case strings.HasPrefix(text, "/testremove "):
-			b.HandleTestRemoveTime()
+			b.HandleTestRemoveTime(strings.TrimPrefix(text, "/testremove "))
 		case text == "/testmsg":
 			b.SendRandomMessageTest()
 		case text != "" && !strings.HasPrefix(text, "/"):
@@ -1582,20 +1582,27 @@ func (b *Bot) SendRandomMessage() {
 	b.Send(stripMarkdown(msg))
 }
 
-// HandleTestRemoveTime quita 1 hora de la condena — solo para testing con /testremove
-func (b *Bot) HandleTestRemoveTime() {
+// HandleTestRemoveTime quita N horas de la condena — /testremove [horas]
+func (b *Bot) HandleTestRemoveTime(args string) {
+	hours := 1
+	if args != "" {
+		fmt.Sscanf(strings.TrimSpace(args), "%d", &hours)
+		if hours <= 0 {
+			hours = 1
+		}
+	}
 	lock, err := b.chaster.GetActiveLock()
 	if err != nil {
 		b.Send("❌ No hay sesión activa.")
 		return
 	}
-	if err := b.chaster.RemoveTime(lock.ID, 3600); err != nil {
+	if err := b.chaster.RemoveTime(lock.ID, hours*3600); err != nil {
 		b.Send(fmt.Sprintf("❌ Error quitando tiempo: %v", err))
 		return
 	}
-	b.state.TotalTimeRemovedHours++
+	b.state.TotalTimeRemovedHours += hours
 	b.mustSaveState()
-	b.Send("🧪 *TEST* — Se quitó *1 hora* de tu condena.")
+	b.Send(fmt.Sprintf("🧪 *TEST* — Se quitaron *%dh* de tu condena.", hours))
 }
 
 // SendRandomMessageTest fuerza un mensaje random — solo para testing con /testmsg
