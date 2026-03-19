@@ -485,6 +485,56 @@ Be GENEROUS in your evaluation:
 	return &verdict, nil
 }
 
+// ── Permiso de orgasmo ─────────────────────────────────────────────────────
+
+// OrgasmDecision resultado de una solicitud de permiso de orgasmo
+type OrgasmDecision struct {
+	Granted  bool   `json:"granted"`
+	Message  string `json:"message"`
+	Condition string `json:"condition,omitempty"` // si da permiso con condición
+}
+
+// EvaluateOrgasmRequest evalúa si El Señor concede permiso de orgasmo.
+// Solo concede si el streak es alto — y siempre con humillación.
+func (c *Client) EvaluateOrgasmRequest(userMessage string, toys []models.Toy, daysLocked, tasksCompleted, tasksFailed, streak int) (*OrgasmDecision, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	system := baseSystemLocked + `
+Jolie is begging El Señor for permission to orgasm with her dildo (anal only — never through the cage).
+Respond ONLY in JSON:
+{"granted": false, "message": "humiliating denial in Spanish", "condition": ""}
+or
+{"granted": true, "message": "permission with humiliation and conditions in Spanish", "condition": "what she must do first or during"}
+
+El Señor's rules about orgasm:
+- A sissy like her can ONLY cum through her ass — the cage exists precisely so she never uses her dick
+- Permission is RARE — even a good record is barely enough
+- streak < 5: ALWAYS deny. She hasn't earned it. Humiliate her for even asking.
+- streak 5-7: maybe deny, maybe a cruel conditional (must use dildo for 20 min first, must beg more)
+- streak >= 8: may grant, but always with a condition and maximum humiliation
+- El Señor enjoys her desperation — deny just to watch her suffer
+- The denial must always reference that she's a sissy, her ass is her only pleasure, her cage keeps her honest
+- If granting: give explicit instructions and remind her it's a privilege she barely deserves`
+
+	prompt := fmt.Sprintf(`%s
+Tasks completed: %d | Failed: %d | Current streak: %d
+
+Jolie begs: "%s"
+
+El Señor decides.`, ctx, tasksCompleted, tasksFailed, streak, userMessage)
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var decision OrgasmDecision
+	if err := json.Unmarshal([]byte(raw), &decision); err != nil {
+		return &OrgasmDecision{Granted: false, Message: raw}, nil
+	}
+	return &decision, nil
+}
+
 // ── Free chat ──────────────────────────────────────────────────────────────
 
 // NegotiationResult result of a time negotiation with the keyholder

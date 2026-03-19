@@ -831,6 +831,19 @@ func (b *Bot) HandleChat(text string) {
 		}
 	}
 
+	// Detectar ruego de permiso de orgasmo
+	orgasmKeywords := []string{
+		"masturbar", "correrme", "correrse", "orgasmo", "venirme", "acabar",
+		"tocarme", "dildo", "permiso para", "puedo usar", "puedo meter",
+		"puedo cogerme", "follarme", "usarme el culo",
+	}
+	for _, kw := range orgasmKeywords {
+		if strings.Contains(textLower, kw) {
+			b.handleOrgasmRequest(text)
+			return
+		}
+	}
+
 	// Detectar negociación de tiempo
 	negotiationKeywords := []string{
 		"quitar", "reducir", "menos tiempo", "recompensa", "me porté",
@@ -867,6 +880,33 @@ func (b *Bot) HandleChat(text string) {
 		return
 	}
 	b.Send(stripMarkdown(response))
+}
+
+func (b *Bot) handleOrgasmRequest(text string) {
+	b.Send("_..._")
+
+	decision, err := b.ai.EvaluateOrgasmRequest(
+		text,
+		b.state.Toys,
+		b.daysLocked(),
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+		b.state.TasksStreak,
+	)
+	if err != nil {
+		b.Send("_..._")
+		return
+	}
+
+	if decision.Granted {
+		msg := "▪️ *PERMISO CONCEDIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
+		if strings.TrimSpace(decision.Condition) != "" {
+			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
+		}
+		b.Send(msg)
+	} else {
+		b.Send("▪️ *DENEGADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message))
+	}
 }
 
 func (b *Bot) handleNegotiation(text string) {
