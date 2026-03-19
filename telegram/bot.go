@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1475,6 +1476,14 @@ func (b *Bot) CheckLockFinished() {
 
 	lock, err := b.chaster.GetLockByID(lockID)
 	if err != nil {
+		// ErrLockNotFound = Chaster devolvió 404 — el lock fue desbloqueado/archivado
+		// En ese caso ejecutamos el cierre aunque no podamos leer el status
+		if errors.Is(err, chaster.ErrLockNotFound) {
+			log.Printf("[CheckLockFinished] lock %s devolvió 404 — ejecutando finishLock", lockID)
+			b.state.CurrentLockID = lockID
+			b.finishLock(lockID)
+			return
+		}
 		log.Printf("[CheckLockFinished] error consultando lock %s: %v", lockID, err)
 		return
 	}
@@ -1489,15 +1498,15 @@ func (b *Bot) CheckLockFinished() {
 		return
 	}
 
-	// Caso 2: cualquier estado que no sea unlocked — no hacer nada
-	if lock.Status != "unlocked" {
-		log.Printf("[CheckLockFinished] status: %s — no proceder", lock.Status)
+	// Caso 2: status unlocked explícito
+	if lock.Status == "unlocked" {
+		log.Printf("[CheckLockFinished] status=unlocked — ejecutando finishLock para %s", lockID)
+		b.state.CurrentLockID = lockID
+		b.finishLock(lockID)
 		return
 	}
 
-	// El lock fue desbloqueado por el usuario en Chaster
-	b.state.CurrentLockID = lockID
-	b.finishLock(lockID)
+	log.Printf("[CheckLockFinished] status=%s — no proceder", lock.Status)
 }
 
 // ── Eventos random ─────────────────────────────────────────────────────────

@@ -141,10 +141,18 @@ func (c *Client) GetActiveLock() (*models.ChasterLock, error) {
 }
 
 // GetLockByID obtiene un lock específico por su ID, independientemente del estado.
+// ErrLockNotFound se retorna cuando el lock no existe o ya fue desbloqueado/archivado.
+var ErrLockNotFound = fmt.Errorf("lock not found or already unlocked")
+
 // Usado para verificar si un lock específico terminó sin depender de GetActiveLock.
+// Retorna ErrLockNotFound si el lock devuelve 404 (desbloqueado o archivado en Chaster).
 func (c *Client) GetLockByID(lockID string) (*models.ChasterLock, error) {
 	data, err := c.doRequest("GET", fmt.Sprintf("/locks/%s", lockID), nil)
 	if err != nil {
+		// 404 = lock desbloqueado o archivado — no es un error de red
+		if strings.Contains(err.Error(), "404") {
+			return nil, ErrLockNotFound
+		}
 		return nil, err
 	}
 
