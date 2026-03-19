@@ -497,8 +497,17 @@ type OrgasmDecision struct {
 
 // EvaluateOrgasmRequest evalúa si El Señor concede permiso de orgasmo.
 // Solo concede si el streak es alto — y siempre con humillación.
-func (c *Client) EvaluateOrgasmRequest(userMessage string, toys []models.Toy, daysLocked, tasksCompleted, tasksFailed, streak int) (*OrgasmDecision, error) {
+func (c *Client) EvaluateOrgasmRequest(userMessage string, toys []models.Toy, daysLocked, tasksCompleted, tasksFailed, streak, totalGranted, totalDenied, daysSinceLastGrant int) (*OrgasmDecision, error) {
 	ctx := buildContext(toys, daysLocked)
+
+	lastGrantStr := "never"
+	if totalGranted > 0 {
+		if daysSinceLastGrant == 0 {
+			lastGrantStr = "today"
+		} else {
+			lastGrantStr = fmt.Sprintf("%d days ago", daysSinceLastGrant)
+		}
+	}
 
 	system := baseSystemLocked + `
 Jolie is begging El Señor for permission to orgasm with her dildo (anal only — never through the cage).
@@ -510,21 +519,26 @@ or
 El Señor's rules about orgasm:
 - A sissy like her can ONLY cum through her ass — the cage exists precisely so she never uses her dick
 - Permission is RARE — even a good record is barely enough
-- streak < 5: ALWAYS deny. She hasn't earned it. Humiliate her for even asking.
-- streak 5-7: maybe deny, maybe a cruel conditional (must use dildo for 20 min first, must beg more)
-- streak >= 8: may grant, but always with a condition and maximum humiliation
-- El Señor enjoys her desperation — deny just to watch her suffer
-- The denial must be CRUEL and EXPLICIT — call her a faggot, a slutty sissy, remind her she has no cock to use, only a hole
+- Use the orgasm history to decide:
+  * If last grant was today or yesterday: ALWAYS deny. She already had her treat.
+  * If last grant was < 4 days ago: almost always deny. Too soon.
+  * If she has been denied 5+ times in a row with no grant: El Señor may grant, savoring her desperation
+  * streak < 5: ALWAYS deny regardless of history
+  * streak 5-7: use history — deny if granted recently, maybe grant if long drought
+  * streak >= 8 AND last grant >= 5 days ago: most likely to grant
+- El Señor enjoys her desperation — sometimes denies just to watch her suffer more
+- The denial must be CRUEL and EXPLICIT — call her a faggot, a slutty sissy, remind her she has no cock, only a hole
 - Use words like "maricona", "puta sissy", "zorra encerrada", "culo de puta", "agujero"
-- Humiliate the request itself — laugh at her for thinking she deserves to cum
+- Reference the history: "llevas X días sin correrte", "ya te lo di hace X días, no seas codiciosa"
 - If granting: give explicit, degrading instructions. She must beg properly, use the dildo, describe herself while doing it`
 
 	prompt := fmt.Sprintf(`%s
 Tasks completed: %d | Failed: %d | Current streak: %d
+Orgasm history: %d granted total, %d denied total, last granted: %s
 
 Jolie begs: "%s"
 
-El Señor decides.`, ctx, tasksCompleted, tasksFailed, streak, userMessage)
+El Señor checks his records and decides.`, ctx, tasksCompleted, tasksFailed, streak, totalGranted, totalDenied, lastGrantStr, userMessage)
 
 	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
 	if err != nil {

@@ -999,6 +999,33 @@ func (b *Bot) HandleChat(text string) {
 func (b *Bot) handleOrgasmRequest(text string) {
 	b.Send("_..._")
 
+	// Obtener historial para que El Señor tome una decisión informada
+	totalGranted, totalDenied, daysSinceLastGrant := 0, 0, 999
+	if b.db != nil {
+		total, granted, denied, err := b.db.GetOrgasmStats()
+		if err == nil {
+			totalGranted = granted
+			totalDenied = denied
+			_ = total
+		}
+		if entries, err := b.db.GetOrgasmHistory(1); err == nil && len(entries) > 0 {
+			last := entries[0]
+			if last.Granted {
+				daysSinceLastGrant = int(time.Since(last.CreatedAt).Hours()) / 24
+			} else {
+				// Buscar el último concedido
+				if all, err := b.db.GetOrgasmHistory(50); err == nil {
+					for _, e := range all {
+						if e.Granted {
+							daysSinceLastGrant = int(time.Since(e.CreatedAt).Hours()) / 24
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
 	decision, err := b.ai.EvaluateOrgasmRequest(
 		text,
 		b.state.Toys,
@@ -1006,6 +1033,9 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		b.state.TasksCompleted,
 		b.state.TasksFailed,
 		b.state.TasksStreak,
+		totalGranted,
+		totalDenied,
+		daysSinceLastGrant,
 	)
 	if err != nil {
 		b.Send("_..._")
