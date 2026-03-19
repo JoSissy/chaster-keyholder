@@ -135,9 +135,9 @@ Responde siempre en español. Máximo 3-4 líneas. Sin emojis.
 Usa apodos como: "putita suelta", "esclava sin correa", "fallida", "inútil libre", y similares.
 Autoridad absoluta. Sin piedad.`
 
-// baseSystem devuelve el prompt correcto según si hay sesión activa
-// locked=true cuando hay lock activo, false cuando está libre
-var baseSystem = baseSystemLocked // default — se sobreescribe con buildSystemPrompt
+// baseSystem es el prompt por defecto para funciones que solo se llaman con lock activo.
+// Para chat libre y mensajes random usa buildSystemPrompt(locked) directamente.
+var baseSystem = baseSystemLocked
 
 // buildSystemPrompt devuelve el system prompt correcto según el estado del lock
 func buildSystemPrompt(locked bool) string {
@@ -258,7 +258,7 @@ REGLAS:
   Enfócate en el cuerpo, la postura, el juguete o el elemento pedido, nunca en el rostro.`,
 		ctx, level.String(), level.String(),
 	)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
 
 // GenerateTaskExplanation explica en detalle cómo tomar la foto para la tarea actual
@@ -379,7 +379,7 @@ type LockDecision struct {
 func (c *Client) DecideLockDuration(daysHistory int, toys []models.Toy) (*LockDecision, error) {
 	ctx := buildContext(toys, daysHistory)
 
-	system := baseSystem + `
+	system := baseSystemFree + `
 Cuando decidas la duración del lock, responde ÚNICAMENTE en JSON:
 {"duration_hours": 24, "message": "mensaje dominante explicando la decisión"}
 La duración mínima es 1 hora, máxima 168 horas (7 días).

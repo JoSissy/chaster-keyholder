@@ -33,6 +33,13 @@ type Bot struct {
 	lastChatTime time.Time
 	chatMu       sync.Mutex
 
+	// Protección de escrituras concurrentes al estado
+	stateMu sync.Mutex
+
+	// Caché de días encerrada (evita llamadas repetidas a la API)
+	cachedDaysLocked   int
+	cachedDaysLockedAt time.Time
+
 	// Flujo de agregar juguete con foto
 	awaitingToyPhoto bool
 }
@@ -106,6 +113,8 @@ func (b *Bot) saveState() error {
 }
 
 func (b *Bot) mustSaveState() {
+	b.stateMu.Lock()
+	defer b.stateMu.Unlock()
 	if err := b.saveState(); err != nil {
 		log.Printf("CRÍTICO — error guardando estado: %v", err)
 	}
@@ -147,12 +156,27 @@ func (b *Bot) SendWithKeyboard(text string, buttons [][]tgbotapi.KeyboardButton)
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 func (b *Bot) daysLocked() int {
+	// Caché de 5 minutos — evita llamadas repetidas a la API de Chaster
+	b.stateMu.Lock()
+	if !b.cachedDaysLockedAt.IsZero() && time.Since(b.cachedDaysLockedAt) < 5*time.Minute {
+		cached := b.cachedDaysLocked
+		b.stateMu.Unlock()
+		return cached
+	}
+	b.stateMu.Unlock()
+
 	lock, err := b.chaster.GetActiveLock()
 	if err != nil {
 		return b.state.DaysLocked
 	}
 	days := int(time.Since(lock.StartDate).Hours()) / 24
+
+	b.stateMu.Lock()
+	b.cachedDaysLocked = days
+	b.cachedDaysLockedAt = time.Now()
 	b.state.DaysLocked = days
+	b.stateMu.Unlock()
+
 	return days
 }
 
@@ -926,6 +950,50 @@ func (b *Bot) HandleToys(args string) {
 	}
 }
 
+// ── Stats ─────────────────────────────────────────────────────────────────────
+
+// HandleStats muestra estadísticas históricas desde la DB
+func (b *Bot) HandleStats() {
+	if b.db == nil {
+		b.Send("❌ Base de datos no disponible.")
+		return
+	}
+	stats, err := b.db.GetStats()
+	if err != nil {
+		b.Send("❌ Error obteniendo estadísticas.")
+		return
+	}
+
+	taskTotal := stats.TotalTasksCompleted + stats.TotalTasksFailed
+	rateStr := "—"
+	if taskTotal > 0 {
+		rate := (stats.TotalTasksCompleted * 100) / taskTotal
+		rateStr = fmt.Sprintf("%d%%", rate)
+	}
+
+	b.Send(fmt.Sprintf(
+		"▪️ *ESTADÍSTICAS HISTÓRICAS*\n"+
+			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
+			"🔒 Sesiones — *%d*\n"+
+			"📋 Tareas completadas — *%d*\n"+
+			"💀 Tareas fallidas — *%d*\n"+
+			"📊 Tasa de éxito — *%s*\n"+
+			"⚡ Eventos — *%d*\n"+
+			"🧸 Juguetes — *%d*\n"+
+			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
+			"⏱ Tiempo añadido — *+%dh*\n"+
+			"✅ Tiempo quitado — *-%dh*",
+		stats.TotalLocks,
+		stats.TotalTasksCompleted,
+		stats.TotalTasksFailed,
+		rateStr,
+		stats.TotalEvents,
+		stats.TotalToys,
+		stats.TotalTimeAddedHours,
+		stats.TotalTimeRemovedHours,
+	))
+}
+
 // ── Help ───────────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleHelp() {
@@ -942,6 +1010,7 @@ func (b *Bot) HandleHelp() {
 /task — Ver o solicitar tarea
 /explain — Cómo completar la tarea actual 📸
 /fail — Confesar que fallaste 💀
+/stats — Estadísticas históricas 📊
 
 *Control avanzado* (extensión: %s):
 /freeze — Congelar lock ❄️
@@ -970,7 +1039,8 @@ func (b *Bot) Start() {
 		{tgbotapi.NewKeyboardButton("/status"), tgbotapi.NewKeyboardButton("/task")},
 		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/fail")},
 		{tgbotapi.NewKeyboardButton("/explain"), tgbotapi.NewKeyboardButton("/newlock")},
-		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/help")},
+		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/help")},
 	}
 
 	for update := range updates {
@@ -1027,6 +1097,8 @@ func (b *Bot) Start() {
 			b.HandleNewLock(strings.TrimPrefix(text, "/newlock "))
 		case text == "/help":
 			b.HandleHelp()
+		case text == "/stats":
+			b.HandleStats()
 		case text == "/toys":
 			b.HandleToys("")
 		case strings.HasPrefix(text, "/toys "):
@@ -1114,6 +1186,18 @@ func (b *Bot) SendNightStatus() {
 		}
 		b.state.CurrentTask.Failed = true
 		b.state.TotalTimeAddedHours += penaltyHours
+		b.state.TasksFailed++
+		b.state.TasksStreak = 0
+		// Guardar tarea fallida en DB
+		if b.db != nil {
+			b.db.SaveTask(&storage.Task{
+				ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
+				Description: b.state.CurrentTask.Description,
+				AssignedAt:  b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
+				Status:       "failed",
+				PenaltyHours: penaltyHours, RewardHours: b.state.CurrentTask.RewardHours,
+			})
+		}
 	}
 
 	msg, _ := b.ai.GenerateNightMessage(days, taskCompleted, b.state.Toys)
@@ -1299,36 +1383,54 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 	}
 
 	b.Send(fmt.Sprintf(
-		"▪️ *SESIÓN INICIADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\nDuración — *%s*\nModo — test\n\n_Tu combinación está guardada. No la verás hasta que termine._",
+		"▪️ *SESIÓN INICIADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\nDuración — *%s*\n\n_Tu combinación está guardada. No la verás hasta que termine._",
 		stripMarkdown(lockMsg),
 		durStr,
 	))
 }
 
-// CheckLockFinished verifica si el lock específico terminó usando su ID directamente.
-// Esto evita falsos positivos por errores de red o locks diferentes activos.
+// CheckLockFinished verifica si el lock específico terminó.
+// IMPORTANTE: Chaster NO hace unlock automático al vencer el tiempo.
+// El usuario debe abrir la app y presionar desbloquear manualmente.
+// Flujo:
+//  1. endDate vencido + status "locked" → avisar una sola vez (flag "notified:")
+//  2. status "unlocked" → mandar combinación y archivar
 func (b *Bot) CheckLockFinished() {
 	if b.state.CurrentLockID == "" {
 		return
 	}
 
-	lock, err := b.chaster.GetLockByID(b.state.CurrentLockID)
+	// Extraer lockID real (puede tener prefijo "notified:" si ya se avisó)
+	rawID := b.state.CurrentLockID
+	alreadyNotified := strings.HasPrefix(rawID, "notified:")
+	lockID := strings.TrimPrefix(rawID, "notified:")
+
+	lock, err := b.chaster.GetLockByID(lockID)
 	if err != nil {
-		// Error de red — no asumir que terminó, esperar al próximo ciclo
-		log.Printf("[CheckLockFinished] error consultando lock %s: %v", b.state.CurrentLockID, err)
+		log.Printf("[CheckLockFinished] error consultando lock %s: %v", lockID, err)
 		return
 	}
 
-	// Solo proceder si el lock está explícitamente unlocked
-	// "locked" incluye congelado, tiempo cumplido pero no desbloqueado, etc.
+	// Caso 1: tiempo vencido pero el usuario aún no hizo el unlock manual en Chaster
+	if lock.Status == "locked" && lock.EndDate != nil && time.Now().After(*lock.EndDate) {
+		if !alreadyNotified {
+			b.Send("🔓 *TIEMPO CUMPLIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\nAbre Chaster y presiona desbloquear.\nCuando lo confirmes, te mando la combinación.")
+			b.state.CurrentLockID = "notified:" + lockID
+			b.mustSaveState()
+		}
+		return
+	}
+
+	// Caso 2: cualquier estado que no sea unlocked — no hacer nada
 	if lock.Status != "unlocked" {
 		log.Printf("[CheckLockFinished] status: %s — no proceder", lock.Status)
 		return
 	}
 
-	// El lock ya está desbloqueado por el usuario o por tiempo
+	// El lock fue desbloqueado por el usuario en Chaster
+	b.state.CurrentLockID = lockID
 
-	combo, err := b.chaster.GetCombination(b.state.CurrentLockID)
+	combo, err := b.chaster.GetCombination(lockID)
 	if err != nil {
 		log.Printf("error obteniendo combinación: %v", err)
 		return
@@ -1351,14 +1453,14 @@ func (b *Bot) CheckLockFinished() {
 		}
 	}
 
-	if err := b.chaster.ArchiveLock(b.state.CurrentLockID); err != nil {
+	if err := b.chaster.ArchiveLock(lockID); err != nil {
 		log.Printf("error archivando lock: %v", err)
 	}
 
 	// Actualizar lock en DB con datos finales
 	if b.db != nil {
 		b.db.UpdateLockEnd(
-			fmt.Sprintf("lock-%s", b.state.CurrentLockID),
+			fmt.Sprintf("lock-%s", lockID),
 			time.Now(),
 			b.state.TasksCompleted,
 			b.state.TasksFailed,
@@ -1417,12 +1519,12 @@ func (b *Bot) HandleRandomEvent() {
 		return
 	}
 
-	// Tirar el dado
-	roll := int(now.UnixNano()%100 + 1)
-	if roll < 0 {
-		roll = -roll
+	// Tirar el dado — distribución uniforme 0-99
+	nano := now.UnixNano()
+	if nano < 0 {
+		nano = -nano
 	}
-	roll = roll % 100
+	roll := int(nano % 100)
 	if roll >= prob {
 		return
 	}
@@ -1714,9 +1816,15 @@ func (b *Bot) handleEventNegotiation(text string) {
 		return
 	}
 
+	// Capturar referencia antes del switch para evitar nil si expira concurrentemente
+	activeEvent := b.state.ActiveEvent
+	if activeEvent == nil {
+		return
+	}
+
 	switch result.Decision {
 	case "approved":
-		eventType := b.state.ActiveEvent.Type
+		eventType := activeEvent.Type
 		b.state.ActiveEvent = nil
 		b.mustSaveState()
 		switch eventType {
@@ -1738,11 +1846,9 @@ func (b *Bot) handleEventNegotiation(text string) {
 		))
 
 	case "penalty":
-		// Extender el evento como castigo
-		if b.state.ActiveEvent != nil {
-			b.state.ActiveEvent.ExpiresAt = b.state.ActiveEvent.ExpiresAt.Add(30 * time.Minute)
-			b.mustSaveState()
-		}
+		// Extender el evento como castigo usando referencia capturada
+		activeEvent.ExpiresAt = activeEvent.ExpiresAt.Add(30 * time.Minute)
+		b.mustSaveState()
 		b.Send("▪️ *PENALIZACIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_+30 minutos añadidos al evento._")
 	}
 }
