@@ -206,15 +206,29 @@ type actionWithParams struct {
 	Params interface{} `json:"params"`
 }
 
-// ExtensionSession representa una sesión de extensión activa
+// ExtensionSession representa una sesión de extensión activa.
+// La API puede devolver lockId como campo directo o anidado en lock._id.
 type ExtensionSession struct {
 	ID     string `json:"_id"`
 	LockID string `json:"lockId"`
+	Lock   *struct {
+		ID string `json:"_id"`
+	} `json:"lock"`
 	Status string `json:"status"`
 }
 
+// resolvedLockID devuelve el lockId sin importar cómo lo devuelva la API
+func (s ExtensionSession) resolvedLockID() string {
+	if s.LockID != "" {
+		return s.LockID
+	}
+	if s.Lock != nil {
+		return s.Lock.ID
+	}
+	return ""
+}
+
 // GetSessionByLockID busca el sessionId de extensión correspondiente a un lockId.
-// Necesario porque las acciones de extensión usan sessionId, no lockId.
 func (c *Client) GetSessionByLockID(lockID string) (string, error) {
 	if !c.HasExtension() {
 		return "", fmt.Errorf("extensión no configurada: falta CHASTER_EXTENSION_TOKEN o CHASTER_EXTENSION_SLUG")
@@ -234,18 +248,24 @@ func (c *Client) GetSessionByLockID(lockID string) (string, error) {
 
 	var result struct {
 		Results []ExtensionSession `json:"results"`
+		Count   int                `json:"count"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return "", err
+		return "", fmt.Errorf("error parseando sesiones: %w — respuesta: %s", err, string(data))
 	}
 
 	for _, s := range result.Results {
-		if s.LockID == lockID {
+		if s.resolvedLockID() == lockID {
 			return s.ID, nil
 		}
 	}
 
-	return "", fmt.Errorf("no se encontró sesión de extensión para el lock %s", lockID)
+	// Debug: listar qué lockIds encontramos para diagnosticar
+	found := []string{}
+	for _, s := range result.Results {
+		found = append(found, s.resolvedLockID())
+	}
+	return "", fmt.Errorf("no se encontró sesión para lock %s (sesiones encontradas: %v, total: %d)", lockID, found, result.Count)
 }
 
 // doExtensionAction ejecuta una acción usando el token de extensión
