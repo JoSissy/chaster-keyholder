@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -49,8 +48,7 @@ func (b *Bot) loadState() *models.AppState {
 	data, err := os.ReadFile(b.statePath)
 	if err != nil {
 		return &models.AppState{
-			NextForcedGame: time.Now().Add(8 * time.Hour),
-			Toys:           []models.Toy{},
+			Toys: []models.Toy{},
 		}
 	}
 	var s models.AppState
@@ -188,14 +186,6 @@ func (b *Bot) HandleStatus() {
 		}
 	}
 
-	gameStatus := "sin juego pendiente"
-	if b.state.GamePending {
-		remaining := time.Until(b.state.GameDeadline)
-		if remaining > 0 {
-			gameStatus = fmt.Sprintf("*OBLIGATORIO* — %dm restantes", int(remaining.Minutes()))
-		}
-	}
-
 	msg := fmt.Sprintf(
 		"▪️ *ESTADO DE CONDENA*\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
@@ -205,8 +195,7 @@ func (b *Bot) HandleStatus() {
 			"🧸 Juguetes — *%d*\n"+
 			"📊 Balance — *+%dh / -%dh*\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
-			"📋 Tarea — %s\n"+
-			"🎲 Dados — %s",
+			"📋 Tarea — %s",
 		days, hours, mins,
 		timeRemaining,
 		intensity.String(),
@@ -214,7 +203,6 @@ func (b *Bot) HandleStatus() {
 		b.state.TotalTimeAdded/60,
 		b.state.TotalTimeRemoved/60,
 		taskStatus,
-		gameStatus,
 	)
 	b.Send(msg)
 }
@@ -568,69 +556,6 @@ func (b *Bot) HandleToys(args string) {
 
 // ── Minijuegos ─────────────────────────────────────────────────────────────
 
-func (b *Bot) HandlePlay() {
-	if !b.state.GamePending {
-		b.Send("🎲 No hay juego obligatorio ahora.")
-		return
-	}
-
-	lock, err := b.chaster.GetActiveLock()
-	if err != nil {
-		b.Send("❌ No hay sesión activa.")
-		return
-	}
-
-	dice1 := rand.Intn(6) + 1
-	dice2 := rand.Intn(6) + 1
-	total := dice1 + dice2
-
-	var timeDelta int
-	switch {
-	case total <= 3:
-		timeDelta = 120
-	case total <= 5:
-		timeDelta = 60
-	case total <= 7:
-		timeDelta = 0
-	case total <= 9:
-		timeDelta = -30
-	case total <= 11:
-		timeDelta = -60
-	case total == 12:
-		timeDelta = -120
-	}
-
-	if timeDelta != 0 {
-		b.chaster.AddTime(lock.ID, timeDelta*60)
-		if timeDelta > 0 {
-			b.state.TotalTimeAdded += timeDelta
-		} else {
-			b.state.TotalTimeRemoved += -timeDelta
-		}
-	}
-
-	b.state.GamePending = false
-	b.state.LastGameTime = time.Now()
-	b.state.NextForcedGame = time.Now().Add(time.Duration(6+rand.Intn(12)) * time.Hour)
-	b.saveState()
-
-	aiMsg, _ := b.ai.GenerateDiceResult(dice1, dice2, total, timeDelta)
-
-	var resultLine string
-	if timeDelta > 0 {
-		resultLine = fmt.Sprintf("*+%d minutos* — tu condena crece", timeDelta)
-	} else if timeDelta < 0 {
-		resultLine = fmt.Sprintf("*-%d minutos* — algo de piedad", -timeDelta)
-	} else {
-		resultLine = "sin cambios esta vez"
-	}
-
-	b.Send(fmt.Sprintf(
-		"🎲 *DADOS*\n\n%d + %d = *%d*\n\n%s\n\n_%s_",
-		dice1, dice2, total, resultLine, aiMsg,
-	))
-}
-
 func (b *Bot) HandleHelp() {
 	b.Send(`🔒 *CHASTER KEYHOLDER BOT*
 
@@ -639,7 +564,6 @@ func (b *Bot) HandleHelp() {
 /status — Estado actual
 /task — Ver o solicitar tarea
 /fail — Confesar que fallaste 💀
-/play — Tirar dados 🎲
 
 *Inventario:*
 /toys — Ver juguetes
@@ -658,7 +582,7 @@ func (b *Bot) Start() {
 
 	keyboard := [][]tgbotapi.KeyboardButton{
 		{tgbotapi.NewKeyboardButton("/status"), tgbotapi.NewKeyboardButton("/task")},
-		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/play")},
+		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/fail")},
 		{tgbotapi.NewKeyboardButton("/fail"), tgbotapi.NewKeyboardButton("/newlock")},
 		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/help")},
 	}
@@ -708,8 +632,6 @@ func (b *Bot) Start() {
 			b.HandleTaskWithLevel(strings.TrimPrefix(text, "/order "))
 		case text == "/fail":
 			b.HandleFail()
-		case text == "/play":
-			b.HandlePlay()
 		case text == "/newlock":
 			b.HandleNewLock("")
 		case strings.HasPrefix(text, "/newlock "):
@@ -767,37 +689,6 @@ func (b *Bot) SendNightStatus() {
 
 	b.state.CurrentTask = nil
 	b.saveState()
-}
-
-func (b *Bot) CheckForcedGame() {
-	if b.state.GamePending {
-		remaining := time.Until(b.state.GameDeadline)
-		if remaining <= 0 {
-			lock, err := b.chaster.GetActiveLock()
-			if err == nil {
-				penalty := 1 + rand.Intn(2) // horas
-				b.chaster.AddTime(lock.ID, penalty*3600)
-				b.state.TotalTimeAdded += penalty * 60
-				b.state.GamePending = false
-				b.state.NextForcedGame = time.Now().Add(time.Duration(6+rand.Intn(12)) * time.Hour)
-				b.saveState()
-				msg, _ := b.ai.GenerateForcedGamePenalty(penalty)
-				b.Send("⚠️ *TIEMPO AGOTADO*\n\n" + msg + fmt.Sprintf("\n\n_+%d minutos añadidos._", penalty))
-			}
-		} else if remaining <= 15*time.Minute {
-			msg, _ := b.ai.GenerateForcedGameWarning(int(remaining.Minutes()))
-			b.Send("⚠️ *ÚLTIMO AVISO*\n\n" + msg + "\n\nUsa /play *ahora*.")
-		}
-		return
-	}
-
-	if time.Now().After(b.state.NextForcedGame) {
-		b.state.GamePending = true
-		b.state.GameDeadline = time.Now().Add(30 * time.Minute)
-		b.saveState()
-		msg, _ := b.ai.GenerateForcedGameWarning(30)
-		b.Send("🎲 *ES HORA DE JUGAR*\n\n" + msg + "\n\nTienes *30 minutos* para usar /play.")
-	}
 }
 
 // ── Nuevo lock ─────────────────────────────────────────────────────────────

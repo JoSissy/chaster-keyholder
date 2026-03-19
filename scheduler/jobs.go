@@ -41,14 +41,6 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
-	// Check minijuego obligatorio — cada 5 minutos
-	s.NewJob(
-		gocron.CronJob("*/5 * * * *", false),
-		gocron.NewTask(func() {
-			bot.CheckForcedGame()
-		}),
-	)
-
 	// Check si el lock terminó — cada minuto
 	s.NewJob(
 		gocron.CronJob("* * * * *", false),

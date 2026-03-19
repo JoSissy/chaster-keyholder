@@ -5,16 +5,12 @@
     "assigned_at": "2026-03-19T00:57:01.372642498-05:00",
     "due_at": "2026-03-19T01:57:01.372642498-05:00",
     "completed": false,
-    "failed": false,
+    "failed": true,
     "penalty_minutes": 2,
     "reward_minutes": 1,
-    "awaiting_photo": true
+    "awaiting_photo": false
   },
-  "last_game_time": "0001-01-01T00:00:00Z",
-  "next_forced_game": "2026-03-19T05:05:11.499718947-05:00",
-  "game_pending": false,
-  "game_deadline": "0001-01-01T00:00:00Z",
-  "total_time_added_minutes": 928,
+  "total_time_added_minutes": 930,
   "total_time_removed_minutes": 0,
   "days_locked": 0,
   "toys": [

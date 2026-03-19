@@ -258,31 +258,6 @@ Evalúa si esta foto es evidencia válida.`,
 	return &verdict, nil
 }
 
-// ── Minijuegos ─────────────────────────────────────────────────────────────
-
-func (c *Client) GenerateDiceResult(dice1, dice2, total, timeDeltaMinutes int) (string, error) {
-	var result string
-	if timeDeltaMinutes > 0 {
-		result = fmt.Sprintf("sacó %d+%d=%d y se le AÑADEN %d minutos", dice1, dice2, total, timeDeltaMinutes)
-	} else if timeDeltaMinutes < 0 {
-		result = fmt.Sprintf("sacó %d+%d=%d y se le QUITAN %d minutos", dice1, dice2, total, -timeDeltaMinutes)
-	} else {
-		result = fmt.Sprintf("sacó %d+%d=%d, sin cambio", dice1, dice2, total)
-	}
-	prompt := fmt.Sprintf("Jolie %s. Comentario de 1-2 líneas apropiado al resultado.", result)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
-}
-
-func (c *Client) GenerateForcedGameWarning(minutesLeft int) (string, error) {
-	prompt := fmt.Sprintf("Jolie tiene %d minutos para tirar los dados o será penalizada. Aviso urgente de 1-2 líneas.", minutesLeft)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
-}
-
-func (c *Client) GenerateForcedGamePenalty(penaltyMinutes int) (string, error) {
-	prompt := fmt.Sprintf("Jolie no tiró los dados a tiempo. Penalización: +%dm. Mensaje de castigo firme.", penaltyMinutes)
-	return c.chat("llama-3.3-70b-versatile", baseSystem, prompt)
-}
-
 // ── Nuevo lock ─────────────────────────────────────────────────────────────
 
 // LockDecision decisión de la IA sobre duración del lock

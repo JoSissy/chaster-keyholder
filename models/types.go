@@ -81,15 +81,11 @@ func GetIntensity(daysLocked int) IntensityLevel {
 
 // AppState estado global de la app (persiste en state.json)
 type AppState struct {
-	CurrentTask      *Task     `json:"current_task,omitempty"`
-	LastGameTime     time.Time `json:"last_game_time"`
-	NextForcedGame   time.Time `json:"next_forced_game"`
-	GamePending      bool      `json:"game_pending"`
-	GameDeadline     time.Time `json:"game_deadline"`
-	TotalTimeAdded   int       `json:"total_time_added_minutes"`
-	TotalTimeRemoved int       `json:"total_time_removed_minutes"`
-	DaysLocked       int       `json:"days_locked"`
-	Toys             []Toy     `json:"toys"`
+	CurrentTask      *Task `json:"current_task,omitempty"`
+	TotalTimeAdded   int   `json:"total_time_added_minutes"`
+	TotalTimeRemoved int   `json:"total_time_removed_minutes"`
+	DaysLocked       int   `json:"days_locked"`
+	Toys             []Toy `json:"toys"`
 	// Flujo de nuevo lock
 	AwaitingLockPhoto     bool   `json:"awaiting_lock_photo"`
 	CurrentLockID         string `json:"current_lock_id"`
