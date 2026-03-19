@@ -410,23 +410,29 @@ func (c *Client) VerifyLockPhoto(imageBytes []byte, mimeType string) (*PhotoVerd
 	b64 := base64.StdEncoding.EncodeToString(imageBytes)
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
 
-	system := `Eres un verificador de evidencia de castidad.
-Analiza la foto y responde ÚNICAMENTE en JSON:
-{"status": "approved", "reason": "explicación breve"}
-o
-{"status": "rejected", "reason": "explicación breve"}
+	system := `You are a chastity evidence verifier. Analyze the photo and respond ONLY in JSON:
+{"status": "approved", "reason": "brief explanation"}
+or
+{"status": "rejected", "reason": "brief explanation"}
 
-El usuario usa un candado tipo Kingsley (caja de llaves con diales de combinación).
-Este tipo de candado NO muestra un cuerpo de candado tradicional, solo los diales numéricos o de letras.
+The user uses a Kingsley-style combination lock box (a small metal box with rotating number or letter dials).
+This lock does NOT look like a traditional padlock — it only shows the combination dials.
 
-Aprueba SOLO si la foto muestra las DOS condiciones siguientes:
-1. Diales de combinación visibles (números o letras giratorios)
-2. Una jaula de castidad puesta en el cuerpo del usuario
+A chastity cage is a device worn on the male genitals made of plastic or metal rings and bars that
+enclose the penis, preventing erection and access. It may be visible under clothing or directly.
 
-Rechaza si no se ven los diales, no se ve la jaula puesta, o la foto es claramente inválida.`
+APPROVE if the photo clearly shows BOTH:
+1. Combination dials visible (rotating numbers or letters on a small metal box)
+2. A chastity cage worn on the body — look for the cage structure, rings, or the device outline
+
+Be GENEROUS in your evaluation:
+- The cage does not need to be the main focus of the photo
+- Partial visibility is acceptable if the device is recognizable
+- If you can reasonably identify both elements, approve
+- Only reject if one of the two elements is completely absent or the photo is clearly unrelated`
 
 	userContent := []contentPart{
-		{Type: "text", Text: "¿Esta foto muestra los diales de un candado Kingsley Y una jaula de castidad puesta?"},
+		{Type: "text", Text: "Does this photo show BOTH a Kingsley combination lock box AND a chastity cage worn on the body? Be generous — approve if both elements are reasonably visible."},
 		{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
 	}
 
