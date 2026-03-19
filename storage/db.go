@@ -28,6 +28,7 @@ func NewDB(path string) (*DB, error) {
 	return db, nil
 }
 
+// Migrations
 func (db *DB) migrate() error {
 	_, err := db.conn.Exec(`
 	CREATE TABLE IF NOT EXISTS toys (
