@@ -934,8 +934,8 @@ func (b *Bot) HandleChat(text string) {
 	// Detectar ruegos sobre evento activo (freeze/hidetime)
 	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
 		eventKeywords := map[string][]string{
-			"freeze":   {"descongela", "unfreeze", "congela", "frío", "fría", "congelada", "libérame", "liberame"},
-			"hidetime": {"timer", "tiempo", "cuánto", "cuanto", "falta", "muéstrame", "muestrame", "ver el tiempo"},
+			"freeze":   {"descongela", "unfreeze", "congela", "frio", "fría", "congelada", "liberame", "libérame"},
+			"hidetime": {"timer", "tiempo", "cuanto", "cuánto", "falta", "muestrame", "muéstrame", "ver el tiempo"},
 		}
 		for _, kw := range eventKeywords[b.state.ActiveEvent.Type] {
 			if strings.Contains(textLower, kw) {
@@ -999,7 +999,7 @@ func (b *Bot) HandleChat(text string) {
 func (b *Bot) handleOrgasmRequest(text string) {
 	b.Send("_..._")
 
-	// Obtener historial para que El Señor tome una decisión informada
+	// Obtener historial para que Papi tome una decisión informada
 	totalGranted, totalDenied, daysSinceLastGrant := 0, 0, 999
 	if b.db != nil {
 		total, granted, denied, err := b.db.GetOrgasmStats()
@@ -1228,6 +1228,61 @@ func (b *Bot) HandleToys(args string) {
 	}
 }
 
+// ── History ────────────────────────────────────────────────────────────────
+
+func (b *Bot) HandleHistory() {
+	if b.db == nil {
+		b.Send("❌ Base de datos no disponible.")
+		return
+	}
+	tasks, err := b.db.GetRecentTasks(10)
+	if err != nil || len(tasks) == 0 {
+		b.Send("📋 *HISTORIAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Sin tareas registradas todavía._")
+		return
+	}
+	loc, _ := time.LoadLocation("America/Bogota")
+	lines := []string{"📋 *HISTORIAL — últimas tareas*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
+	for _, t := range tasks {
+		icon := "⏳"
+		switch t.Status {
+		case "completed":
+			icon = "✅"
+		case "failed":
+			icon = "💀"
+		}
+		date := t.AssignedAt.In(loc).Format("02 Jan")
+		desc := t.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "..."
+		}
+		lines = append(lines, fmt.Sprintf("%s %s\n_%s_", icon, date, desc))
+	}
+	b.Send(strings.Join(lines, "\n▬▬▬▬▬▬▬▬▬▬▬▬\n"))
+}
+
+// ── Mood ───────────────────────────────────────────────────────────────────
+
+func (b *Bot) HandleMood() {
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	b.Send("_..._")
+	msg, err := b.ai.GenerateMoodMessage(
+		b.daysLocked(),
+		b.state.Toys,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+		b.state.TasksStreak,
+		b.state.WeeklyDebt,
+	)
+	if err != nil {
+		b.Send("_..._")
+		return
+	}
+	b.Send(stripMarkdown(msg))
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 // HandleStats muestra estadísticas históricas desde la DB
@@ -1283,7 +1338,7 @@ func (b *Bot) HandleHelp() {
 /task — Ver tarea activa del día
 /explain — Cómo fotografiar la tarea
 /fail — Confesar que fallaste
-/ruleta — Girar la ruleta diaria 🎰
+/roulette — Girar la ruleta diaria 🎰
 /chatask — Tarea comunitaria de Chaster
 
 🧸 *INVENTARIO*
@@ -1293,20 +1348,22 @@ func (b *Bot) HandleHelp() {
 
 📊 *HISTORIAL*
 /stats — Estadísticas de sesiones
-/orgasmos — Historial de permisos
+/history — Últimas 10 tareas
+/orgasms — Historial de permisos
+/mood — Estado de ánimo de Papi
 /newlock — Iniciar nueva sesión
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
-🚫 *SOLO EL SEÑOR*
+🚫 *SOLO PAPI*
 _/freeze /unfreeze /hidetime /showtime /pillory_
-_Estos comandos los ejecuta El Señor, no tú._
+_Estos comandos los ejecuta Papi, no tú._
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
 🧪 *PRUEBAS* _(se eliminarán pronto)_
 /testevent — Forzar evento random
 /testremove — Quitar tiempo manualmente
 /testmsg — Mensaje espontáneo
-/testjuicio — Juicio dominical
+/testjudgment — Juicio dominical
 /help — Este menú
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
@@ -1326,6 +1383,8 @@ func (b *Bot) Start() {
 		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/fail")},
 		{tgbotapi.NewKeyboardButton("/explain"), tgbotapi.NewKeyboardButton("/newlock")},
 		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/orgasms")},
+		{tgbotapi.NewKeyboardButton("/history"), tgbotapi.NewKeyboardButton("/mood")},
 		{tgbotapi.NewKeyboardButton("/help")},
 	}
 
@@ -1397,8 +1456,12 @@ func (b *Bot) Start() {
 			b.HandleHelp()
 		case text == "/stats":
 			b.HandleStats()
-		case text == "/orgasmos":
+		case text == "/orgasms":
 			b.HandleOrgasmHistory()
+		case text == "/history":
+			b.HandleHistory()
+		case text == "/mood":
+			b.HandleMood()
 		case text == "/toys":
 			b.HandleToys("")
 		case strings.HasPrefix(text, "/toys "):
@@ -1424,11 +1487,11 @@ func (b *Bot) Start() {
 			b.HandleTestRemoveTime(strings.TrimPrefix(text, "/testremove "))
 		case text == "/testmsg":
 			b.SendRandomMessageTest()
-		case text == "/ruleta":
+		case text == "/roulette":
 			b.HandleRuleta()
 		case text == "/chatask":
 			b.HandleChasterTaskCommand()
-		case text == "/testjuicio":
+		case text == "/testjudgment":
 			b.state.LastJudgmentDate = "" // forzar re-ejecución
 			b.HandleWeeklyJudgment()
 		case text != "" && !strings.HasPrefix(text, "/"):
@@ -2002,7 +2065,7 @@ func (b *Bot) executeRandomEvent(lockID string, decision *ai.RandomEventDecision
 var randomMessageTypes = []string{
 	"possessive reminder — he's thinking of her caged, belonging to him",
 	"small degrading order — something tiny to do alone right now, no photo (think about X, say something out loud, feel the cage)",
-	"perverse comment — about her cage, her body, what El Señor enjoys about owning her",
+	"perverse comment — about her cage, her body, what Papi enjoys about owning her",
 	"uncomfortable psychological question — about her submission, what she is, her secret desires",
 	"veiled threat — something is coming, vague and unsettling, no details",
 	"mocking observation — laugh quietly at her situation, her cage, her life as a sissy",
@@ -2312,6 +2375,7 @@ func (b *Bot) TriggerCheckin() {
 	expiresAt := time.Now().Add(30 * time.Minute)
 	b.state.PendingCheckin = true
 	b.state.CheckinExpiresAt = &expiresAt
+	b.state.CheckinReminderSent = false
 	b.mustSaveState()
 	b.pendingAction = "checkin_photo"
 	b.Send(fmt.Sprintf(
@@ -2356,16 +2420,51 @@ func (b *Bot) CheckCheckinExpiry() {
 	if !b.state.PendingCheckin || b.state.CheckinExpiresAt == nil {
 		return
 	}
+
+	// Recordatorio a los 15 minutos restantes
+	if !b.state.CheckinReminderSent {
+		timeLeft := time.Until(*b.state.CheckinExpiresAt)
+		if timeLeft <= 15*time.Minute && timeLeft > 0 {
+			b.state.CheckinReminderSent = true
+			b.mustSaveState()
+			b.Send("⚠️ *CHECK-IN — 15 minutos*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi sigue esperando la foto. Queda poco tiempo._")
+			return
+		}
+	}
+
 	if time.Now().Before(*b.state.CheckinExpiresAt) {
 		return
 	}
 	b.state.PendingCheckin = false
 	b.state.CheckinExpiresAt = nil
+	b.state.CheckinReminderSent = false
 	b.pendingAction = ""
 	b.mustSaveState()
 	b.Send("⏰ *CHECK-IN IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No respondiste a tiempo. Consecuencias._")
 	b.addWeeklyDebt("check-in ignorado — no respondió a tiempo")
 	b.autoPillory("no respondió al check-in a tiempo")
+}
+
+// CheckRitualExpiry penaliza si el ritual matutino fue ignorado (llamado a las 11am)
+func (b *Bot) CheckRitualExpiry() {
+	if b.state.RitualStep == 0 {
+		return
+	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
+	loc, _ := time.LoadLocation("America/Bogota")
+	if time.Now().In(loc).Hour() < 11 {
+		return
+	}
+	// Ritual iniciado pero no completado y ya pasaron las 11am — penalizar
+	b.state.RitualStep = 0
+	b.state.LastRitualDate = todayStr()
+	b.pendingAction = ""
+	b.mustSaveState()
+	b.Send("💀 *RITUAL IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No completaste el ritual de Papi. Hay consecuencias._")
+	b.addWeeklyDebt("ritual matutino ignorado")
+	b.autoPillory("ignoró el ritual matutino de Papi")
 }
 
 // ── Condicionamiento ───────────────────────────────────────────────────────
@@ -2396,7 +2495,7 @@ func (b *Bot) HandleWeeklyJudgment() {
 		return
 	}
 
-	b.Send("⚖️ *EL SEÑOR HACE EL RECUENTO DE LA SEMANA...*")
+	b.Send("⚖️ *PAPI HACE EL RECUENTO DE LA SEMANA...*")
 
 	verdict, err := b.ai.GenerateWeeklyJudgment(
 		b.daysLocked(),
@@ -2562,7 +2661,7 @@ func (b *Bot) HandleChasterTaskCommand() {
 		return
 	}
 
-	b.Send("_El Señor está preparando una tarea para la comunidad..._")
+	b.Send("_Papi está preparando una tarea para la comunidad..._")
 
 	var recentTasks []string
 	if b.db != nil {
@@ -2667,7 +2766,7 @@ func (b *Bot) CheckChasterTaskVote() {
 	}
 
 	// Timeout: si pasaron más de 2 horas sin resultado, abandonar
-	if time.Since(*b.state.ChasterTaskAssignedAt) > 2*time.Hour {
+	if time.Since(*b.state.ChasterTaskAssignedAt) > 6*time.Hour {
 		log.Printf("[ChasterTask] timeout esperando voto — limpiando estado")
 		b.clearChasterTaskState()
 		b.Send("⏰ *TAREA COMUNITARIA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo de votación expiró sin resultado definitivo._")
@@ -2699,7 +2798,7 @@ func (b *Bot) CheckChasterTaskVote() {
 				b.mustSaveState()
 			}
 		}
-		b.Send("✅ *COMUNIDAD APROBÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad verificó tu tarea. El Señor está... satisfecho._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*-1h* quitada de tu condena.")
+		b.Send("✅ *COMUNIDAD APROBÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad verificó tu tarea. Papi está... satisfecho._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*-1h* quitada de tu condena.")
 
 	case "rejected":
 		b.clearChasterTaskState()
@@ -2714,7 +2813,7 @@ func (b *Bot) CheckChasterTaskVote() {
 			}
 		}
 		b.addWeeklyDebt("tarea comunitaria rechazada por la comunidad de Chaster")
-		b.Send("❌ *COMUNIDAD RECHAZÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad no quedó satisfecha con tu evidencia. El Señor tampoco._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+1h* añadida a tu condena.")
+		b.Send("❌ *COMUNIDAD RECHAZÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad no quedó satisfecha con tu evidencia. Papi tampoco._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+1h* añadida a tu condena.")
 
 	case "abandoned":
 		b.clearChasterTaskState()

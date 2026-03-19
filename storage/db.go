@@ -307,6 +307,23 @@ func (db *DB) GetTasksByLock(lockID string) ([]*Task, error) {
 	return tasks, nil
 }
 
+func (db *DB) GetRecentTasks(n int) ([]*Task, error) {
+	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []*Task
+	for rows.Next() {
+		t := &Task{}
+		if err := rows.Scan(&t.ID, &t.LockID, &t.Description, &t.PhotoURL, &t.AssignedAt, &t.DueAt, &t.CompletedAt, &t.Status, &t.PenaltyHours, &t.RewardHours); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
 func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 	rows, err := db.conn.Query(`SELECT description FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
 	if err != nil {

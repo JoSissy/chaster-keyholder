@@ -128,6 +128,15 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
+	// Penalizar ritual matutino ignorado — 11am
+	s.NewJob(
+		gocron.CronJob("0 11 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Verificando expiración de ritual matutino...")
+			bot.CheckRitualExpiry()
+		}),
+	)
+
 	// Juicio dominical — domingos a las 9pm
 	s.NewJob(
 		gocron.CronJob("0 21 * * 0", false),
