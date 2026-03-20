@@ -1393,6 +1393,12 @@ func (b *Bot) syncLockState() {
 	if b.state.CurrentLockID == "" {
 		b.state.CurrentLockID = lock.ID
 	}
+	startUTC := lock.StartDate.UTC()
+	b.state.LockStartDate = &startUTC
+	if lock.EndDate != nil {
+		endUTC := lock.EndDate.UTC()
+		b.state.LockEndDate = &endUTC
+	}
 	b.stateMu.Unlock()
 	b.mustSaveState()
 	log.Printf("[syncLockState] lock activo: %s — %d días", lock.ID, days)

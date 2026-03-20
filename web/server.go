@@ -99,6 +99,18 @@ func funcMap() template.FuncMap {
 		"formatShort": func(t time.Time) string { return t.Format("02 Jan") },
 		"formatTime": func(t time.Time) string { return t.Format("15:04") },
 		"formatDateTime": func(t time.Time) string { return t.Format("02 Jan 2006 15:04") },
+		"formatISO": func(t *time.Time) string {
+			if t == nil {
+				return ""
+			}
+			return t.UTC().Format(time.RFC3339)
+		},
+		"formatDatePtr": func(t *time.Time) string {
+			if t == nil {
+				return "—"
+			}
+			return t.Format("02 Jan 2006")
+		},
 		"monthNameES": func(m int) string {
 			if m < 1 || m > 12 {
 				return ""

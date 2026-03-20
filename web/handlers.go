@@ -24,21 +24,33 @@ func (s *Server) base(nav string) pageBase {
 
 type dashData struct {
 	pageBase
-	IsLocked       bool
-	DaysLocked     int
-	Streak         int
-	ObedienceName  string
-	TasksCompleted int
-	TasksFailed    int
-	WeeklyDebt     int
-	PendingCheckin bool
-	HasCurrentTask bool
+	IsLocked        bool
+	DaysLocked      int
+	Streak          int
+	ObedienceName   string
+	ObedienceLevel  int
+	TasksCompleted  int
+	TasksFailed     int
+	CompletionRate  int // % tareas completadas
+	WeeklyDebt      int
+	TimeAdded       int
+	TimeRemoved     int
+	PendingCheckin  bool
+	HasCurrentTask  bool
 	CurrentTaskDesc string
 	CurrentTaskDue  time.Time
 	RecentTasks     []*storage.Task
 	OrgasmTotal     int
 	OrgasmGranted   int
 	OrgasmDenied    int
+	GrantRate       int
+	// Lock timing
+	HasEndDate      bool
+	LockEndISO      string     // for JS countdown
+	LockStartISO    string     // for JS progress bar
+	LockStartDate   *time.Time // for display
+	LockEndDate     *time.Time // for display
+	ProgressPct     int        // % del lock completado
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -47,21 +59,70 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.loadState()
-	// IsLocked: CurrentLockID se setea solo cuando el bot crea el lock.
-	// DaysLocked es actualizado por el bot en cada interacción con Chaster.
-	// Usar ambos para no fallar cuando state.json se reinicia o el lock preexistía.
 	isLocked := st.CurrentLockID != "" || st.DaysLocked > 0
 
+	obLevel := models.GetObedienceLevel(st.TasksStreak)
+	taskTotal := st.TasksCompleted + st.TasksFailed
+	completionRate := 0
+	if taskTotal > 0 {
+		completionRate = st.TasksCompleted * 100 / taskTotal
+	}
+
+	total, granted, denied, _ := s.db.GetOrgasmStats()
+	grantRate := 0
+	if total > 0 {
+		grantRate = granted * 100 / total
+	}
+
+	// Lock timing
+	hasEndDate := st.LockEndDate != nil
+	lockEndISO := ""
+	lockStartISO := ""
+	progressPct := 0
+	if st.LockEndDate != nil {
+		lockEndISO = st.LockEndDate.UTC().Format(time.RFC3339)
+	}
+	if st.LockStartDate != nil {
+		lockStartISO = st.LockStartDate.UTC().Format(time.RFC3339)
+		if st.LockEndDate != nil {
+			total_ := st.LockEndDate.Sub(*st.LockStartDate)
+			elapsed := time.Since(*st.LockStartDate)
+			if total_ > 0 {
+				pct := int(elapsed * 100 / total_)
+				if pct < 0 {
+					pct = 0
+				} else if pct > 100 {
+					pct = 100
+				}
+				progressPct = pct
+			}
+		}
+	}
+
 	d := dashData{
-		pageBase:       s.base("dashboard"),
-		IsLocked:       isLocked,
-		DaysLocked:     st.DaysLocked,
-		Streak:         st.TasksStreak,
-		ObedienceName:  models.ObedienceLevelString(models.GetObedienceLevel(st.TasksStreak)),
-		TasksCompleted: st.TasksCompleted,
-		TasksFailed:    st.TasksFailed,
-		WeeklyDebt:     st.WeeklyDebt,
-		PendingCheckin: st.PendingCheckin,
+		pageBase:        s.base("dashboard"),
+		IsLocked:        isLocked,
+		DaysLocked:      st.DaysLocked,
+		Streak:          st.TasksStreak,
+		ObedienceName:   models.ObedienceLevelString(obLevel),
+		ObedienceLevel:  obLevel,
+		TasksCompleted:  st.TasksCompleted,
+		TasksFailed:     st.TasksFailed,
+		CompletionRate:  completionRate,
+		WeeklyDebt:      st.WeeklyDebt,
+		TimeAdded:       st.TotalTimeAddedHours,
+		TimeRemoved:     st.TotalTimeRemovedHours,
+		PendingCheckin:  st.PendingCheckin,
+		OrgasmTotal:     total,
+		OrgasmGranted:   granted,
+		OrgasmDenied:    denied,
+		GrantRate:       grantRate,
+		HasEndDate:      hasEndDate,
+		LockEndISO:      lockEndISO,
+		LockStartISO:    lockStartISO,
+		LockStartDate:   st.LockStartDate,
+		LockEndDate:     st.LockEndDate,
+		ProgressPct:     progressPct,
 	}
 	if st.CurrentTask != nil {
 		d.HasCurrentTask = true
@@ -70,11 +131,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	recent, _ := s.db.GetRecentTasks(6)
 	d.RecentTasks = recent
-
-	total, granted, denied, _ := s.db.GetOrgasmStats()
-	d.OrgasmTotal = total
-	d.OrgasmGranted = granted
-	d.OrgasmDenied = denied
 
 	s.render(w, dashboardHTML, d)
 }

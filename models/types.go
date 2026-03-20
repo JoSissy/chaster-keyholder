@@ -104,6 +104,10 @@ type AppState struct {
 	LastRitualDate string `json:"last_ritual_date"` // "2006-01-02" COT
 	RitualStep     int    `json:"ritual_step"`       // 0=none/done, 1=awaiting photo, 2=awaiting message
 
+	// Fechas del lock activo (sincronizadas desde Chaster al arrancar)
+	LockEndDate   *time.Time `json:"lock_end_date,omitempty"`
+	LockStartDate *time.Time `json:"lock_start_date,omitempty"`
+
 	// Control de plug diario
 	AssignedPlugID   string `json:"assigned_plug_id"`
 	AssignedPlugDate string `json:"assigned_plug_date"` // "2006-01-02" COT

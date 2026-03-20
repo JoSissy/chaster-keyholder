@@ -350,6 +350,17 @@ a:hover { color: var(--purple); }
 .dot-f { background: var(--danger); }
 .dot-p { background: var(--warning); }
 
+/* ── Countdown ── */
+.cd-unit { display:flex; flex-direction:column; align-items:center; }
+.cd-num {
+  font-family: 'Playfair Display', serif;
+  font-size: 38px; font-weight: 700;
+  color: var(--text-muted);
+  line-height: 1; min-width: 2ch; text-align: center;
+}
+.cd-lbl { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-top: 3px; }
+.cd-sep { font-size: 28px; color: var(--border); padding-bottom: 14px; font-weight: 300; }
+
 /* ── Lock hero ── */
 .lock-hero {
   background: var(--card);
@@ -464,9 +475,39 @@ var dashboardHTML = `{{define "content"}}
 {{if .IsLocked}}
 <div class="lock-hero">
   <div class="lock-emoji">🔒</div>
-  <div class="lock-info">
-    <div class="lock-days">{{.DaysLocked}}</div>
-    <div class="lock-lbl">días encerrada</div>
+  <div class="lock-info" style="flex:1;">
+
+    <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;">
+      <div>
+        <div class="lock-days">{{.DaysLocked}}</div>
+        <div class="lock-lbl">días encerrada</div>
+      </div>
+      {{if .HasEndDate}}
+      <div id="cd-wrap" style="display:flex;align-items:flex-end;gap:6px;" data-end="{{.LockEndISO}}" data-start="{{.LockStartISO}}">
+        <div class="cd-unit"><span class="cd-num" id="cd-d">—</span><span class="cd-lbl">días</span></div>
+        <span class="cd-sep">:</span>
+        <div class="cd-unit"><span class="cd-num" id="cd-h">——</span><span class="cd-lbl">horas</span></div>
+        <span class="cd-sep">:</span>
+        <div class="cd-unit"><span class="cd-num" id="cd-m">——</span><span class="cd-lbl">min</span></div>
+        <span class="cd-sep">:</span>
+        <div class="cd-unit"><span class="cd-num" id="cd-s">——</span><span class="cd-lbl">seg</span></div>
+      </div>
+      {{end}}
+    </div>
+
+    {{if .HasEndDate}}
+    <div style="margin:14px 0 10px;">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:5px;">
+        <span>{{formatDatePtr .LockStartDate}}</span>
+        <span>{{.ProgressPct}}% completado</span>
+        <span>{{formatDatePtr .LockEndDate}}</span>
+      </div>
+      <div class="prog-bar" style="height:6px;" id="lock-prog-bar">
+        <div class="prog-fill" id="lock-prog" style="{{pctStyle .ProgressPct 100}}"></div>
+      </div>
+    </div>
+    {{end}}
+
     <div class="lock-badges">
       <span class="badge badge-pink">🔥 Racha: {{.Streak}}</span>
       <span class="badge badge-purple">Obediencia {{.ObedienceName}}</span>
@@ -489,7 +530,7 @@ var dashboardHTML = `{{define "content"}}
   <div class="stat-card">
     <div class="stat-lbl">Tareas completadas</div>
     <div class="stat-val c-green">{{.TasksCompleted}}</div>
-    <div class="stat-sub">esta sesión</div>
+    <div class="stat-sub">{{.CompletionRate}}% tasa de éxito</div>
   </div>
   <div class="stat-card">
     <div class="stat-lbl">Tareas fallidas</div>
@@ -497,14 +538,37 @@ var dashboardHTML = `{{define "content"}}
     <div class="stat-sub">esta sesión</div>
   </div>
   <div class="stat-card">
-    <div class="stat-lbl">Permisos solicitados</div>
-    <div class="stat-val c-pink">{{.OrgasmTotal}}</div>
-    <div class="stat-sub">{{.OrgasmGranted}} concedidos · {{.OrgasmDenied}} negados</div>
+    <div class="stat-lbl">Racha actual</div>
+    <div class="stat-val c-pink">{{.Streak}}</div>
+    <div class="stat-sub">obediencia {{.ObedienceName}}</div>
   </div>
   <div class="stat-card">
     <div class="stat-lbl">Deuda semanal</div>
     <div class="stat-val {{if .WeeklyDebt}}c-red{{else}}c-green{{end}}">{{.WeeklyDebt}}h</div>
-    <div class="stat-sub">{{if .WeeklyDebt}}pendiente{{else}}al día ✓{{end}}</div>
+    <div class="stat-sub">{{if .WeeklyDebt}}pendiente de pagar{{else}}al día ✓{{end}}</div>
+  </div>
+</div>
+
+<div class="stats-grid g4" style="margin-top:-8px;">
+  <div class="stat-card">
+    <div class="stat-lbl">Permisos concedidos</div>
+    <div class="stat-val c-green">{{.OrgasmGranted}}</div>
+    <div class="stat-sub">de {{.OrgasmTotal}} solicitados</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Permisos negados</div>
+    <div class="stat-val c-red">{{.OrgasmDenied}}</div>
+    <div class="stat-sub">{{.GrantRate}}% aprobación</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Tiempo añadido</div>
+    <div class="stat-val c-red">+{{.TimeAdded}}h</div>
+    <div class="stat-sub">como castigo</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Tiempo quitado</div>
+    <div class="stat-val c-green">−{{.TimeRemoved}}h</div>
+    <div class="stat-sub">como recompensa</div>
   </div>
 </div>
 
@@ -552,23 +616,27 @@ var dashboardHTML = `{{define "content"}}
   <div class="card">
     <div class="card-title">Permisos de orgasmo</div>
     {{if .OrgasmTotal}}
-    <div style="margin-bottom:18px;">
+    <div style="margin-bottom:16px;">
       <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;">
         <span>Tasa de concesión</span>
-        <span>{{percent .OrgasmGranted .OrgasmTotal}}%</span>
+        <span>{{.GrantRate}}%</span>
       </div>
       <div class="prog-bar">
         <div class="prog-fill prog-green" style="{{pctStyle .OrgasmGranted .OrgasmTotal}}"></div>
       </div>
     </div>
-    <div style="display:flex;gap:10px;">
-      <div style="flex:1;text-align:center;padding:14px 10px;background:rgba(134,239,172,0.05);border-radius:8px;border:1px solid rgba(134,239,172,0.14);">
-        <div style="font-size:28px;font-weight:700;color:var(--success);font-family:'Playfair Display',serif;">{{.OrgasmGranted}}</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">concedidos</div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <div style="flex:1;text-align:center;padding:12px 8px;background:rgba(134,239,172,0.05);border-radius:8px;border:1px solid rgba(134,239,172,0.14);">
+        <div style="font-size:26px;font-weight:700;color:var(--success);font-family:'Playfair Display',serif;">{{.OrgasmGranted}}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">concedidos</div>
       </div>
-      <div style="flex:1;text-align:center;padding:14px 10px;background:rgba(248,113,113,0.05);border-radius:8px;border:1px solid rgba(248,113,113,0.14);">
-        <div style="font-size:28px;font-weight:700;color:var(--danger);font-family:'Playfair Display',serif;">{{.OrgasmDenied}}</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">negados</div>
+      <div style="flex:1;text-align:center;padding:12px 8px;background:rgba(248,113,113,0.05);border-radius:8px;border:1px solid rgba(248,113,113,0.14);">
+        <div style="font-size:26px;font-weight:700;color:var(--danger);font-family:'Playfair Display',serif;">{{.OrgasmDenied}}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">negados</div>
+      </div>
+      <div style="flex:1;text-align:center;padding:12px 8px;background:rgba(232,119,154,0.05);border-radius:8px;border:1px solid rgba(232,119,154,0.14);">
+        <div style="font-size:26px;font-weight:700;color:var(--pink);font-family:'Playfair Display',serif;">{{.OrgasmTotal}}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">total</div>
       </div>
     </div>
     {{else}}
@@ -579,6 +647,50 @@ var dashboardHTML = `{{define "content"}}
     {{end}}
   </div>
 </div>
+
+{{if .HasEndDate}}
+<script>
+(function(){
+  var wrap = document.getElementById('cd-wrap');
+  if (!wrap) return;
+  var endISO = wrap.dataset.end;
+  var startISO = wrap.dataset.start;
+  if (!endISO) return;
+
+  var endDate = new Date(endISO);
+  var startDate = startISO ? new Date(startISO) : null;
+  var prog = document.getElementById('lock-prog');
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+
+  function tick(){
+    var now = new Date();
+    var rem = endDate - now;
+    if (rem <= 0) {
+      wrap.innerHTML = '<span style="color:var(--success);font-family:\'Playfair Display\',serif;font-size:22px;">¡Tiempo cumplido!</span>';
+      return;
+    }
+    var d = Math.floor(rem / 86400000);
+    var h = Math.floor((rem % 86400000) / 3600000);
+    var m = Math.floor((rem % 3600000) / 60000);
+    var s = Math.floor((rem % 60000) / 1000);
+    document.getElementById('cd-d').textContent = d;
+    document.getElementById('cd-h').textContent = pad(h);
+    document.getElementById('cd-m').textContent = pad(m);
+    document.getElementById('cd-s').textContent = pad(s);
+
+    if (prog && startDate) {
+      var total = endDate - startDate;
+      var elapsed = now - startDate;
+      var pct = Math.min(100, Math.max(0, elapsed * 100 / total));
+      prog.style.width = pct.toFixed(2) + '%';
+    }
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+{{end}}
 {{end}}`
 
 // ── Calendar ───────────────────────────────────────────────────────────────
