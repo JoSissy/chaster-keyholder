@@ -502,25 +502,36 @@ var dashboardHTML = `{{define "content"}}
   <div class="lock-emoji">🔒</div>
   <div class="lock-info" style="flex:1;">
 
-    <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;">
-      <div>
-        {{if .LockStartISO}}
-        <div id="cu-wrap" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:6px;">
-          <div class="cd-unit"><span class="cd-num c-pink" id="cu-d">—</span><span class="cd-lbl">días</span></div>
-          <span class="cd-sep" style="color:var(--pink);">:</span>
-          <div class="cd-unit"><span class="cd-num c-pink" id="cu-h">——</span><span class="cd-lbl">horas</span></div>
-          <span class="cd-sep" style="color:var(--pink);">:</span>
-          <div class="cd-unit"><span class="cd-num c-pink" id="cu-m">——</span><span class="cd-lbl">min</span></div>
-          <span class="cd-sep" style="color:var(--pink);">:</span>
-          <div class="cd-unit"><span class="cd-num c-pink" id="cu-s">——</span><span class="cd-lbl">seg</span></div>
-        </div>
-        {{else}}
-        <div class="lock-days">{{.DaysLocked}}</div>
-        {{end}}
-        <div class="lock-lbl" style="margin-top:4px;">tiempo encerrada</div>
+    <!-- Contador ascendente: tiempo encerrada -->
+    <div style="margin-bottom:4px;">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--pink);margin-bottom:8px;display:flex;align-items:center;gap:5px;">
+        <span style="font-size:11px;">▲</span> tiempo encerrada
       </div>
-      {{if .HasEndDate}}
-      <div id="cd-wrap" style="display:flex;align-items:flex-end;gap:6px;" data-end="{{.LockEndISO}}" data-start="{{.LockStartISO}}">
+      {{if .LockStartISO}}
+      <div id="cu-wrap" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:5px;">
+        <div class="cd-unit"><span class="cd-num c-pink" id="cu-d">—</span><span class="cd-lbl">días</span></div>
+        <span class="cd-sep" style="color:rgba(232,119,154,0.5);">:</span>
+        <div class="cd-unit"><span class="cd-num c-pink" id="cu-h">——</span><span class="cd-lbl">horas</span></div>
+        <span class="cd-sep" style="color:rgba(232,119,154,0.5);">:</span>
+        <div class="cd-unit"><span class="cd-num c-pink" id="cu-m">——</span><span class="cd-lbl">min</span></div>
+        <span class="cd-sep" style="color:rgba(232,119,154,0.5);">:</span>
+        <div class="cd-unit"><span class="cd-num c-pink" id="cu-s">——</span><span class="cd-lbl">seg</span></div>
+      </div>
+      {{else}}
+      <div style="display:flex;align-items:baseline;gap:6px;">
+        <span class="lock-days">{{.DaysLocked}}</span>
+        <span style="color:var(--text-muted);font-size:13px;">días</span>
+      </div>
+      {{end}}
+    </div>
+
+    <!-- Contador descendente: tiempo restante -->
+    {{if .HasEndDate}}
+    <div style="padding-top:14px;border-top:1px solid rgba(58,29,72,0.6);margin-top:6px;">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--text-muted);margin-bottom:8px;display:flex;align-items:center;gap:5px;">
+        <span style="font-size:11px;">▼</span> tiempo restante
+      </div>
+      <div id="cd-wrap" data-end="{{.LockEndISO}}" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:5px;">
         <div class="cd-unit"><span class="cd-num" id="cd-d">—</span><span class="cd-lbl">días</span></div>
         <span class="cd-sep">:</span>
         <div class="cd-unit"><span class="cd-num" id="cd-h">——</span><span class="cd-lbl">horas</span></div>
@@ -529,18 +540,15 @@ var dashboardHTML = `{{define "content"}}
         <span class="cd-sep">:</span>
         <div class="cd-unit"><span class="cd-num" id="cd-s">——</span><span class="cd-lbl">seg</span></div>
       </div>
-      {{end}}
-    </div>
-
-    {{if .HasEndDate}}
-    <div style="margin:14px 0 10px;">
-      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:5px;">
-        <span>{{formatDatePtr .LockStartDate}}</span>
-        <span>{{.ProgressPct}}% completado</span>
-        <span>{{formatDatePtr .LockEndDate}}</span>
-      </div>
-      <div class="prog-bar" style="height:6px;" id="lock-prog-bar">
-        <div class="prog-fill" id="lock-prog" style="{{pctStyle .ProgressPct 100}}"></div>
+      <div style="margin-top:14px;">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:5px;">
+          <span>{{formatDatePtr .LockStartDate}}</span>
+          <span id="prog-pct">{{.ProgressPct}}% completado</span>
+          <span>{{formatDatePtr .LockEndDate}}</span>
+        </div>
+        <div class="prog-bar" style="height:6px;">
+          <div class="prog-fill" id="lock-prog" style="{{pctStyle .ProgressPct 100}}"></div>
+        </div>
       </div>
     </div>
     {{end}}
