@@ -502,10 +502,22 @@ var dashboardHTML = `{{define "content"}}
   <div class="lock-emoji">🔒</div>
   <div class="lock-info" style="flex:1;">
 
-    <div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;">
       <div>
+        {{if .LockStartISO}}
+        <div id="cu-wrap" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:6px;">
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-d">—</span><span class="cd-lbl">días</span></div>
+          <span class="cd-sep" style="color:var(--pink);">:</span>
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-h">——</span><span class="cd-lbl">horas</span></div>
+          <span class="cd-sep" style="color:var(--pink);">:</span>
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-m">——</span><span class="cd-lbl">min</span></div>
+          <span class="cd-sep" style="color:var(--pink);">:</span>
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-s">——</span><span class="cd-lbl">seg</span></div>
+        </div>
+        {{else}}
         <div class="lock-days">{{.DaysLocked}}</div>
-        <div class="lock-lbl">días encerrada</div>
+        {{end}}
+        <div class="lock-lbl" style="margin-top:4px;">tiempo encerrada</div>
       </div>
       {{if .HasEndDate}}
       <div id="cd-wrap" style="display:flex;align-items:flex-end;gap:6px;" data-end="{{.LockEndISO}}" data-start="{{.LockStartISO}}">
@@ -736,6 +748,30 @@ var dashboardHTML = `{{define "content"}}
     {{end}}
   </div>
 </div>
+
+{{if .LockStartISO}}
+<script>
+(function(){
+  var wrap = document.getElementById('cu-wrap');
+  if (!wrap) return;
+  var startDate = new Date(wrap.dataset.start);
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function tick(){
+    var elapsed = Math.max(0, new Date() - startDate);
+    var d = Math.floor(elapsed / 86400000);
+    var h = Math.floor((elapsed % 86400000) / 3600000);
+    var m = Math.floor((elapsed % 3600000) / 60000);
+    var s = Math.floor((elapsed % 60000) / 1000);
+    document.getElementById('cu-d').textContent = d;
+    document.getElementById('cu-h').textContent = pad(h);
+    document.getElementById('cu-m').textContent = pad(m);
+    document.getElementById('cu-s').textContent = pad(s);
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+{{end}}
 
 {{if .HasEndDate}}
 <script>
