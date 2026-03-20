@@ -3328,8 +3328,7 @@ func (b *Bot) HandleContrato() {
 
 // ── Reset ──────────────────────────────────────────────────────────────────
 
-// HandleDBWipe borra toda la DB, siembra el dato de orgasmo inicial y resetea el estado.
-// Comando oculto — no aparece en /help.
+// HandleDBWipe borra toda la DB y resetea el estado. Comando oculto — no aparece en /help.
 func (b *Bot) HandleDBWipe() {
 	if b.db == nil {
 		b.Send("❌ DB no disponible.")
@@ -3343,11 +3342,6 @@ func (b *Bot) HandleDBWipe() {
 		return
 	}
 
-	// Sembrar: 1 orgasmo concedido hace 3 días
-	if err := b.db.SeedOrgasmGranted(3); err != nil {
-		log.Printf("[dbwipe] error sembrando orgasmo: %v", err)
-	}
-
 	// Resetear state.json
 	b.stateMu.Lock()
 	b.state = &models.AppState{Toys: []models.Toy{}}
@@ -3359,7 +3353,7 @@ func (b *Bot) HandleDBWipe() {
 	b.cachedDaysLocked = 0
 	b.cachedDaysLockedAt = time.Time{}
 
-	b.Send("✅ *DB reseteada.*\n▬▬▬▬▬▬▬▬▬▬▬▬\nDatos sembrados:\n— 1 orgasmo concedido hace 3 días\n\nTodo lo demás está vacío. Listo para mañana.")
+	b.Send("✅ *DB reseteada.* Todo vacío.")
 }
 
 // ── Guardarropa ────────────────────────────────────────────────────────────
