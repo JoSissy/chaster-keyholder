@@ -556,17 +556,8 @@ var dashboardHTML = `{{define "content"}}
       </div>
       {{end}}
 
-      <!-- Tarea activa -->
-      {{if .HasCurrentTask}}
-      <div style="margin-top:14px;padding:10px 14px;background:rgba(232,119,154,0.06);border:1px solid rgba(232,119,154,0.18);border-radius:8px;">
-        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--pink);margin-bottom:5px;">📋 tarea activa</div>
-        <div style="font-size:12px;color:var(--text);line-height:1.5;">{{truncate .CurrentTaskDesc 90}}</div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:5px;">Vence: {{formatDate .CurrentTaskDue}}</div>
-      </div>
-      {{end}}
-
       <!-- Badges -->
-      <div class="lock-badges" style="margin-top:14px;">
+      <div class="lock-badges" style="margin-top:16px;">
         <span class="badge badge-muted">intensidad {{.Intensity}}</span>
         {{if .WeeklyDebt}}<span class="badge badge-danger">⚠ Deuda: {{.WeeklyDebt}}h</span>{{end}}
         {{if .PendingCheckin}}<span class="badge badge-warning">📸 Check-in pendiente</span>{{end}}
@@ -612,22 +603,6 @@ var dashboardHTML = `{{define "content"}}
         <div style="font-size:20px;font-weight:700;color:var(--purple);font-family:'Playfair Display',serif;">{{.DaysSinceOrgasm}}<span style="font-size:12px;font-family:'Inter',sans-serif;">d</span></div>
         <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">sin orgasmo · {{.GrantRate}}% aprobación</div>
         {{end}}
-      </div>
-
-      <!-- Tiempo -->
-      <div style="border-top:1px solid rgba(58,29,72,0.5);padding-top:14px;">
-        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:8px;">Tiempo</div>
-        <div style="display:flex;gap:16px;align-items:flex-end;">
-          <div>
-            <div style="font-size:20px;font-weight:700;color:var(--danger);font-family:'Playfair Display',serif;">+{{.TimeAdded}}<span style="font-size:11px;font-family:'Inter',sans-serif;">h</span></div>
-            <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">castigo</div>
-          </div>
-          <div style="color:var(--border);font-size:18px;padding-bottom:14px;">·</div>
-          <div>
-            <div style="font-size:20px;font-weight:700;color:var(--success);font-family:'Playfair Display',serif;">−{{.TimeRemoved}}<span style="font-size:11px;font-family:'Inter',sans-serif;">h</span></div>
-            <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">recompensa</div>
-          </div>
-        </div>
       </div>
 
     </div>
