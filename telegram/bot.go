@@ -1567,10 +1567,8 @@ func (b *Bot) HandleHelp() {
 /task — Ver tarea activa del día
 /explain — Cómo fotografiar la tarea
 /fail — Confesar que fallaste
-/quitar [h] — Quitar horas de la condena
 /roulette — Girar la ruleta diaria 🎰
 /chatask — Tarea comunitaria de Chaster
-/testcheckin — Forzar check-in ahora
 /newlock — Iniciar nueva sesión
 /contrato — Ver el contrato de sesión actual
 
@@ -1737,12 +1735,6 @@ func (b *Bot) Start() {
 			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
 		case text == "/contrato":
 			b.HandleContrato()
-		case text == "/quitar":
-			b.HandleRemoveTime("1")
-		case strings.HasPrefix(text, "/quitar "):
-			b.HandleRemoveTime(strings.TrimPrefix(text, "/quitar "))
-		case text == "/testcheckin":
-			b.TriggerCheckin()
 		case text == "/dbwipe":
 			b.HandleDBWipe()
 		case text != "" && !strings.HasPrefix(text, "/"):
