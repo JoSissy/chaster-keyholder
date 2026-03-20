@@ -47,9 +47,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.loadState()
+	// IsLocked: CurrentLockID se setea solo cuando el bot crea el lock.
+	// DaysLocked es actualizado por el bot en cada interacción con Chaster.
+	// Usar ambos para no fallar cuando state.json se reinicia o el lock preexistía.
+	isLocked := st.CurrentLockID != "" || st.DaysLocked > 0
+
 	d := dashData{
 		pageBase:       s.base("dashboard"),
-		IsLocked:       st.CurrentLockID != "",
+		IsLocked:       isLocked,
 		DaysLocked:     st.DaysLocked,
 		Streak:         st.TasksStreak,
 		ObedienceName:  models.ObedienceLevelString(models.GetObedienceLevel(st.TasksStreak)),
