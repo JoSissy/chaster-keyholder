@@ -879,7 +879,7 @@ Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descr
 
 Type definitions:
 - "cage": chastity cage or device that encloses genitals
-- "plug": anal plug — small toy designed to be worn passively for extended periods (butt plug shape)
+- "plug": anal plug — small toy designed to be worn passively for extended periods (butt plug shape, including fox tail plugs, decorative tail plugs, jeweled plugs — classify by the plug base, not the decoration)
 - "dildo": dildo or penetration toy — longer toy designed for active penetration/thrusting use
 - "vibrator": any vibrating device (wand, bullet, egg, vibrating plug)
 - "nipple": nipple clamps, nipple suction cups (ventosas), or any toy applied to nipples
