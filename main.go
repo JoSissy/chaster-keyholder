@@ -3,6 +3,7 @@ package main
 import (
 	"chaster-keyholder/ai"
 	"chaster-keyholder/chaster"
+	"chaster-keyholder/elevenlabs"
 	"chaster-keyholder/scheduler"
 	"chaster-keyholder/storage"
 	"chaster-keyholder/telegram"
@@ -64,6 +65,16 @@ func main() {
 	bot, err := telegram.NewBot(telegramToken, chatID, chasterClient, aiClient, db, cloudinary)
 	if err != nil {
 		log.Fatal("Error iniciando bot de Telegram:", err)
+	}
+
+	// ElevenLabs TTS (opcional)
+	elKey := os.Getenv("ELEVENLABS_API_KEY")
+	elVoice := os.Getenv("ELEVENLABS_VOICE_ID")
+	if elKey != "" && elVoice != "" {
+		bot.SetElevenLabs(elevenlabs.New(elKey, elVoice))
+		log.Println("✅ ElevenLabs TTS configurado")
+	} else {
+		log.Println("⚠️  ElevenLabs no configurado — sin notas de voz")
 	}
 
 	log.Println("🔒 Chaster Keyholder Bot iniciado")
