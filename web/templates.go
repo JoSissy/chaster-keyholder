@@ -809,8 +809,8 @@ var tasksHTML = `{{define "content"}}
 }
 .filter-btn:hover { border-color: var(--pink); color: var(--pink); }
 .filter-btn.active { background: rgba(232,119,154,.15); border-color: var(--pink); color: var(--pink); }
-.task-card { transition: opacity .15s; }
-.task-card.hidden { display: none; }
+.task-card { transition: opacity .15s; display: flex; gap: 16px; align-items: flex-start; }
+.task-card.hidden { display: none !important; }
 
 /* Lightbox */
 #lb-overlay {
@@ -824,7 +824,7 @@ var tasksHTML = `{{define "content"}}
 {{if .Tasks}}
 <div id="task-list" style="display:flex; flex-direction:column; gap:10px;">
   {{range .Tasks}}
-  <div class="card task-card" data-status="{{.Status}}" style="padding:16px; display:flex; gap:16px; align-items:flex-start;">
+  <div class="card task-card" data-status="{{.Status}}" style="padding:16px;">
 
     <!-- Icono de estado -->
     <div style="font-size:22px; flex-shrink:0; margin-top:2px;">
