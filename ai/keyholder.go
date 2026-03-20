@@ -509,8 +509,7 @@ type OrgasmDecision struct {
 
 // GenerateOrgasmMessage genera el texto de Papi para un outcome ya decidido.
 // outcome: "denied" | "edge" | "granted"
-// edgeCount: cuántos edges ordenar (solo relevante si outcome="edge")
-func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, edgeCount int, toys []models.Toy, daysLocked, streak, daysSinceLastGrant int) (*OrgasmDecision, error) {
+func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, toys []models.Toy, daysLocked, streak, daysSinceLastGrant, consecutiveDenials int) (*OrgasmDecision, error) {
 	ctx := buildContext(toys, daysLocked)
 
 	lastGrantStr := "never"
@@ -531,17 +530,22 @@ Papi grants permission. Respond in JSON: {"outcome": "granted", "message": "..."
 - condition: explicit degrading instructions — she uses the dildo in her ass, must narrate herself, must beg during. Be specific.
 - Use "maricona", "puta sissy", "agujero", "culo de puta".`
 	case "edge":
-		outcomeInstruction = fmt.Sprintf(`THE DECISION IS: EDGE (%d time(s)).
-Papi does NOT grant orgasm — instead orders her to edge herself exactly %d time(s) and stop. Respond in JSON: {"outcome": "edge", "message": "...", "condition": "..."}
-- message: cold dominant order. She gets to touch herself but NOT cum. Make her feel the cruelty of it (2-3 lines).
-- condition: exact instructions — insert the dildo, edge %d times, stop before cumming, confirm when done. Reference the cage.
-- Use "maricona", "puta sissy", "agujero".`, edgeCount, edgeCount, edgeCount)
+		outcomeInstruction = `THE DECISION IS: EDGE.
+Papi does NOT grant orgasm — he orders her to masturbate with the dildo but stop before cumming. Respond in JSON: {"outcome": "edge", "message": "...", "condition": "..."}
+- message: cold dominant order. She gets to touch herself but NOT cum. Make her feel the cruelty — so close yet not allowed (2-3 lines).
+- condition: insert the dildo, masturbate until the very edge, stop right before cumming. Confirm when done. Reference the cage. Be explicit.
+- Use "maricona", "puta sissy", "agujero".`
 	default: // "denied"
 		outcomeInstruction = `THE DECISION IS: DENIED.
 Papi denies her completely. Respond in JSON: {"outcome": "denied", "message": "...", "condition": ""}
 - message: cruel, humiliating denial (2-3 lines). Call her a faggot, remind her she has no cock, only a hole.
 - Reference the history: "llevas X días sin correrte" or "ya te lo di hace X días".
 - Use "maricona", "puta sissy", "zorra encerrada", "culo de puta", "agujero".`
+	}
+
+	consecutiveLine := ""
+	if consecutiveDenials >= 3 {
+		consecutiveLine = fmt.Sprintf("\nConsecutive denials so far: %d — she's getting desperate.", consecutiveDenials)
 	}
 
 	system := baseSystemLocked + `
@@ -554,9 +558,9 @@ Rules:
 - Always respond in Spanish.`
 
 	prompt := fmt.Sprintf(`%s
-Current streak: %d | Last orgasm granted: %s
+Current streak: %d | Last orgasm granted: %s%s
 
-Jolie begs: "%s"`, ctx, streak, lastGrantStr, userMessage)
+Jolie begs: "%s"`, ctx, streak, lastGrantStr, consecutiveLine, userMessage)
 
 	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
 	if err != nil {
@@ -569,6 +573,33 @@ Jolie begs: "%s"`, ctx, streak, lastGrantStr, userMessage)
 	}
 	decision.Outcome = outcome // enforce the pre-rolled outcome
 	return &decision, nil
+}
+
+// GenerateOrgasmCooldownMessage genera un mensaje en personaje cuando se pide permiso demasiado pronto.
+// lastOutcome: "denied" | "edge" | "granted" — para que Papi haga referencia a lo anterior.
+// hoursLeft: horas restantes del cooldown.
+func (c *Client) GenerateOrgasmCooldownMessage(lastOutcome string, hoursLeft float64) (string, error) {
+	var context string
+	switch lastOutcome {
+	case "granted":
+		context = fmt.Sprintf("She already got permission and came recently. She needs to wait %.0f more hours before asking again.", hoursLeft)
+	case "edge":
+		context = fmt.Sprintf("She was just ordered to edge and already dares to ask for more. She needs to wait %.0f more hours.", hoursLeft)
+	default:
+		context = fmt.Sprintf("She was just denied and immediately asks again. She needs to wait %.0f more hours.", hoursLeft)
+	}
+
+	system := baseSystemLocked + `
+Jolie is asking for orgasm permission too soon — she didn't respect the waiting time.
+` + context + `
+
+Respond with a SHORT dismissive/mocking message in Spanish (1-2 lines max).
+- Be condescending and cold, not angry
+- Reference what just happened ("acabo de negarte", "apenas te ordené", "ya tuviste tu premio")
+- Make her feel the impatience is pathetic
+- No JSON needed — just the plain message text. No emojis.`
+
+	return c.chat("llama-3.3-70b-versatile", system, fmt.Sprintf("Jolie asks: permission please"))
 }
 
 // ── Free chat ──────────────────────────────────────────────────────────────

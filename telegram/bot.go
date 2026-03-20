@@ -1042,9 +1042,8 @@ func (b *Bot) HandleChat(text string) {
 }
 
 // rollOrgasmOutcome decide el resultado usando la tabla de probabilidades.
-// Devuelve "denied", "edge", o "granted".
-func rollOrgasmOutcome(streak, daysSinceLastGrant int) string {
-	// Probabilidades: [denied%, edge%, granted%]
+// consecutiveDenials: cuántos "denied" seguidos sin edge ni granted.
+func rollOrgasmOutcome(streak, daysSinceLastGrant, consecutiveDenials int) string {
 	type probs struct{ denied, edge, granted int }
 	var p probs
 
@@ -1065,6 +1064,18 @@ func rollOrgasmOutcome(streak, daysSinceLastGrant int) string {
 		p = probs{5, 35, 60}
 	}
 
+	// Boost por racha de rechazos consecutivos
+	if consecutiveDenials >= 5 {
+		boost := min(p.denied, 25)
+		p.denied -= boost
+		p.edge += boost - 5
+		p.granted += 5
+	} else if consecutiveDenials >= 3 {
+		boost := min(p.denied, 15)
+		p.denied -= boost
+		p.edge += boost
+	}
+
 	roll := rand.Intn(100)
 	if roll < p.denied {
 		return "denied"
@@ -1074,33 +1085,75 @@ func rollOrgasmOutcome(streak, daysSinceLastGrant int) string {
 	return "granted"
 }
 
-// rollEdgeCount decide cuántos edges ordenar: 50% → 1, 35% → 2, 15% → 3
-func rollEdgeCount() int {
-	r := rand.Intn(100)
-	if r < 50 {
-		return 1
-	} else if r < 85 {
-		return 2
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-	return 3
+	return b
+}
+
+// orgasmCooldownHours devuelve las horas de cooldown según el último resultado.
+func orgasmCooldownHours(lastOutcome string) time.Duration {
+	switch lastOutcome {
+	case "granted":
+		return 24 * time.Hour
+	case "edge":
+		return 4 * time.Hour
+	default: // "denied"
+		return 6 * time.Hour
+	}
+}
+
+// countConsecutiveDenials cuenta cuántos "denied" seguidos hay desde el último edge o granted.
+func countConsecutiveDenials(db interface {
+	GetOrgasmHistory(int) ([]*storage.OrgasmEntry, error)
+}) int {
+	entries, err := db.GetOrgasmHistory(20)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if e.Outcome == "denied" {
+			count++
+		} else {
+			break
+		}
+	}
+	return count
 }
 
 func (b *Bot) handleOrgasmRequest(text string) {
 	// Verificar si ya hay un edge pendiente
 	if b.state.EdgePendingAt != nil {
 		if time.Now().Before(b.state.EdgePendingAt.Add(2 * time.Hour)) {
-			b.Send("▪️ *EDGE PENDIENTE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todavía tienes una orden de edge sin confirmar. Complétala primero._")
+			b.Send("▪️ *EDGE PENDIENTE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todavía tienes una orden pendiente. Complétala primero._")
 			return
 		}
-		// Expiró sin confirmar — limpiar silenciosamente
 		b.state.EdgePendingAt = nil
 		b.state.EdgeCount = 0
+	}
+
+	// Verificar cooldown
+	if b.state.LastOrgasmRequestAt != nil {
+		cooldown := orgasmCooldownHours(b.state.LastOrgasmOutcome)
+		elapsed := time.Since(*b.state.LastOrgasmRequestAt)
+		if elapsed < cooldown {
+			hoursLeft := (cooldown - elapsed).Hours()
+			msg, err := b.ai.GenerateOrgasmCooldownMessage(b.state.LastOrgasmOutcome, hoursLeft)
+			if err != nil || strings.TrimSpace(msg) == "" {
+				msg = fmt.Sprintf("Todavía no. Faltan %.0f horas.", hoursLeft)
+			}
+			b.Send("▪️ *DEMASIADO PRONTO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(msg))
+			return
+		}
 	}
 
 	b.Send("_..._")
 
 	// Obtener historial
 	daysSinceLastGrant := 999
+	consecutiveDenials := 0
 	if b.db != nil {
 		if all, err := b.db.GetOrgasmHistory(50); err == nil {
 			for _, e := range all {
@@ -1110,24 +1163,26 @@ func (b *Bot) handleOrgasmRequest(text string) {
 				}
 			}
 		}
+		consecutiveDenials = countConsecutiveDenials(b.db)
 	}
 
 	// Tirar la ruleta
-	outcome := rollOrgasmOutcome(b.state.TasksStreak, daysSinceLastGrant)
-	edgeCount := 0
-	if outcome == "edge" {
-		edgeCount = rollEdgeCount()
-	}
+	outcome := rollOrgasmOutcome(b.state.TasksStreak, daysSinceLastGrant, consecutiveDenials)
 
 	decision, err := b.ai.GenerateOrgasmMessage(
-		outcome, text, edgeCount,
+		outcome, text,
 		b.state.Toys, b.daysLocked(),
-		b.state.TasksStreak, daysSinceLastGrant,
+		b.state.TasksStreak, daysSinceLastGrant, consecutiveDenials,
 	)
 	if err != nil {
 		b.Send("_..._")
 		return
 	}
+
+	// Registrar cooldown
+	now := time.Now()
+	b.state.LastOrgasmRequestAt = &now
+	b.state.LastOrgasmOutcome = outcome
 
 	// Guardar en historial
 	if b.db != nil {
@@ -1140,6 +1195,7 @@ func (b *Bot) handleOrgasmRequest(text string) {
 			DaysLocked:    b.daysLocked(),
 		})
 	}
+	b.mustSaveState()
 
 	switch outcome {
 	case "granted":
@@ -1150,22 +1206,11 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		b.Send(msg)
 
 	case "edge":
-		now := time.Now()
 		b.state.EdgePendingAt = &now
-		b.state.EdgeCount = edgeCount
-		b.mustSaveState()
 		b.pendingAction = "edge_confirm"
+		b.mustSaveState()
 
-		msg := fmt.Sprintf("▪️ *ORDEN DE EDGE — %d %s*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
-			edgeCount,
-			func() string {
-				if edgeCount == 1 {
-					return "vez"
-				}
-				return "veces"
-			}(),
-			stripMarkdown(decision.Message),
-		)
+		msg := "▪️ *ORDEN DE EDGE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
 		if strings.TrimSpace(decision.Condition) != "" {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
@@ -1210,21 +1255,12 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 		return
 	}
 
-	edgeCount := b.state.EdgeCount
 	b.state.EdgePendingAt = nil
 	b.state.EdgeCount = 0
 	b.pendingAction = ""
 	b.mustSaveState()
 
-	b.Send(fmt.Sprintf("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%d %s al borde, sin correrte. Como debe ser._",
-		edgeCount,
-		func() string {
-			if edgeCount == 1 {
-				return "vez"
-			}
-			return "veces"
-		}(),
-	))
+	b.Send("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Al borde y sin correrte. Como debe ser._")
 }
 
 func (b *Bot) HandleOrgasmHistory() {

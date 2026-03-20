@@ -134,6 +134,10 @@ type AppState struct {
 	EdgePendingAt *time.Time `json:"edge_pending_at,omitempty"`
 	EdgeCount     int        `json:"edge_count,omitempty"`
 
+	// Control de cooldown de orgasmo
+	LastOrgasmRequestAt  *time.Time `json:"last_orgasm_request_at,omitempty"`
+	LastOrgasmOutcome    string     `json:"last_orgasm_outcome,omitempty"` // "denied", "edge", "granted"
+
 	// Deuda semanal
 	WeeklyDebt        int      `json:"weekly_debt"`
 	WeeklyDebtDetails []string `json:"weekly_debt_details,omitempty"`
