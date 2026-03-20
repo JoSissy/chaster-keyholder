@@ -373,11 +373,10 @@ func (b *Bot) HandleStatus() {
 	}
 
 	// ── Obediencia y orgasmo ──
-	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
 	orgasmStatus := "bloqueado"
-	if b.state.TasksStreak >= 8 {
+	if b.state.TasksStreak >= 9 {
 		orgasmStatus = "puede concederse"
-	} else if b.state.TasksStreak >= 5 {
+	} else if b.state.TasksStreak >= 4 {
 		orgasmStatus = "difícil"
 	}
 	daysSinceOrgasm := -1
@@ -421,7 +420,7 @@ func (b *Bot) HandleStatus() {
 		intensity.String(), stateLines,
 		taskStatus, chasterTaskLine,
 		b.state.TasksCompleted, b.state.TasksFailed,
-		b.state.TasksStreak, models.ObedienceLevelString(obedienceLevel), plugLine, checkinLine,
+		b.state.TasksStreak, models.ObedienceTitle(b.state.TasksStreak), plugLine, checkinLine,
 		orgasmStatus, orgasmDaysLine,
 		b.state.TotalTimeAddedHours, b.state.TotalTimeRemovedHours,
 		ruletaLine, debtLine,
@@ -579,10 +578,25 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 		b.state.CurrentTask.AwaitingPhoto = false
 		b.state.TotalTimeRemovedHours += rewardHours
 		b.state.TasksCompleted++
-		b.state.TasksStreak++
+
+		// Puntos: +2 si está en intensidad alta (8+ días), +1 normal
+		taskPoints := 1
+		if b.daysLocked() >= 8 {
+			taskPoints = 2
+		}
+		prevTitle := models.ObedienceTitle(b.state.TasksStreak)
+		b.state.TasksStreak += taskPoints
+
+		// Días consecutivos y bono de 7 días
+		b.state.ConsecutiveDays++
+		if b.state.ConsecutiveDays%7 == 0 {
+			b.state.TasksStreak += 3
+		}
+		b.state.LastTaskCompletedDate = todayStr()
+
 		newStreak := b.state.TasksStreak
 		b.mustSaveState()
-		defer b.checkStreakMilestone(newStreak)
+		defer b.checkStreakMilestone(prevTitle, newStreak)
 
 		// Guardar en DB
 		if b.db != nil {
@@ -617,7 +631,7 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 		b.state.CurrentTask.Failed = true
 		b.state.CurrentTask.AwaitingPhoto = false
 		b.state.TotalTimeAddedHours += penaltyHours
-		b.state.TasksStreak = 0
+		b.state.TasksStreak = max(0, b.state.TasksStreak-3)
 		b.mustSaveState()
 
 		// Guardar en DB
@@ -656,7 +670,7 @@ func (b *Bot) HandleFail() {
 	b.state.CurrentTask.AwaitingPhoto = false
 	b.state.TotalTimeAddedHours += penaltyHours
 	b.state.TasksFailed++
-	b.state.TasksStreak = 0
+	b.state.TasksStreak = max(0, b.state.TasksStreak-3)
 	b.mustSaveState()
 
 	if lock, err := b.chaster.GetActiveLock(); err == nil {
@@ -937,10 +951,11 @@ func (b *Bot) HandleChat(text string) {
 	if b.state.EdgePendingAt != nil && time.Now().After(b.state.EdgePendingAt.Add(2*time.Hour)) {
 		b.state.EdgePendingAt = nil
 		b.state.EdgeCount = 0
+		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
 		b.pendingAction = ""
 		b.mustSaveState()
 		b.addWeeklyDebt("edge no confirmado a tiempo")
-		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge. Anotado como desobediencia._")
+		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge. -1 obediencia. Anotado._")
 		return
 	}
 
@@ -1047,21 +1062,28 @@ func rollOrgasmOutcome(streak, daysSinceLastGrant, consecutiveDenials int) strin
 	type probs struct{ denied, edge, granted int }
 	var p probs
 
+	// Umbrales alineados con títulos: <4 maricona, 4-8 sissy, 9-14 culo, 15-20 puta obediente, 21+ esclava
 	switch {
-	case streak < 5:
+	case streak < 4: // maricona desobediente
 		p = probs{85, 15, 0}
-	case streak <= 7 && daysSinceLastGrant < 5:
+	case streak <= 8 && daysSinceLastGrant < 5: // sissy sin entrenar, poco tiempo
 		p = probs{60, 35, 5}
-	case streak <= 7 && daysSinceLastGrant < 10:
+	case streak <= 8 && daysSinceLastGrant < 10:
 		p = probs{35, 45, 20}
-	case streak <= 7:
+	case streak <= 8:
 		p = probs{20, 50, 30}
-	case daysSinceLastGrant < 5:
+	case streak <= 14 && daysSinceLastGrant < 5: // culo en formación
 		p = probs{45, 45, 10}
-	case daysSinceLastGrant < 10:
+	case streak <= 14 && daysSinceLastGrant < 10:
 		p = probs{15, 45, 40}
-	default: // streak >= 8, >= 10 días
+	case streak <= 14:
 		p = probs{5, 35, 60}
+	case daysSinceLastGrant < 5: // puta obediente / esclava
+		p = probs{35, 45, 20}
+	case daysSinceLastGrant < 10:
+		p = probs{10, 35, 55}
+	default: // esclava perfecta, mucho tiempo sin
+		p = probs{5, 25, 70}
 	}
 
 	// Boost por racha de rechazos consecutivos
@@ -1233,10 +1255,11 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 	if time.Now().After(b.state.EdgePendingAt.Add(2 * time.Hour)) {
 		b.state.EdgePendingAt = nil
 		b.state.EdgeCount = 0
+		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
 		b.pendingAction = ""
 		b.mustSaveState()
 		b.addWeeklyDebt("edge no confirmado a tiempo")
-		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge a tiempo. Anotado._")
+		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge a tiempo. -1 obediencia. Anotado._")
 		return
 	}
 
@@ -1773,7 +1796,7 @@ func (b *Bot) SendNightStatus() {
 		b.state.CurrentTask.Failed = true
 		b.state.TotalTimeAddedHours += penaltyHours
 		b.state.TasksFailed++
-		b.state.TasksStreak = 0
+		b.state.TasksStreak = max(0, b.state.TasksStreak-3)
 		b.addWeeklyDebt("tarea del día no completada")
 		// Guardar tarea fallida en DB
 		if b.db != nil {
@@ -2449,15 +2472,16 @@ func (b *Bot) autoPillory(reason string) {
 	b.Send(fmt.Sprintf("⛓ *AL CEPO — 30 minutos*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", reason))
 }
 
-func (b *Bot) checkStreakMilestone(newStreak int) {
-	if newStreak != 3 && newStreak != 6 && newStreak != 10 {
+func (b *Bot) checkStreakMilestone(prevTitle string, newPoints int) {
+	newTitle := models.ObedienceTitle(newPoints)
+	if newTitle == prevTitle {
 		return
 	}
-	msg, err := b.ai.GenerateStreakReward(newStreak, b.daysLocked(), b.state.Toys)
+	msg, err := b.ai.GenerateStreakReward(newPoints, b.daysLocked(), b.state.Toys)
 	if err != nil || strings.TrimSpace(msg) == "" {
 		return
 	}
-	b.Send(fmt.Sprintf("🏆 *RACHA DE %d TAREAS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", newStreak, stripMarkdown(msg)))
+	b.Send(fmt.Sprintf("🏆 *NUEVO TÍTULO: %s*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", strings.ToUpper(newTitle), stripMarkdown(msg)))
 }
 
 // ── Ritual matutino ────────────────────────────────────────────────────────
@@ -2469,7 +2493,7 @@ func (b *Bot) StartMorningRitual() {
 	if _, err := b.chaster.GetActiveLock(); err != nil {
 		return
 	}
-	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
 	msg, err := b.ai.GenerateRitualIntro(b.daysLocked(), b.state.Toys, obedienceLevel)
 	if err != nil {
 		return
@@ -2500,7 +2524,7 @@ func (b *Bot) HandleRitualPhoto(imgBytes []byte, mime string) {
 
 func (b *Bot) HandleRitualMessage(text string) {
 	b.pendingAction = ""
-	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
 	response, err := b.ai.GenerateRitualResponse(text, b.daysLocked(), b.state.Toys, obedienceLevel)
 	if err != nil {
 		response = "Bien. Tienes permiso para seguir con tu día. No olvides quién manda."
@@ -2530,7 +2554,7 @@ func (b *Bot) SendPlugAssignment() {
 		return
 	}
 	selected := plugs[rand.Intn(len(plugs))]
-	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
 	msg, err := b.ai.GeneratePlugAssignment(selected.Name, b.daysLocked(), obedienceLevel)
 	if err != nil {
 		return
@@ -2562,8 +2586,15 @@ func (b *Bot) HandlePlugPhoto(imgBytes []byte, mime string) {
 	case "approved":
 		b.pendingAction = ""
 		b.state.PlugConfirmed = true
+		b.state.PlugBonusAccum++
+		plugMsg := fmt.Sprintf("✅ *PLUG CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s puesto, como debe ser. Que dure todo el día._", plugName)
+		if b.state.PlugBonusAccum >= 2 {
+			b.state.TasksStreak++
+			b.state.PlugBonusAccum = 0
+			plugMsg += "\n_+1 obediencia por constancia con el plug._"
+		}
 		b.mustSaveState()
-		b.Send(fmt.Sprintf("✅ *PLUG CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s puesto, como debe ser. Que dure todo el día._", plugName))
+		b.Send(plugMsg)
 	case "retry":
 		b.Send(fmt.Sprintf("⚠️ *Intenta de nuevo*\n\n_%s_", verdict.Reason))
 	case "rejected":
@@ -2617,8 +2648,9 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 		b.pendingAction = ""
 		b.state.PendingCheckin = false
 		b.state.CheckinExpiresAt = nil
+		b.state.TasksStreak++
 		b.mustSaveState()
-		b.Send("✅ *CHECK-IN VERIFICADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todo en orden. Puedes seguir._")
+		b.Send("✅ *CHECK-IN VERIFICADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todo en orden. +1 obediencia._")
 	case "retry":
 		b.Send(fmt.Sprintf("⚠️ *Intenta de nuevo*\n\n_%s_", verdict.Reason))
 	case "rejected":
@@ -2630,6 +2662,26 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 		b.addWeeklyDebt("check-in rechazado — evidencia inválida")
 		b.autoPillory("check-in rechazado — evidencia no válida")
 	}
+}
+
+// CheckObedienceDecay resta 1 punto si llevan 2+ días sin completar tarea.
+func (b *Bot) CheckObedienceDecay() {
+	if b.state.TasksStreak == 0 || b.state.LastTaskCompletedDate == "" {
+		return
+	}
+	loc, _ := time.LoadLocation("America/Bogota")
+	now := time.Now().In(loc)
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	today := now.Format("2006-01-02")
+	last := b.state.LastTaskCompletedDate
+	if last == today || last == yesterday {
+		return
+	}
+	// Lleva 2+ días sin completar — perder 1 punto
+	b.state.TasksStreak = max(0, b.state.TasksStreak-1)
+	b.state.ConsecutiveDays = 0
+	b.mustSaveState()
+	log.Printf("[decay] obediencia reducida a %d por inactividad", b.state.TasksStreak)
 }
 
 func (b *Bot) CheckCheckinExpiry() {
@@ -2691,7 +2743,7 @@ func (b *Bot) SendConditioningMessage() {
 	}
 	loc, _ := time.LoadLocation("America/Bogota")
 	hour := time.Now().In(loc).Hour()
-	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
 	msg, err := b.ai.GenerateConditioningMessage(b.daysLocked(), b.state.Toys, hour, obedienceLevel)
 	if err != nil {
 		return
@@ -2790,7 +2842,7 @@ func (b *Bot) HandleRuleta() {
 		return
 	}
 	b.Send("_Girando la ruleta..._")
-	obedienceLevel := models.GetObedienceLevel(b.state.TasksStreak)
+	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
 	outcome, err := b.ai.SpinRuleta(b.daysLocked(), b.state.Toys, b.state.TasksCompleted, b.state.TasksFailed, obedienceLevel)
 	if err != nil {
 		b.Send("❌ Error girando la ruleta.")

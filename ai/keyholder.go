@@ -1102,14 +1102,16 @@ No JSON. Just the comment.`, daysLocked, outfitDescription, poseDescription)
 
 func obedienceContext(level int) string {
 	switch level {
+	case 4:
+		return " Her obedience title is \"esclava perfecta de Papi\" — she has been exemplary. She is yours completely. Acknowledge it possessively."
 	case 3:
-		return " Her obedience is at maximum — she has been completing tasks consistently. Demand more."
+		return " Her obedience title is \"puta obediente de Papi\" — she has been performing well and consistently. Push her further."
 	case 2:
-		return " Her obedience is high — she has been performing well. Push her limits."
+		return " Her obedience title is \"culo en formación\" — she is improving but still being shaped. Keep the pressure up."
 	case 1:
-		return " Her obedience is moderate — she has some consistency. Keep the pressure up."
+		return " Her obedience title is \"sissy sin entrenar\" — inconsistent, needs correction and discipline."
 	default:
-		return " Her obedience is basic — she is just starting or has been failing."
+		return " Her obedience title is \"maricona desobediente\" — she has been failing or barely starting. Treat her accordingly — cold, contemptuous."
 	}
 }
 
@@ -1326,17 +1328,15 @@ Papi spins the roulette. What does he decide today?`,
 
 // ── Streak rewards ─────────────────────────────────────────────────────────
 
-// GenerateStreakReward generates a message for a task streak milestone
-func (c *Client) GenerateStreakReward(streak int, daysLocked int, toys []models.Toy) (string, error) {
+// GenerateStreakReward generates a message when Jolie earns a new obedience title.
+func (c *Client) GenerateStreakReward(points int, daysLocked int, toys []models.Toy) (string, error) {
 	ctx := buildContext(toys, daysLocked)
+	title := models.ObedienceTitle(points)
 	prompt := fmt.Sprintf(
-		`%s Jolie has completed %d tasks in a row without failing.
-As Papi, acknowledge this — not with warm praise, but with quiet possessive satisfaction.
-At 3: cold acknowledgment, "as expected."
-At 6: he is quietly pleased — still condescending, but acknowledges she belongs to him well.
-At 10: grudging respect wrapped in ownership — "she is learning."
-Streak: %d. Reference her belonging to him. Maximum 2 lines. In Spanish.`,
-		ctx, streak, streak,
+		`%s Jolie has just earned a new obedience title: "%s" (%d obedience points).
+As Papi, acknowledge this title change — cold, possessive, condescending. Not warm praise.
+Reference the title by name. Make her feel owned, not celebrated. Maximum 2 lines. In Spanish.`,
+		ctx, title, points,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }

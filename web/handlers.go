@@ -69,7 +69,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	st := s.loadState()
 	isLocked := st.CurrentLockID != "" || st.DaysLocked > 0
 
-	obLevel := models.GetObedienceLevel(st.TasksStreak)
+	obLevel := models.GetObedienceLevelFromPoints(st.TasksStreak)
 	taskTotal := st.TasksCompleted + st.TasksFailed
 	completionRate := 0
 	if taskTotal > 0 {
@@ -112,7 +112,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		IsLocked:        isLocked,
 		DaysLocked:      st.DaysLocked,
 		Streak:          st.TasksStreak,
-		ObedienceName:   models.ObedienceLevelString(obLevel),
+		ObedienceName:   models.ObedienceTitle(st.TasksStreak),
 		ObedienceLevel:  obLevel,
 		TasksCompleted:  st.TasksCompleted,
 		TasksFailed:     st.TasksFailed,

@@ -86,6 +86,38 @@ func GetIntensity(daysLocked int) IntensityLevel {
 	}
 }
 
+// ObedienceTitle devuelve el título según los puntos de obediencia.
+func ObedienceTitle(points int) string {
+	switch {
+	case points >= 21:
+		return "esclava perfecta de Papi"
+	case points >= 15:
+		return "puta obediente de Papi"
+	case points >= 9:
+		return "culo en formación"
+	case points >= 4:
+		return "sissy sin entrenar"
+	default:
+		return "maricona desobediente"
+	}
+}
+
+// GetObedienceLevel devuelve 0-4 según los puntos de obediencia.
+func GetObedienceLevelFromPoints(points int) int {
+	switch {
+	case points >= 21:
+		return 4
+	case points >= 15:
+		return 3
+	case points >= 9:
+		return 2
+	case points >= 4:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // AppState estado en memoria — se sincroniza con la DB periódicamente
 type AppState struct {
 	CurrentTask           *Task        `json:"current_task,omitempty"`
@@ -135,8 +167,13 @@ type AppState struct {
 	EdgeCount     int        `json:"edge_count,omitempty"`
 
 	// Control de cooldown de orgasmo
-	LastOrgasmRequestAt  *time.Time `json:"last_orgasm_request_at,omitempty"`
-	LastOrgasmOutcome    string     `json:"last_orgasm_outcome,omitempty"` // "denied", "edge", "granted"
+	LastOrgasmRequestAt *time.Time `json:"last_orgasm_request_at,omitempty"`
+	LastOrgasmOutcome   string     `json:"last_orgasm_outcome,omitempty"` // "denied", "edge", "granted"
+
+	// Obediencia avanzada
+	ConsecutiveDays      int    `json:"consecutive_days"`        // días seguidos con tarea completada
+	PlugBonusAccum       int    `json:"plug_bonus_accum"`        // confirmaciones de plug acumuladas
+	LastTaskCompletedDate string `json:"last_task_completed_date"` // "2006-01-02" COT
 
 	// Deuda semanal
 	WeeklyDebt        int      `json:"weekly_debt"`

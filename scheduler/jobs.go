@@ -163,6 +163,15 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
+	// Decay de obediencia por inactividad — 11pm diario
+	s.NewJob(
+		gocron.CronJob("0 23 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Verificando decay de obediencia...")
+			bot.CheckObedienceDecay()
+		}),
+	)
+
 	s.Start()
 	log.Println("✅ Scheduler iniciado")
 }
