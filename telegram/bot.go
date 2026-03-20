@@ -1713,6 +1713,14 @@ func (b *Bot) Start() {
 			} else if b.pendingAction == "outfit_photo" {
 				b.deleteMessage(msgID)
 				b.HandleOutfitPhoto(imgBytes, mime)
+			} else if b.state.AwaitingLockPhoto {
+				// pendingAction limpio pero AwaitingLockPhoto sigue activo — restablecer ruta
+				b.HandleLockPhoto(imgBytes, mime, msgID)
+			} else if b.state.PendingChasterTask != "" {
+				// pendingAction limpio pero hay tarea comunitaria pendiente — restablecer ruta
+				b.pendingAction = "chaster_task_photo"
+				b.deleteMessage(msgID)
+				b.HandleChasterTaskPhoto(imgBytes, mime)
 			} else {
 				b.deleteMessage(msgID)
 				b.HandlePhoto(imgBytes, mime)
