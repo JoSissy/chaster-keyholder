@@ -313,6 +313,19 @@ Be specific and practical. No beating around the bush.`,
 	return c.chat("llama-3.3-70b-versatile", system, prompt)
 }
 
+// GenerateTaskAccepted generates a condescending acknowledgment when a task photo is accepted.
+func (c *Client) GenerateTaskAccepted(toys []models.Toy, daysLocked int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	prompt := fmt.Sprintf(
+		`%s Jolie completed her task and submitted the photo evidence.
+As Papi, acknowledge it coldly — condescending satisfaction, nothing more.
+You expected nothing less from her. She did what she was told, like the obedient little thing she is.
+Reference your ownership subtly. Use a nickname. Maximum 2 lines. In Spanish.`,
+		ctx,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
 // GenerateTaskReward generates a reward message. rewardHours in HOURS.
 func (c *Client) GenerateTaskReward(rewardHours int, toys []models.Toy, daysLocked int) (string, error) {
 	ctx := buildContext(toys, daysLocked)

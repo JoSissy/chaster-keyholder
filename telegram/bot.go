@@ -463,11 +463,9 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 				"_%s_\n"+
 				"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
 				"⏰ Límite — *%s*\n"+
-				"✅ Recompensa — *-%dh*\n"+
 				"💀 Consecuencia — *+%dh*%s",
 			b.state.CurrentTask.Description,
 			b.state.CurrentTask.DueAt.Format("15:04"),
-			b.state.CurrentTask.RewardHours,
 			b.state.CurrentTask.PenaltyHours,
 			awaiting,
 		))
@@ -499,7 +497,6 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 	now := time.Now().In(loc)
 
 	penaltyHours := 1 + int(intensity)
-	rewardHours := 1
 
 	b.state.CurrentTask = &models.Task{
 		ID:            fmt.Sprintf("task-%d", now.Unix()),
@@ -507,7 +504,7 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 		AssignedAt:    now,
 		DueAt:         now.Add(1 * time.Hour),
 		PenaltyHours:  penaltyHours,
-		RewardHours:   rewardHours,
+		RewardHours:   0,
 		AwaitingPhoto: true,
 	}
 	b.mustSaveState()
@@ -518,13 +515,11 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 			"_%s_\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
 			"⏰ Límite — *%s*\n"+
-			"✅ Recompensa — *-%dh*\n"+
 			"💀 Consecuencia — *+%dh*\n\n"+
 			"_Manda la foto cuando termines._",
 		intensity.String(),
 		taskDesc,
 		b.state.CurrentTask.DueAt.Format("15:04"),
-		rewardHours,
 		penaltyHours,
 	))
 }
@@ -540,123 +535,54 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 		return
 	}
 
-	b.Send("_Analizando evidencia..._")
-
-	verdict, err := b.ai.VerifyTaskPhoto(
-		imageBytes, mimeType,
-		b.state.CurrentTask.Description,
-		b.state.Toys,
-		b.daysLocked(),
-	)
-	if err != nil {
-		b.Send("❌ Error analizando la foto. Inténtalo de nuevo.")
-		return
+	// Subir foto a Cloudinary
+	var photoURL string
+	if b.cloudinary != nil {
+		url, _, cerr := b.cloudinary.Upload(imageBytes, mimeType, "chaster/tasks")
+		if cerr != nil {
+			log.Printf("error subiendo foto de tarea: %v", cerr)
+		} else {
+			photoURL = url
+		}
 	}
 
-	lock, err := b.chaster.GetActiveLock()
-	if err != nil {
-		b.Send("❌ No hay sesión activa en Chaster.")
-		return
+	b.state.CurrentTask.Completed = true
+	b.state.CurrentTask.AwaitingPhoto = false
+	b.state.TasksCompleted++
+
+	// Puntos: +2 si está en intensidad alta (8+ días), +1 normal
+	taskPoints := 1
+	if b.daysLocked() >= 8 {
+		taskPoints = 2
+	}
+	prevTitle := models.ObedienceTitle(b.state.TasksStreak)
+	b.state.TasksStreak += taskPoints
+
+	// Días consecutivos y bono de 7 días
+	b.state.ConsecutiveDays++
+	if b.state.ConsecutiveDays%7 == 0 {
+		b.state.TasksStreak += 3
+	}
+	b.state.LastTaskCompletedDate = todayStr()
+
+	newStreak := b.state.TasksStreak
+	b.mustSaveState()
+	defer b.checkStreakMilestone(prevTitle, newStreak)
+
+	// Guardar en DB
+	if b.db != nil {
+		now := time.Now()
+		b.db.SaveTask(&storage.Task{
+			ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
+			Description: b.state.CurrentTask.Description, PhotoURL: photoURL,
+			AssignedAt: b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
+			CompletedAt: &now, Status: "completed",
+			PenaltyHours: b.state.CurrentTask.PenaltyHours, RewardHours: 0,
+		})
 	}
 
-	switch verdict.Status {
-	case "approved":
-		rewardHours := b.state.CurrentTask.RewardHours
-
-		// Subir foto a Cloudinary
-		var photoURL string
-		if b.cloudinary != nil {
-			url, _, cerr := b.cloudinary.Upload(imageBytes, mimeType, "chaster/tasks")
-			if cerr != nil {
-				log.Printf("error subiendo foto de tarea: %v", cerr)
-			} else {
-				photoURL = url
-			}
-		}
-
-		b.state.CurrentTask.Completed = true
-		b.state.CurrentTask.AwaitingPhoto = false
-		b.state.TotalTimeRemovedHours += rewardHours
-		b.state.TasksCompleted++
-
-		// Puntos: +2 si está en intensidad alta (8+ días), +1 normal
-		taskPoints := 1
-		if b.daysLocked() >= 8 {
-			taskPoints = 2
-		}
-		prevTitle := models.ObedienceTitle(b.state.TasksStreak)
-		b.state.TasksStreak += taskPoints
-
-		// Días consecutivos y bono de 7 días
-		b.state.ConsecutiveDays++
-		if b.state.ConsecutiveDays%7 == 0 {
-			b.state.TasksStreak += 3
-		}
-		b.state.LastTaskCompletedDate = todayStr()
-
-		newStreak := b.state.TasksStreak
-		b.mustSaveState()
-		defer b.checkStreakMilestone(prevTitle, newStreak)
-
-		// Guardar en DB
-		if b.db != nil {
-			now := time.Now()
-			b.db.SaveTask(&storage.Task{
-				ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
-				Description: b.state.CurrentTask.Description, PhotoURL: photoURL,
-				AssignedAt: b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
-				CompletedAt: &now, Status: "completed",
-				PenaltyHours: b.state.CurrentTask.PenaltyHours, RewardHours: rewardHours,
-			})
-		}
-
-		if err := b.chaster.RemoveTime(lock.ID, rewardHours*3600); err != nil {
-			log.Printf("error quitando tiempo en Chaster: %v", err)
-		}
-
-		aiMsg, _ := b.ai.GenerateTaskReward(rewardHours, b.state.Toys, b.daysLocked())
-		b.Send(fmt.Sprintf(
-			"✅ *EVIDENCIA APROBADA*\n\n%s\n\n_%s_\n\n_Se quitaron %dh de tu condena._",
-			aiMsg, verdict.Reason, rewardHours,
-		))
-
-	case "retry":
-		b.Send(fmt.Sprintf(
-			"⚠️ *CASI — INTÉNTALO DE NUEVO*\n\n_%s_\n\nManda otra foto corrigiendo eso.",
-			verdict.Reason,
-		))
-
-	case "rejected":
-		penaltyHours := b.state.CurrentTask.PenaltyHours
-		b.state.CurrentTask.Failed = true
-		b.state.CurrentTask.AwaitingPhoto = false
-		b.state.TotalTimeAddedHours += penaltyHours
-		b.state.TasksStreak = max(0, b.state.TasksStreak-3)
-		b.mustSaveState()
-
-		// Guardar en DB
-		if b.db != nil {
-			b.db.SaveTask(&storage.Task{
-				ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
-				Description: b.state.CurrentTask.Description,
-				AssignedAt:  b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
-				Status:       "failed",
-				PenaltyHours: penaltyHours, RewardHours: b.state.CurrentTask.RewardHours,
-			})
-		}
-
-		if err := b.chaster.AddTime(lock.ID, penaltyHours*3600); err != nil {
-			log.Printf("error añadiendo tiempo en Chaster: %v", err)
-		}
-
-		aiMsg, _ := b.ai.GenerateTaskPenalty(penaltyHours, verdict.Reason)
-		b.Send(fmt.Sprintf(
-			"▪️ *EVIDENCIA RECHAZADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n\n*+%dh* añadidas a tu condena.",
-			aiMsg, verdict.Reason, penaltyHours,
-		))
-		b.addWeeklyDebt("evidencia de tarea rechazada")
-		b.autoPillory("evidencia de tarea rechazada")
-	}
+	aiMsg, _ := b.ai.GenerateTaskAccepted(b.state.Toys, b.daysLocked())
+	b.Send("✅ *EVIDENCIA RECIBIDA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + aiMsg)
 }
 
 func (b *Bot) HandleFail() {
