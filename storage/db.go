@@ -640,16 +640,29 @@ func (db *DB) ResetAllTables() error {
 	return nil
 }
 
-// SeedOrgasmDenial inserta una denegación de orgasmo N días en el pasado.
-func (db *DB) SeedOrgasmDenial(daysAgo int) error {
+// SeedOrgasmGranted inserta un orgasmo concedido N días en el pasado.
+func (db *DB) SeedOrgasmGranted(daysAgo int) error {
 	id := fmt.Sprintf("seed-orgasm-%d", time.Now().UnixNano())
 	createdAt := time.Now().AddDate(0, 0, -daysAgo)
 	_, err := db.conn.Exec(
 		`INSERT INTO orgasm_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
-		 VALUES (?, 0, 'permiso', 'Denegado.', '', 0, 0, ?)`,
+		 VALUES (?, 1, 'permiso', 'Concedido.', '', 0, 0, ?)`,
 		id, createdAt,
 	)
 	return err
+}
+
+// GetDaysSinceLastOrgasm devuelve los días desde el último orgasmo concedido.
+// Devuelve -1 si nunca hubo uno.
+func (db *DB) GetDaysSinceLastOrgasm() int {
+	var createdAt time.Time
+	err := db.conn.QueryRow(
+		`SELECT created_at FROM orgasm_log WHERE granted=1 ORDER BY created_at DESC LIMIT 1`,
+	).Scan(&createdAt)
+	if err != nil {
+		return -1
+	}
+	return int(time.Since(createdAt).Hours()) / 24
 }
 
 // ── Outfit log ─────────────────────────────────────────────────────────────

@@ -380,6 +380,16 @@ func (b *Bot) HandleStatus() {
 	} else if b.state.TasksStreak >= 5 {
 		orgasmStatus = "difícil"
 	}
+	daysSinceOrgasm := -1
+	if b.db != nil {
+		daysSinceOrgasm = b.db.GetDaysSinceLastOrgasm()
+	}
+	orgasmDaysLine := ""
+	if daysSinceOrgasm < 0 {
+		orgasmDaysLine = " — nunca"
+	} else {
+		orgasmDaysLine = fmt.Sprintf(" — *%d días*", daysSinceOrgasm)
+	}
 
 	// ── Ruleta ──
 	ruletaLine := ""
@@ -404,7 +414,7 @@ func (b *Bot) HandleStatus() {
 			"✅ Completadas — *%d* | 💀 Fallidas — *%d*\n"+
 			"🔥 Racha — *%d* tareas | Obediencia — *%s*%s%s\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
-			"💦 Orgasmo — _%s_\n"+
+			"💦 Orgasmo — _%s_%s\n"+
 			"📊 Balance — *+%dh / -%dh*%s%s",
 		days, hours, mins,
 		timeRemaining,
@@ -412,7 +422,7 @@ func (b *Bot) HandleStatus() {
 		taskStatus, chasterTaskLine,
 		b.state.TasksCompleted, b.state.TasksFailed,
 		b.state.TasksStreak, models.ObedienceLevelString(obedienceLevel), plugLine, checkinLine,
-		orgasmStatus,
+		orgasmStatus, orgasmDaysLine,
 		b.state.TotalTimeAddedHours, b.state.TotalTimeRemovedHours,
 		ruletaLine, debtLine,
 	)
@@ -1352,6 +1362,7 @@ func (b *Bot) HandleHelp() {
 /fail — Confesar que fallaste
 /roulette — Girar la ruleta diaria 🎰
 /chatask — Tarea comunitaria de Chaster
+/newlock — Iniciar nueva sesión
 
 🧸 *INVENTARIO*
 /toys — Ver tus juguetes
@@ -1364,24 +1375,10 @@ func (b *Bot) HandleHelp() {
 /wardrobe remove — Eliminar prenda
 
 📊 *HISTORIAL*
-/stats — Estadísticas de sesiones
+/stats — Estadísticas
 /history — Últimas 10 tareas
 /orgasms — Historial de permisos
 /mood — Estado de ánimo de Papi
-/newlock — Iniciar nueva sesión
-
-▬▬▬▬▬▬▬▬▬▬▬▬
-🚫 *SOLO PAPI*
-_/freeze /unfreeze /hidetime /showtime /pillory_
-_Estos comandos los ejecuta Papi, no tú._
-
-▬▬▬▬▬▬▬▬▬▬▬▬
-🧪 *PRUEBAS* _(se eliminarán pronto)_
-/testevent — Forzar evento random
-/testremove — Quitar tiempo manualmente
-/testmsg — Mensaje espontáneo
-/testjudgment — Juicio dominical
-/help — Este menú
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
 _Para completar una tarea — manda la foto directo al chat._`)
@@ -1427,12 +1424,12 @@ func (b *Bot) Start() {
 	// Keyboard sin duplicados, organizado
 	keyboard := [][]tgbotapi.KeyboardButton{
 		{tgbotapi.NewKeyboardButton("/status"), tgbotapi.NewKeyboardButton("/task")},
-		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/fail")},
-		{tgbotapi.NewKeyboardButton("/explain"), tgbotapi.NewKeyboardButton("/newlock")},
-		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/stats")},
-		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/orgasms")},
-		{tgbotapi.NewKeyboardButton("/history"), tgbotapi.NewKeyboardButton("/mood")},
-		{tgbotapi.NewKeyboardButton("/wardrobe"), tgbotapi.NewKeyboardButton("/help")},
+		{tgbotapi.NewKeyboardButton("/fail"), tgbotapi.NewKeyboardButton("/explain")},
+		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/chatask")},
+		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/wardrobe")},
+		{tgbotapi.NewKeyboardButton("/orgasms"), tgbotapi.NewKeyboardButton("/history")},
+		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/help")},
 	}
 
 	for update := range updates {
@@ -1519,27 +1516,6 @@ func (b *Bot) Start() {
 			b.HandleToys("")
 		case strings.HasPrefix(text, "/toys "):
 			b.HandleToys(strings.TrimPrefix(text, "/toys "))
-		// Comandos de extensión — usan el lock activo automáticamente
-		case text == "/freeze":
-			b.HandleFreeze()
-		case text == "/unfreeze":
-			b.HandleUnfreeze()
-		case text == "/hidetime":
-			b.HandleHideTime()
-		case text == "/showtime":
-			b.HandleShowTime()
-		case strings.HasPrefix(text, "/pillory "):
-			b.parsePilloryCommand(strings.TrimPrefix(text, "/pillory "))
-		case text == "/pillory":
-			b.Send("Uso: `/pillory [minutos] [razón opcional]`\nEjemplo: `/pillory 30 por no obedecer`")
-		case text == "/testevent":
-			b.HandleRandomEventTest()
-		case text == "/testremove":
-			b.HandleTestRemoveTime("")
-		case strings.HasPrefix(text, "/testremove "):
-			b.HandleTestRemoveTime(strings.TrimPrefix(text, "/testremove "))
-		case text == "/testmsg":
-			b.SendRandomMessageTest()
 		case text == "/roulette":
 			b.HandleRuleta()
 		case text == "/chatask":
@@ -1550,9 +1526,6 @@ func (b *Bot) Start() {
 			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
 		case text == "/dbwipe":
 			b.HandleDBWipe()
-		case text == "/testjudgment":
-			b.state.LastJudgmentDate = "" // forzar re-ejecución
-			b.HandleWeeklyJudgment()
 		case text != "" && !strings.HasPrefix(text, "/"):
 			b.HandleChat(text)
 		}
@@ -3004,8 +2977,8 @@ func (b *Bot) HandleDBWipe() {
 		return
 	}
 
-	// Sembrar: 1 denegación de orgasmo hace 3 días
-	if err := b.db.SeedOrgasmDenial(3); err != nil {
+	// Sembrar: 1 orgasmo concedido hace 3 días
+	if err := b.db.SeedOrgasmGranted(3); err != nil {
 		log.Printf("[dbwipe] error sembrando orgasmo: %v", err)
 	}
 
@@ -3020,7 +2993,7 @@ func (b *Bot) HandleDBWipe() {
 	b.cachedDaysLocked = 0
 	b.cachedDaysLockedAt = time.Time{}
 
-	b.Send("✅ *DB reseteada.*\n▬▬▬▬▬▬▬▬▬▬▬▬\nDatos sembrados:\n— 1 denegación de orgasmo hace 3 días\n\nTodo lo demás está vacío. Listo para mañana.")
+	b.Send("✅ *DB reseteada.*\n▬▬▬▬▬▬▬▬▬▬▬▬\nDatos sembrados:\n— 1 orgasmo concedido hace 3 días\n\nTodo lo demás está vacío. Listo para mañana.")
 }
 
 // ── Guardarropa ────────────────────────────────────────────────────────────

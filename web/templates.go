@@ -575,6 +575,16 @@ var dashboardHTML = `{{define "content"}}
     <div class="stat-sub">{{.GrantRate}}% aprobación</div>
   </div>
   <div class="stat-card">
+    <div class="stat-lbl">Sin eyacular</div>
+    {{if lt .DaysSinceOrgasm 0}}
+    <div class="stat-val" style="color:var(--purple);">∞</div>
+    <div class="stat-sub">nunca concedido</div>
+    {{else}}
+    <div class="stat-val" style="color:var(--purple);">{{.DaysSinceOrgasm}}d</div>
+    <div class="stat-sub">desde el último orgasmo</div>
+    {{end}}
+  </div>
+  <div class="stat-card">
     <div class="stat-lbl">Tiempo añadido</div>
     <div class="stat-val c-red">+{{.TimeAdded}}h</div>
     <div class="stat-sub">como castigo</div>

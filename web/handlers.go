@@ -40,10 +40,11 @@ type dashData struct {
 	CurrentTaskDesc string
 	CurrentTaskDue  time.Time
 	RecentTasks     []*storage.Task
-	OrgasmTotal     int
-	OrgasmGranted   int
-	OrgasmDenied    int
-	GrantRate       int
+	OrgasmTotal        int
+	OrgasmGranted      int
+	OrgasmDenied       int
+	GrantRate          int
+	DaysSinceOrgasm    int // -1 = nunca
 	// Lock timing
 	HasEndDate    bool
 	LockEndISO    string     // for JS countdown
@@ -124,6 +125,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		OrgasmGranted:   granted,
 		OrgasmDenied:    denied,
 		GrantRate:       grantRate,
+		DaysSinceOrgasm: s.db.GetDaysSinceLastOrgasm(),
 		HasEndDate:      hasEndDate,
 		LockEndISO:      lockEndISO,
 		LockStartISO:    lockStartISO,
