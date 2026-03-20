@@ -502,18 +502,19 @@ Be GENEROUS in your evaluation:
 
 // OrgasmDecision resultado de una solicitud de permiso de orgasmo
 type OrgasmDecision struct {
-	Granted  bool   `json:"granted"`
-	Message  string `json:"message"`
-	Condition string `json:"condition,omitempty"` // si da permiso con condición
+	Outcome   string `json:"outcome"`             // "denied", "edge", "granted"
+	Message   string `json:"message"`
+	Condition string `json:"condition,omitempty"` // instrucciones si granted o edge
 }
 
-// EvaluateOrgasmRequest evalúa si Papi concede permiso de orgasmo.
-// Solo concede si el streak es alto — y siempre con humillación.
-func (c *Client) EvaluateOrgasmRequest(userMessage string, toys []models.Toy, daysLocked, tasksCompleted, tasksFailed, streak, totalGranted, totalDenied, daysSinceLastGrant int) (*OrgasmDecision, error) {
+// GenerateOrgasmMessage genera el texto de Papi para un outcome ya decidido.
+// outcome: "denied" | "edge" | "granted"
+// edgeCount: cuántos edges ordenar (solo relevante si outcome="edge")
+func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, edgeCount int, toys []models.Toy, daysLocked, streak, daysSinceLastGrant int) (*OrgasmDecision, error) {
 	ctx := buildContext(toys, daysLocked)
 
 	lastGrantStr := "never"
-	if totalGranted > 0 {
+	if daysSinceLastGrant >= 0 && daysSinceLastGrant < 999 {
 		if daysSinceLastGrant == 0 {
 			lastGrantStr = "today"
 		} else {
@@ -521,36 +522,41 @@ func (c *Client) EvaluateOrgasmRequest(userMessage string, toys []models.Toy, da
 		}
 	}
 
-	system := baseSystemLocked + `
-Jolie is begging Papi for permission to orgasm with her dildo (anal only — never through the cage).
-Respond ONLY in JSON:
-{"granted": false, "message": "humiliating denial in Spanish", "condition": ""}
-or
-{"granted": true, "message": "permission with humiliation and conditions in Spanish", "condition": "what she must do first or during"}
+	var outcomeInstruction string
+	switch outcome {
+	case "granted":
+		outcomeInstruction = `THE DECISION IS: GRANTED.
+Papi grants permission. Respond in JSON: {"outcome": "granted", "message": "...", "condition": "..."}
+- message: short dominant reaction acknowledging her (2-3 lines max). Humiliating but granting.
+- condition: explicit degrading instructions — she uses the dildo in her ass, must narrate herself, must beg during. Be specific.
+- Use "maricona", "puta sissy", "agujero", "culo de puta".`
+	case "edge":
+		outcomeInstruction = fmt.Sprintf(`THE DECISION IS: EDGE (%d time(s)).
+Papi does NOT grant orgasm — instead orders her to edge herself exactly %d time(s) and stop. Respond in JSON: {"outcome": "edge", "message": "...", "condition": "..."}
+- message: cold dominant order. She gets to touch herself but NOT cum. Make her feel the cruelty of it (2-3 lines).
+- condition: exact instructions — insert the dildo, edge %d times, stop before cumming, confirm when done. Reference the cage.
+- Use "maricona", "puta sissy", "agujero".`, edgeCount, edgeCount, edgeCount)
+	default: // "denied"
+		outcomeInstruction = `THE DECISION IS: DENIED.
+Papi denies her completely. Respond in JSON: {"outcome": "denied", "message": "...", "condition": ""}
+- message: cruel, humiliating denial (2-3 lines). Call her a faggot, remind her she has no cock, only a hole.
+- Reference the history: "llevas X días sin correrte" or "ya te lo di hace X días".
+- Use "maricona", "puta sissy", "zorra encerrada", "culo de puta", "agujero".`
+	}
 
-Papi's rules about orgasm:
-- A sissy like her can ONLY cum through her ass — the cage exists precisely so she never uses her dick
-- Permission is RARE — even a good record is barely enough
-- Use the orgasm history to decide:
-  * If last grant was today or yesterday: ALWAYS deny. She already had her treat.
-  * If last grant was < 4 days ago: almost always deny. Too soon.
-  * If she has been denied 5+ times in a row with no grant: Papi may grant, savoring her desperation
-  * streak < 5: ALWAYS deny regardless of history
-  * streak 5-7: use history — deny if granted recently, maybe grant if long drought
-  * streak >= 8 AND last grant >= 5 days ago: most likely to grant
-- Papi enjoys her desperation — sometimes denies just to watch her suffer more
-- The denial must be CRUEL and EXPLICIT — call her a faggot, a slutty sissy, remind her she has no cock, only a hole
-- Use words like "maricona", "puta sissy", "zorra encerrada", "culo de puta", "agujero"
-- Reference the history: "llevas X días sin correrte", "ya te lo di hace X días, no seas codiciosa"
-- If granting: give explicit, degrading instructions. She must beg properly, use the dildo, describe herself while doing it`
+	system := baseSystemLocked + `
+Jolie is begging Papi for permission to orgasm (anal only — never through the cage).
+` + outcomeInstruction + `
+
+Rules:
+- A sissy like her can ONLY cum through her ass — the cage exists so she never uses her dick
+- Always respond ONLY in JSON. No extra text outside JSON.
+- Always respond in Spanish.`
 
 	prompt := fmt.Sprintf(`%s
-Tasks completed: %d | Failed: %d | Current streak: %d
-Orgasm history: %d granted total, %d denied total, last granted: %s
+Current streak: %d | Last orgasm granted: %s
 
-Jolie begs: "%s"
-
-Papi checks his records and decides.`, ctx, tasksCompleted, tasksFailed, streak, totalGranted, totalDenied, lastGrantStr, userMessage)
+Jolie begs: "%s"`, ctx, streak, lastGrantStr, userMessage)
 
 	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
 	if err != nil {
@@ -559,8 +565,9 @@ Papi checks his records and decides.`, ctx, tasksCompleted, tasksFailed, streak,
 	raw = extractJSON(raw)
 	var decision OrgasmDecision
 	if err := json.Unmarshal([]byte(raw), &decision); err != nil {
-		return &OrgasmDecision{Granted: false, Message: raw}, nil
+		return &OrgasmDecision{Outcome: outcome, Message: raw}, nil
 	}
+	decision.Outcome = outcome // enforce the pre-rolled outcome
 	return &decision, nil
 }
 

@@ -35,8 +35,8 @@ func NewCloudinaryClient(cloudName, apiKey, apiSecret string) *CloudinaryClient 
 	}
 }
 
-// Upload sube una imagen a Cloudinary en el folder indicado y devuelve la URL segura
-func (c *CloudinaryClient) Upload(imageBytes []byte, mimeType, folder string) (string, error) {
+// Upload sube una imagen a Cloudinary y devuelve (secureURL, publicID, error)
+func (c *CloudinaryClient) Upload(imageBytes []byte, mimeType, folder string) (string, string, error) {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
 	// Generar firma
@@ -59,10 +59,10 @@ func (c *CloudinaryClient) Upload(imageBytes []byte, mimeType, folder string) (s
 
 	part, err := writer.CreateFormFile("file", "upload."+ext)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := part.Write(imageBytes); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	writer.WriteField("api_key", c.apiKey)
@@ -74,27 +74,62 @@ func (c *CloudinaryClient) Upload(imageBytes []byte, mimeType, folder string) (s
 	url := fmt.Sprintf("https://api.cloudinary.com/v1_1/%s/image/upload", c.cloudName)
 	req, err := http.NewRequest("POST", url, &buf)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("cloudinary error %d: %s", resp.StatusCode, string(body))
+		return "", "", fmt.Errorf("cloudinary error %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result CloudinaryUploadResult
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return result.SecureURL, nil
+	return result.SecureURL, result.PublicID, nil
+}
+
+// Delete elimina una imagen de Cloudinary por su public_id
+func (c *CloudinaryClient) Delete(publicID string) error {
+	if publicID == "" {
+		return nil
+	}
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	params := map[string]string{
+		"public_id": publicID,
+		"timestamp": timestamp,
+	}
+	signature := c.generateSignature(params)
+
+	formData := fmt.Sprintf("public_id=%s&timestamp=%s&api_key=%s&signature=%s",
+		publicID, timestamp, c.apiKey, signature)
+
+	url := fmt.Sprintf("https://api.cloudinary.com/v1_1/%s/image/destroy", c.cloudName)
+	req, err := http.NewRequest("POST", url, strings.NewReader(formData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("cloudinary delete error %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // generateSignature genera la firma SHA1 requerida por Cloudinary

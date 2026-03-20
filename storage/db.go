@@ -29,6 +29,8 @@ func NewDB(path string) (*DB, error) {
 	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN photo_url TEXT DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN result TEXT DEFAULT 'pending'`)
 	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN resolved_at DATETIME`)
+	db.conn.Exec(`ALTER TABLE toys ADD COLUMN photo_public_id TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN outcome TEXT DEFAULT ''`)
 
 	log.Println("✅ Base de datos iniciada")
 	return db, nil
@@ -151,13 +153,14 @@ func (db *DB) migrate() error {
 // ── Toys ──────────────────────────────────────────────────────────────────
 
 type Toy struct {
-	ID          string
-	Name        string
-	Description string
-	PhotoURL    string
-	Type        string // "cage", "plug", "vibrator", "restraint", "other"
-	InUse       bool
-	CreatedAt   time.Time
+	ID            string
+	Name          string
+	Description   string
+	PhotoURL      string
+	PhotoPublicID string
+	Type          string // "cage", "plug", "vibrator", "restraint", "other"
+	InUse         bool
+	CreatedAt     time.Time
 }
 
 func (db *DB) SaveToy(t *Toy) error {
@@ -166,15 +169,15 @@ func (db *DB) SaveToy(t *Toy) error {
 		inUse = 1
 	}
 	_, err := db.conn.Exec(`
-		INSERT OR REPLACE INTO toys (id, name, description, photo_url, type, in_use, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.Name, t.Description, t.PhotoURL, t.Type, inUse, t.CreatedAt,
+		INSERT OR REPLACE INTO toys (id, name, description, photo_url, photo_public_id, type, in_use, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Name, t.Description, t.PhotoURL, t.PhotoPublicID, t.Type, inUse, t.CreatedAt,
 	)
 	return err
 }
 
 func (db *DB) GetToys() ([]*Toy, error) {
-	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, type, in_use, created_at FROM toys ORDER BY created_at`)
+	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, COALESCE(photo_public_id,''), type, in_use, created_at FROM toys ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +187,7 @@ func (db *DB) GetToys() ([]*Toy, error) {
 	for rows.Next() {
 		t := &Toy{}
 		var inUseInt int
-		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.PhotoURL, &t.Type, &inUseInt, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.PhotoURL, &t.PhotoPublicID, &t.Type, &inUseInt, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		t.InUse = inUseInt == 1
@@ -194,7 +197,7 @@ func (db *DB) GetToys() ([]*Toy, error) {
 }
 
 func (db *DB) GetCages() ([]*Toy, error) {
-	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, type, in_use, created_at FROM toys WHERE type='cage' ORDER BY created_at`)
+	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, COALESCE(photo_public_id,''), type, in_use, created_at FROM toys WHERE type='cage' ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +207,7 @@ func (db *DB) GetCages() ([]*Toy, error) {
 	for rows.Next() {
 		t := &Toy{}
 		var inUseInt int
-		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.PhotoURL, &t.Type, &inUseInt, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.PhotoURL, &t.PhotoPublicID, &t.Type, &inUseInt, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		t.InUse = inUseInt == 1
@@ -369,7 +372,7 @@ func (db *DB) GetAllTasks() ([]*Task, error) {
 }
 
 func (db *DB) GetAllOrgasmEntries() ([]*OrgasmEntry, error) {
-	rows, err := db.conn.Query(`SELECT id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at FROM orgasm_log ORDER BY created_at DESC`)
+	rows, err := db.conn.Query(`SELECT id, granted, COALESCE(outcome,''), user_message, senor_response, condition_text, streak_at_time, days_locked, created_at FROM orgasm_log ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -378,10 +381,17 @@ func (db *DB) GetAllOrgasmEntries() ([]*OrgasmEntry, error) {
 	for rows.Next() {
 		e := &OrgasmEntry{}
 		var granted int
-		if err := rows.Scan(&e.ID, &granted, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &granted, &e.Outcome, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		e.Granted = granted == 1
+		if e.Outcome == "" {
+			if e.Granted {
+				e.Outcome = "granted"
+			} else {
+				e.Outcome = "denied"
+			}
+		}
 		entries = append(entries, e)
 	}
 	return entries, nil
@@ -408,7 +418,8 @@ func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 
 type OrgasmEntry struct {
 	ID            string
-	Granted       bool
+	Outcome       string // "denied", "edge", "granted"
+	Granted       bool   // true only for "granted"
 	UserMessage   string
 	SenorResponse string
 	Condition     string
@@ -420,20 +431,28 @@ type OrgasmEntry struct {
 func (db *DB) SaveOrgasmEntry(e *OrgasmEntry) error {
 	id := fmt.Sprintf("orgasm-%d", time.Now().UnixNano())
 	granted := 0
-	if e.Granted {
+	if e.Outcome == "granted" {
 		granted = 1
 	}
+	outcome := e.Outcome
+	if outcome == "" {
+		if granted == 1 {
+			outcome = "granted"
+		} else {
+			outcome = "denied"
+		}
+	}
 	_, err := db.conn.Exec(`
-		INSERT INTO orgasm_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, granted, e.UserMessage, e.SenorResponse, e.Condition, e.StreakAtTime, e.DaysLocked, time.Now(),
+		INSERT INTO orgasm_log (id, granted, outcome, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, granted, outcome, e.UserMessage, e.SenorResponse, e.Condition, e.StreakAtTime, e.DaysLocked, time.Now(),
 	)
 	return err
 }
 
 func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at
+		SELECT id, granted, COALESCE(outcome,''), user_message, senor_response, condition_text, streak_at_time, days_locked, created_at
 		FROM orgasm_log ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -443,17 +462,29 @@ func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
 	for rows.Next() {
 		e := &OrgasmEntry{}
 		var granted int
-		if err := rows.Scan(&e.ID, &granted, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &granted, &e.Outcome, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		e.Granted = granted == 1
+		if e.Outcome == "" {
+			if e.Granted {
+				e.Outcome = "granted"
+			} else {
+				e.Outcome = "denied"
+			}
+		}
 		entries = append(entries, e)
 	}
 	return entries, nil
 }
 
-func (db *DB) GetOrgasmStats() (total, granted, denied int, err error) {
-	err = db.conn.QueryRow(`SELECT COUNT(*), SUM(granted), SUM(1-granted) FROM orgasm_log`).Scan(&total, &granted, &denied)
+func (db *DB) GetOrgasmStats() (total, granted, edged, denied int, err error) {
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*),
+		       SUM(CASE WHEN COALESCE(outcome,'') = 'granted' OR (COALESCE(outcome,'') = '' AND granted=1) THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN COALESCE(outcome,'') = 'edge' THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN COALESCE(outcome,'') IN ('denied','') AND granted=0 THEN 1 ELSE 0 END)
+		FROM orgasm_log`).Scan(&total, &granted, &edged, &denied)
 	return
 }
 

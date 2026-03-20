@@ -32,13 +32,14 @@ type Task struct {
 
 // Toy representa un juguete — se persiste en DB
 type Toy struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	PhotoURL    string    `json:"photo_url"`
-	Type        string    `json:"type"`   // "cage", "plug", "vibrator", "restraint", "other"
-	InUse       bool      `json:"in_use"` // true si está puesto ahora mismo
-	AddedAt     time.Time `json:"added_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	PhotoURL      string    `json:"photo_url"`
+	PhotoPublicID string    `json:"photo_public_id,omitempty"`
+	Type          string    `json:"type"`   // "cage", "plug", "vibrator", "restraint", "other"
+	InUse         bool      `json:"in_use"` // true si está puesto ahora mismo
+	AddedAt       time.Time `json:"added_at"`
 }
 
 // ActiveEvent representa un evento random activo con auto-reversión
@@ -128,6 +129,10 @@ type AppState struct {
 
 	// Ruleta
 	LastRuletaDate string `json:"last_ruleta_date"` // "2006-01-02" COT
+
+	// Edge pendiente
+	EdgePendingAt *time.Time `json:"edge_pending_at,omitempty"`
+	EdgeCount     int        `json:"edge_count,omitempty"`
 
 	// Deuda semanal
 	WeeklyDebt        int      `json:"weekly_debt"`

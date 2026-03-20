@@ -567,7 +567,7 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 		// Subir foto a Cloudinary
 		var photoURL string
 		if b.cloudinary != nil {
-			url, cerr := b.cloudinary.Upload(imageBytes, mimeType, "chaster/tasks")
+			url, _, cerr := b.cloudinary.Upload(imageBytes, mimeType, "chaster/tasks")
 			if cerr != nil {
 				log.Printf("error subiendo foto de tarea: %v", cerr)
 			} else {
@@ -781,6 +781,13 @@ func (b *Bot) handleToyRemoveSelection(text string) {
 		b.db.DeleteToy(selected.ID)
 	}
 
+	// Borrar imagen de Cloudinary si existe
+	if b.cloudinary != nil && selected.PhotoPublicID != "" {
+		if err := b.cloudinary.Delete(selected.PhotoPublicID); err != nil {
+			log.Printf("error borrando imagen de Cloudinary (%s): %v", selected.PhotoPublicID, err)
+		}
+	}
+
 	newToys := []models.Toy{}
 	for _, t := range b.state.Toys {
 		if t.ID != selected.ID {
@@ -871,13 +878,14 @@ func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
 	}
 
 	// Subir foto a Cloudinary
-	var photoURL string
+	var photoURL, photoPublicID string
 	if b.cloudinary != nil {
-		url, err := b.cloudinary.Upload(imageBytes, mimeType, "chaster/toys")
+		url, pid, err := b.cloudinary.Upload(imageBytes, mimeType, "chaster/toys")
 		if err != nil {
 			log.Printf("error subiendo foto de juguete: %v", err)
 		} else {
 			photoURL = url
+			photoPublicID = pid
 		}
 	}
 
@@ -888,20 +896,22 @@ func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
 	if b.db != nil {
 		b.db.SaveToy(&storage.Toy{
 			ID: toyID, Name: toyInfo.Name,
-			Description: toyInfo.Description,
-			PhotoURL:    photoURL,
-			Type:        toyInfo.Type,
-			CreatedAt:   time.Now(),
+			Description:   toyInfo.Description,
+			PhotoURL:      photoURL,
+			PhotoPublicID: photoPublicID,
+			Type:          toyInfo.Type,
+			CreatedAt:     time.Now(),
 		})
 	}
 
 	// Añadir al estado en memoria
 	b.state.Toys = append(b.state.Toys, models.Toy{
 		ID: toyID, Name: toyInfo.Name,
-		Description: toyInfo.Description,
-		PhotoURL:    photoURL,
-		Type:        toyInfo.Type,
-		AddedAt:     time.Now(),
+		Description:   toyInfo.Description,
+		PhotoURL:      photoURL,
+		PhotoPublicID: photoPublicID,
+		Type:          toyInfo.Type,
+		AddedAt:       time.Now(),
 	})
 	b.mustSaveState()
 
@@ -923,6 +933,17 @@ func (b *Bot) HandleChat(text string) {
 	b.lastChatTime = time.Now()
 	b.chatMu.Unlock()
 
+	// Verificar expiración de edge pendiente
+	if b.state.EdgePendingAt != nil && time.Now().After(b.state.EdgePendingAt.Add(2*time.Hour)) {
+		b.state.EdgePendingAt = nil
+		b.state.EdgeCount = 0
+		b.pendingAction = ""
+		b.mustSaveState()
+		b.addWeeklyDebt("edge no confirmado a tiempo")
+		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge. Anotado como desobediencia._")
+		return
+	}
+
 	textLower := strings.ToLower(text)
 
 	// Ritual matutino — respuesta de texto
@@ -940,6 +961,12 @@ func (b *Bot) HandleChat(text string) {
 	// Detectar selección de juguete a eliminar
 	if b.pendingAction == "removing_toy" {
 		b.handleToyRemoveSelection(text)
+		return
+	}
+
+	// Confirmación de edge pendiente
+	if b.pendingAction == "edge_confirm" {
+		b.handleEdgeConfirmation(text)
 		return
 	}
 
@@ -1014,46 +1041,88 @@ func (b *Bot) HandleChat(text string) {
 	b.Send(stripMarkdown(response))
 }
 
+// rollOrgasmOutcome decide el resultado usando la tabla de probabilidades.
+// Devuelve "denied", "edge", o "granted".
+func rollOrgasmOutcome(streak, daysSinceLastGrant int) string {
+	// Probabilidades: [denied%, edge%, granted%]
+	type probs struct{ denied, edge, granted int }
+	var p probs
+
+	switch {
+	case streak < 5:
+		p = probs{85, 15, 0}
+	case streak <= 7 && daysSinceLastGrant < 5:
+		p = probs{60, 35, 5}
+	case streak <= 7 && daysSinceLastGrant < 10:
+		p = probs{35, 45, 20}
+	case streak <= 7:
+		p = probs{20, 50, 30}
+	case daysSinceLastGrant < 5:
+		p = probs{45, 45, 10}
+	case daysSinceLastGrant < 10:
+		p = probs{15, 45, 40}
+	default: // streak >= 8, >= 10 días
+		p = probs{5, 35, 60}
+	}
+
+	roll := rand.Intn(100)
+	if roll < p.denied {
+		return "denied"
+	} else if roll < p.denied+p.edge {
+		return "edge"
+	}
+	return "granted"
+}
+
+// rollEdgeCount decide cuántos edges ordenar: 50% → 1, 35% → 2, 15% → 3
+func rollEdgeCount() int {
+	r := rand.Intn(100)
+	if r < 50 {
+		return 1
+	} else if r < 85 {
+		return 2
+	}
+	return 3
+}
+
 func (b *Bot) handleOrgasmRequest(text string) {
+	// Verificar si ya hay un edge pendiente
+	if b.state.EdgePendingAt != nil {
+		if time.Now().Before(b.state.EdgePendingAt.Add(2 * time.Hour)) {
+			b.Send("▪️ *EDGE PENDIENTE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todavía tienes una orden de edge sin confirmar. Complétala primero._")
+			return
+		}
+		// Expiró sin confirmar — limpiar silenciosamente
+		b.state.EdgePendingAt = nil
+		b.state.EdgeCount = 0
+	}
+
 	b.Send("_..._")
 
-	// Obtener historial para que Papi tome una decisión informada
-	totalGranted, totalDenied, daysSinceLastGrant := 0, 0, 999
+	// Obtener historial
+	daysSinceLastGrant := 999
 	if b.db != nil {
-		total, granted, denied, err := b.db.GetOrgasmStats()
-		if err == nil {
-			totalGranted = granted
-			totalDenied = denied
-			_ = total
-		}
-		if entries, err := b.db.GetOrgasmHistory(1); err == nil && len(entries) > 0 {
-			last := entries[0]
-			if last.Granted {
-				daysSinceLastGrant = int(time.Since(last.CreatedAt).Hours()) / 24
-			} else {
-				// Buscar el último concedido
-				if all, err := b.db.GetOrgasmHistory(50); err == nil {
-					for _, e := range all {
-						if e.Granted {
-							daysSinceLastGrant = int(time.Since(e.CreatedAt).Hours()) / 24
-							break
-						}
-					}
+		if all, err := b.db.GetOrgasmHistory(50); err == nil {
+			for _, e := range all {
+				if e.Granted {
+					daysSinceLastGrant = int(time.Since(e.CreatedAt).Hours()) / 24
+					break
 				}
 			}
 		}
 	}
 
-	decision, err := b.ai.EvaluateOrgasmRequest(
-		text,
-		b.state.Toys,
-		b.daysLocked(),
-		b.state.TasksCompleted,
-		b.state.TasksFailed,
-		b.state.TasksStreak,
-		totalGranted,
-		totalDenied,
-		daysSinceLastGrant,
+	// Tirar la ruleta
+	outcome := rollOrgasmOutcome(b.state.TasksStreak, daysSinceLastGrant)
+	edgeCount := 0
+	if outcome == "edge" {
+		edgeCount = rollEdgeCount()
+	}
+
+	decision, err := b.ai.GenerateOrgasmMessage(
+		outcome, text, edgeCount,
+		b.state.Toys, b.daysLocked(),
+		b.state.TasksStreak, daysSinceLastGrant,
 	)
 	if err != nil {
 		b.Send("_..._")
@@ -1063,7 +1132,7 @@ func (b *Bot) handleOrgasmRequest(text string) {
 	// Guardar en historial
 	if b.db != nil {
 		b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
-			Granted:       decision.Granted,
+			Outcome:       outcome,
 			UserMessage:   text,
 			SenorResponse: decision.Message,
 			Condition:     decision.Condition,
@@ -1072,15 +1141,90 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		})
 	}
 
-	if decision.Granted {
+	switch outcome {
+	case "granted":
 		msg := "▪️ *PERMISO CONCEDIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
 		if strings.TrimSpace(decision.Condition) != "" {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
 		b.Send(msg)
-	} else {
+
+	case "edge":
+		now := time.Now()
+		b.state.EdgePendingAt = &now
+		b.state.EdgeCount = edgeCount
+		b.mustSaveState()
+		b.pendingAction = "edge_confirm"
+
+		msg := fmt.Sprintf("▪️ *ORDEN DE EDGE — %d %s*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
+			edgeCount,
+			func() string {
+				if edgeCount == 1 {
+					return "vez"
+				}
+				return "veces"
+			}(),
+			stripMarkdown(decision.Message),
+		)
+		if strings.TrimSpace(decision.Condition) != "" {
+			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
+		}
+		msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Confirma cuando hayas terminado. Tienes 2 horas._"
+		b.Send(msg)
+
+	default: // denied
 		b.Send("▪️ *DENEGADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message))
 	}
+}
+
+// handleEdgeConfirmation procesa la confirmación de un edge completado
+func (b *Bot) handleEdgeConfirmation(text string) {
+	if b.state.EdgePendingAt == nil {
+		b.pendingAction = ""
+		return
+	}
+
+	// Verificar timeout
+	if time.Now().After(b.state.EdgePendingAt.Add(2 * time.Hour)) {
+		b.state.EdgePendingAt = nil
+		b.state.EdgeCount = 0
+		b.pendingAction = ""
+		b.mustSaveState()
+		b.addWeeklyDebt("edge no confirmado a tiempo")
+		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge a tiempo. Anotado._")
+		return
+	}
+
+	confirmKeywords := []string{"listo", "hecho", "confirmado", "hice", "cumplido", "terminé", "termine", "completo", "completé"}
+	textLower := strings.ToLower(text)
+	confirmed := false
+	for _, kw := range confirmKeywords {
+		if strings.Contains(textLower, kw) {
+			confirmed = true
+			break
+		}
+	}
+
+	if !confirmed {
+		b.Send("_¿Ya lo hiciste? Confirma cuando termines el edge._")
+		return
+	}
+
+	edgeCount := b.state.EdgeCount
+	b.state.EdgePendingAt = nil
+	b.state.EdgeCount = 0
+	b.pendingAction = ""
+	b.mustSaveState()
+
+	b.Send(fmt.Sprintf("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%d %s al borde, sin correrte. Como debe ser._",
+		edgeCount,
+		func() string {
+			if edgeCount == 1 {
+				return "vez"
+			}
+			return "veces"
+		}(),
+	))
 }
 
 func (b *Bot) HandleOrgasmHistory() {
@@ -1089,7 +1233,7 @@ func (b *Bot) HandleOrgasmHistory() {
 		return
 	}
 
-	total, granted, denied, err := b.db.GetOrgasmStats()
+	total, granted, edged, denied, err := b.db.GetOrgasmStats()
 	if err != nil || total == 0 {
 		b.Send("💦 *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ningún registro todavía._")
 		return
@@ -1103,16 +1247,20 @@ func (b *Bot) HandleOrgasmHistory() {
 
 	loc, _ := time.LoadLocation("America/Bogota")
 	lines := []string{fmt.Sprintf(
-		"💦 *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n❌ Denegados — *%d*\nTotal — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
-		granted, denied, total,
+		"💦 *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n🌊 Edges — *%d*\n❌ Denegados — *%d*\nTotal — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
+		granted, edged, denied, total,
 	)}
 
 	for _, e := range entries {
 		icon := "❌"
 		status := "DENEGADO"
-		if e.Granted {
+		switch e.Outcome {
+		case "granted":
 			icon = "✅"
 			status = "CONCEDIDO"
+		case "edge":
+			icon = "🌊"
+			status = "EDGE"
 		}
 		date := e.CreatedAt.In(loc).Format("02 Jan 15:04")
 		lines = append(lines, fmt.Sprintf(
@@ -2758,7 +2906,7 @@ func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
 	// Subir foto a Cloudinary para nuestro registro
 	var chataskPhotoURL string
 	if b.cloudinary != nil {
-		url, err := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks")
+		url, _, err := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks")
 		if err != nil {
 			log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", err)
 		} else {
@@ -3127,7 +3275,7 @@ func (b *Bot) HandleWardrobePhoto(imgBytes []byte, mimeType string) {
 
 	var photoURL string
 	if b.cloudinary != nil {
-		url, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/wardrobe")
+		url, _, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/wardrobe")
 		if err != nil {
 			log.Printf("error subiendo foto de prenda: %v", err)
 		} else {
@@ -3216,7 +3364,7 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 	// Subir foto a Cloudinary
 	var outfitPhotoURL string
 	if b.cloudinary != nil {
-		url, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/outfits")
+		url, _, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/outfits")
 		if err != nil {
 			log.Printf("error subiendo foto de outfit: %v", err)
 		} else {

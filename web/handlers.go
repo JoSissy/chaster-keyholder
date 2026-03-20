@@ -76,7 +76,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		completionRate = st.TasksCompleted * 100 / taskTotal
 	}
 
-	total, granted, denied, _ := s.db.GetOrgasmStats()
+	total, granted, _, denied, _ := s.db.GetOrgasmStats()
 	grantRate := 0
 	if total > 0 {
 		grantRate = granted * 100 / total
@@ -275,7 +275,7 @@ func monthName(m int) string {
 	return names[m]
 }
 
-type orgasmDayCounts struct{ Granted, Denied int }
+type orgasmDayCounts struct{ Granted, Edged, Denied int }
 
 func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task, orgasms []*storage.OrgasmEntry, loc *time.Location) [][]calDay {
 	firstDay := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
@@ -302,9 +302,12 @@ func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task
 		if orgasmMap[key] == nil {
 			orgasmMap[key] = &orgasmDayCounts{}
 		}
-		if e.Granted {
+		switch e.Outcome {
+		case "granted":
 			orgasmMap[key].Granted++
-		} else {
+		case "edge":
+			orgasmMap[key].Edged++
+		default:
 			orgasmMap[key].Denied++
 		}
 	}
@@ -413,16 +416,17 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 type orgasmsData struct {
 	pageBase
-	Entries   []*storage.OrgasmEntry
-	Total     int
-	Granted   int
-	Denied    int
-	GrantPct  int
+	Entries  []*storage.OrgasmEntry
+	Total    int
+	Granted  int
+	Edged    int
+	Denied   int
+	GrantPct int
 }
 
 func (s *Server) handleOrgasms(w http.ResponseWriter, r *http.Request) {
 	entries, _ := s.db.GetAllOrgasmEntries()
-	total, granted, denied, _ := s.db.GetOrgasmStats()
+	total, granted, edged, denied, _ := s.db.GetOrgasmStats()
 	grantPct := 0
 	if total > 0 {
 		grantPct = granted * 100 / total
@@ -432,6 +436,7 @@ func (s *Server) handleOrgasms(w http.ResponseWriter, r *http.Request) {
 		Entries:  entries,
 		Total:    total,
 		Granted:  granted,
+		Edged:    edged,
 		Denied:   denied,
 		GrantPct: grantPct,
 	})
