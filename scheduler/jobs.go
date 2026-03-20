@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"log"
+	"math/rand"
+	"time"
 
 	"github.com/go-co-op/gocron/v2"
 
@@ -111,15 +113,6 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
-	// Check-ins espontáneos — 11am y 3pm
-	s.NewJob(
-		gocron.CronJob("0 11,15 * * *", false),
-		gocron.NewTask(func() {
-			log.Println("[scheduler] Disparando check-in...")
-			bot.TriggerCheckin()
-		}),
-	)
-
 	// Ruleta diaria — 6pm
 	s.NewJob(
 		gocron.CronJob("0 18 * * *", false),
@@ -174,4 +167,31 @@ func Start(bot *telegram.Bot) {
 
 	s.Start()
 	log.Println("✅ Scheduler iniciado")
+
+	// Loop de check-in con intervalo aleatorio (45min - 3h) en horario 8am-11pm COT
+	go runCheckinLoop(bot)
+}
+
+// runCheckinLoop ejecuta check-ins en intervalos aleatorios entre 45 minutos y 3 horas,
+// solo en horario activo (8am-11pm COT).
+func runCheckinLoop(bot *telegram.Bot) {
+	// Espera inicial aleatoria para no disparar al arrancar
+	initialWait := time.Duration(45+rand.Intn(75)) * time.Minute
+	log.Printf("[checkin-loop] primera espera: %v", initialWait)
+	time.Sleep(initialWait)
+
+	for {
+		loc, _ := time.LoadLocation("America/Bogota")
+		hour := time.Now().In(loc).Hour()
+
+		if hour >= 8 && hour < 23 {
+			log.Println("[checkin-loop] Evaluando check-in...")
+			bot.TriggerCheckin()
+		}
+
+		// Intervalo aleatorio: 45 minutos a 3 horas
+		wait := time.Duration(45+rand.Intn(135)) * time.Minute
+		log.Printf("[checkin-loop] próximo check-in en: %v", wait)
+		time.Sleep(wait)
+	}
 }

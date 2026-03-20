@@ -141,6 +141,7 @@ a:hover { color: var(--purple); }
 
 /* ── Stat cards ── */
 .stats-grid { display: grid; gap: 14px; margin-bottom: 22px; }
+.g5 { grid-template-columns: repeat(5, 1fr); }
 .g4 { grid-template-columns: repeat(4, 1fr); }
 .g3 { grid-template-columns: repeat(3, 1fr); }
 .g2 { grid-template-columns: repeat(2, 1fr); }
@@ -463,6 +464,15 @@ a:hover { color: var(--purple); }
     <a href="/wardrobe" class="nav-link {{if eq .Nav "wardrobe"}}active{{end}}">
       <span class="nav-icon">👗</span> Guardarropa
     </a>
+    <a href="/galeria" class="nav-link {{if eq .Nav "galeria"}}active{{end}}">
+      <span class="nav-icon">🖼️</span> Galería
+    </a>
+    <a href="/contrato" class="nav-link {{if eq .Nav "contrato"}}active{{end}}">
+      <span class="nav-icon">📜</span> Contrato
+    </a>
+    <a href="/checkins" class="nav-link {{if eq .Nav "checkins"}}active{{end}}">
+      <span class="nav-icon">📸</span> Check-ins
+    </a>
   </nav>
   <div class="sidebar-foot">
     <a href="{{.TelegramLink}}" target="_blank" class="tg-btn">
@@ -524,12 +534,24 @@ var dashboardHTML = `{{define "content"}}
 
     <div class="lock-badges">
       <span class="badge badge-pink">🔥 Racha: {{.Streak}}</span>
-      <span class="badge badge-purple">Obediencia {{.ObedienceName}}</span>
+      <span class="badge badge-purple">{{.ObedienceName}}</span>
+      <span class="badge badge-muted">intensidad {{.Intensity}}</span>
       {{if .WeeklyDebt}}<span class="badge badge-danger">Deuda: {{.WeeklyDebt}}h</span>{{end}}
       {{if .PendingCheckin}}<span class="badge badge-warning">⚠️ Check-in pendiente</span>{{end}}
     </div>
   </div>
 </div>
+
+{{if .HasActiveEvent}}
+<div style="background:rgba(192,132,252,0.08);border:1px solid rgba(192,132,252,0.28);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;margin-bottom:22px;">
+  <span style="font-size:22px;">{{if eq .ActiveEventType "freeze"}}🧊{{else if eq .ActiveEventType "hidetime"}}🕶️{{else}}⚡{{end}}</span>
+  <div>
+    <span style="font-weight:600;color:var(--purple);">Evento activo: {{if eq .ActiveEventType "freeze"}}Congelada{{else if eq .ActiveEventType "hidetime"}}Tiempo oculto{{else}}{{.ActiveEventType}}{{end}}</span>
+    <span style="font-size:12px;color:var(--text-muted);margin-left:10px;">expira en {{.ActiveEventExpires}}</span>
+  </div>
+</div>
+{{end}}
+
 {{else}}
 <div class="lock-hero">
   <div class="lock-emoji">🔓</div>
@@ -563,16 +585,21 @@ var dashboardHTML = `{{define "content"}}
   </div>
 </div>
 
-<div class="stats-grid g4" style="margin-top:-8px;">
+<div class="stats-grid g5" style="margin-top:-8px;">
   <div class="stat-card">
     <div class="stat-lbl">Permisos concedidos</div>
     <div class="stat-val c-green">{{.OrgasmGranted}}</div>
+    <div class="stat-sub">{{.GrantRate}}% aprobación</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Edges</div>
+    <div class="stat-val c-yellow">{{.OrgasmEdged}}</div>
     <div class="stat-sub">de {{.OrgasmTotal}} solicitados</div>
   </div>
   <div class="stat-card">
     <div class="stat-lbl">Permisos negados</div>
     <div class="stat-val c-red">{{.OrgasmDenied}}</div>
-    <div class="stat-sub">{{.GrantRate}}% aprobación</div>
+    <div class="stat-sub">sin orgasmo</div>
   </div>
   <div class="stat-card">
     <div class="stat-lbl">Sin eyacular</div>
@@ -585,14 +612,17 @@ var dashboardHTML = `{{define "content"}}
     {{end}}
   </div>
   <div class="stat-card">
-    <div class="stat-lbl">Tiempo añadido</div>
+    <div class="stat-lbl">Tiempo neto</div>
+    {{if gt .TimeAdded .TimeRemoved}}
     <div class="stat-val c-red">+{{.TimeAdded}}h</div>
-    <div class="stat-sub">como castigo</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-lbl">Tiempo quitado</div>
+    <div class="stat-sub">añadido / −{{.TimeRemoved}}h quitado</div>
+    {{else if gt .TimeRemoved 0}}
     <div class="stat-val c-green">−{{.TimeRemoved}}h</div>
-    <div class="stat-sub">como recompensa</div>
+    <div class="stat-sub">+{{.TimeAdded}}h añadido</div>
+    {{else}}
+    <div class="stat-val c-muted">0h</div>
+    <div class="stat-sub">sin cambios de tiempo</div>
+    {{end}}
   </div>
 </div>
 
@@ -682,6 +712,12 @@ var dashboardHTML = `{{define "content"}}
         <div style="font-size:26px;font-weight:700;color:var(--success);font-family:'Playfair Display',serif;">{{.OrgasmGranted}}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">concedidos</div>
       </div>
+      {{if .OrgasmEdged}}
+      <div style="flex:1;text-align:center;padding:12px 8px;background:rgba(251,191,36,0.05);border-radius:8px;border:1px solid rgba(251,191,36,0.14);">
+        <div style="font-size:26px;font-weight:700;color:var(--warning);font-family:'Playfair Display',serif;">{{.OrgasmEdged}}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">edges</div>
+      </div>
+      {{end}}
       <div style="flex:1;text-align:center;padding:12px 8px;background:rgba(248,113,113,0.05);border-radius:8px;border:1px solid rgba(248,113,113,0.14);">
         <div style="font-size:26px;font-weight:700;color:var(--danger);font-family:'Playfair Display',serif;">{{.OrgasmDenied}}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">negados</div>
@@ -1050,7 +1086,7 @@ var orgasmsHTML = `{{define "content"}}
   <p class="page-sub">Cada vez que pediste permiso a Papi</p>
 </div>
 
-<div class="stats-grid g3" style="margin-bottom:22px;">
+<div class="stats-grid g4" style="margin-bottom:22px;">
   <div class="stat-card">
     <div class="stat-lbl">Total solicitados</div>
     <div class="stat-val c-pink">{{.Total}}</div>
@@ -1059,6 +1095,11 @@ var orgasmsHTML = `{{define "content"}}
     <div class="stat-lbl">Concedidos</div>
     <div class="stat-val c-green">{{.Granted}}</div>
     <div class="stat-sub">{{.GrantPct}}% aprobación</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Edges</div>
+    <div class="stat-val c-yellow">{{.Edged}}</div>
+    <div class="stat-sub">{{if .Total}}{{percent .Edged .Total}}% del total{{end}}</div>
   </div>
   <div class="stat-card">
     <div class="stat-lbl">Negados</div>
@@ -1082,12 +1123,12 @@ var orgasmsHTML = `{{define "content"}}
 {{if .Entries}}
 <div class="timeline">
   {{range .Entries}}
-  <div class="tl-item {{if .Granted}}tl-granted{{else}}tl-denied{{end}}">
-    <div class="tl-icon">{{if .Granted}}✅{{else}}❌{{end}}</div>
+  <div class="tl-item {{if eq .Outcome "granted"}}tl-granted{{else if eq .Outcome "edge"}}{{else}}tl-denied{{end}}" {{if eq .Outcome "edge"}}style="border-color:rgba(251,191,36,0.2);background:rgba(251,191,36,0.03);"{{end}}>
+    <div class="tl-icon">{{if eq .Outcome "granted"}}✅{{else if eq .Outcome "edge"}}🔥{{else}}❌{{end}}</div>
     <div class="tl-body">
       <div class="tl-hd">
-        <span class="tl-title">{{if .Granted}}Concedido{{else}}Negado{{end}}</span>
-        {{if .Granted}}<span class="badge badge-success">sí</span>{{else}}<span class="badge badge-danger">no</span>{{end}}
+        <span class="tl-title">{{if eq .Outcome "granted"}}Concedido{{else if eq .Outcome "edge"}}Edge{{else}}Negado{{end}}</span>
+        {{if eq .Outcome "granted"}}<span class="badge badge-success">sí</span>{{else if eq .Outcome "edge"}}<span class="badge badge-warning">edge</span>{{else}}<span class="badge badge-danger">no</span>{{end}}
         <span class="tl-date">{{formatDateTime .CreatedAt}}</span>
       </div>
       {{if .UserMessage}}
@@ -1300,4 +1341,215 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
   });
 });
 </script>
+{{end}}`
+
+var galeriaHTML = `{{define "content"}}
+<div class="page-hd">
+  <h1 class="page-title">Galería</h1>
+  <p class="page-sub">{{.Total}} fotos en total</p>
+</div>
+
+<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px;">
+  <button class="gal-btn active" data-cat="all">Todas ({{.Total}})</button>
+  <button class="gal-btn" data-cat="task">📋 Tareas</button>
+  <button class="gal-btn" data-cat="outfit">👗 Outfits</button>
+  <button class="gal-btn" data-cat="toy">🎀 Juguetes</button>
+  <button class="gal-btn" data-cat="clothing">🩲 Ropa</button>
+  <button class="gal-btn" data-cat="chatask">🌐 Comunidad</button>
+</div>
+
+<style>
+.gal-btn { background:var(--card); border:1px solid var(--border); color:var(--text-muted); padding:5px 14px; border-radius:20px; cursor:pointer; font-size:12px; font-family:'Inter',sans-serif; transition:all .15s; }
+.gal-btn:hover { border-color:var(--pink); color:var(--pink); }
+.gal-btn.active { background:rgba(232,119,154,.15); border-color:var(--pink); color:var(--pink); }
+.gal-grid { columns: 4 160px; column-gap: 12px; }
+.gal-item { break-inside: avoid; margin-bottom: 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); cursor: zoom-in; position: relative; transition: border-color .15s; background: var(--card); }
+.gal-item:hover { border-color: var(--pink); }
+.gal-item.hidden { display: none; }
+.gal-img { width: 100%; display: block; object-fit: cover; }
+.gal-overlay { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,.75)); padding: 24px 10px 10px; opacity: 0; transition: opacity .2s; }
+.gal-item:hover .gal-overlay { opacity: 1; }
+.gal-cap { font-size: 11px; color: #fff; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gal-date { font-size: 10px; color: rgba(255,255,255,.6); margin-top: 3px; }
+.gal-cat-badge { position: absolute; top: 8px; right: 8px; font-size: 14px; }
+#lb2-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.9); z-index:1000; align-items:center; justify-content:center; cursor:zoom-out; flex-direction:column; gap:12px; }
+#lb2-overlay.open { display:flex; }
+#lb2-overlay img { max-width:92vw; max-height:82vh; border-radius:8px; object-fit:contain; }
+#lb2-cap { color: rgba(255,255,255,.8); font-size: 13px; max-width: 500px; text-align:center; }
+</style>
+
+{{if .Photos}}
+<div class="gal-grid" id="gal-grid">
+  {{range .Photos}}
+  <div class="gal-item" data-cat="{{.Category}}" onclick="openLB(this.querySelector('img').src, '{{truncate .Caption 80}}', '{{formatDate .Date}}')">
+    <img class="gal-img" src="{{safeURL .URL}}" alt="{{.Caption}}" loading="lazy">
+    <div class="gal-cat-badge">{{if eq .Category "task"}}📋{{else if eq .Category "outfit"}}👗{{else if eq .Category "toy"}}🎀{{else if eq .Category "clothing"}}🩲{{else}}🌐{{end}}</div>
+    <div class="gal-overlay">
+      <div class="gal-cap">{{truncate .Caption 60}}</div>
+      <div class="gal-date">{{formatDate .Date}}</div>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{else}}
+<div class="card">
+  <div class="empty">
+    <div class="empty-icon">🖼️</div>
+    <div class="empty-text">Aún no hay fotos registradas</div>
+  </div>
+</div>
+{{end}}
+
+<div id="lb2-overlay" onclick="closeLB()">
+  <img id="lb2-img" src="" alt="">
+  <div id="lb2-cap"></div>
+</div>
+
+<script>
+function openLB(src, cap, date) {
+  document.getElementById('lb2-img').src = src;
+  document.getElementById('lb2-cap').textContent = cap + (date ? ' · ' + date : '');
+  document.getElementById('lb2-overlay').classList.add('open');
+}
+function closeLB() { document.getElementById('lb2-overlay').classList.remove('open'); }
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeLB(); });
+
+document.querySelectorAll('.gal-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.gal-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const cat = btn.dataset.cat;
+    document.querySelectorAll('.gal-item').forEach(item => {
+      item.classList.toggle('hidden', cat !== 'all' && item.dataset.cat !== cat);
+    });
+  });
+});
+</script>
+{{end}}`
+
+var contratoHTML = `{{define "content"}}
+<div class="page-hd">
+  <h1 class="page-title">Contrato</h1>
+  <p class="page-sub">Las reglas que Papi impuso para esta sesión</p>
+</div>
+
+{{if .HasContract}}
+<div class="card" style="border-color: rgba(232,119,154,0.4); max-width: 720px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:8px;">
+    <span style="font-family:'Playfair Display',serif; font-size:18px; color:var(--pink);">📜 Contrato activo</span>
+    <span style="font-size:12px; color:var(--text-muted);">{{formatDateTime .Contract.CreatedAt}}</span>
+  </div>
+  <div style="white-space: pre-wrap; line-height: 1.8; color: var(--text); font-size: 14px; font-style: italic; border-left: 2px solid rgba(232,119,154,0.4); padding-left: 18px;">{{.Contract.Text}}</div>
+</div>
+{{else}}
+<div class="card">
+  <div class="empty">
+    <div class="empty-icon">📜</div>
+    <div class="empty-text">No hay contrato activo</div>
+    <div style="font-size:12px; color:var(--text-muted); margin-top:8px;">Se genera automáticamente al iniciar una nueva sesión</div>
+  </div>
+</div>
+{{end}}
+{{end}}`
+
+var checkinsHTML = `{{define "content"}}
+<div class="page-hd">
+  <h1 class="page-title">Check-ins</h1>
+  <p class="page-sub">Historial de verificaciones espontáneas de Papi</p>
+</div>
+
+<div class="stats-grid g4" style="margin-bottom:22px;">
+  <div class="stat-card">
+    <div class="stat-lbl">Total solicitados</div>
+    <div class="stat-val c-pink">{{.Total}}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Aprobados</div>
+    <div class="stat-val c-green">{{.Approved}}</div>
+    <div class="stat-sub">{{.ResponseRate}}% respuesta</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Fallidos</div>
+    <div class="stat-val c-red">{{.Missed}}</div>
+    <div class="stat-sub">ignorados o rechazados</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Tiempo medio</div>
+    <div class="stat-val c-purple">{{.AvgResponse}}<span style="font-size:16px;">min</span></div>
+    <div class="stat-sub">respuesta promedio</div>
+  </div>
+</div>
+
+{{if .Total}}
+<div style="margin-bottom:22px;">
+  <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:6px;">
+    <span>Tasa de respuesta</span>
+    <span>{{.ResponseRate}}%</span>
+  </div>
+  <div class="prog-bar" style="height:8px;">
+    <div class="prog-fill prog-green" style="{{pctStyle .Approved .Total}}"></div>
+  </div>
+</div>
+{{end}}
+
+<style>
+#lb3-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.9); z-index:1000; align-items:center; justify-content:center; cursor:zoom-out; }
+#lb3-overlay.open { display:flex; }
+#lb3-overlay img { max-width:90vw; max-height:90vh; border-radius:8px; }
+</style>
+
+{{if .Entries}}
+<div style="display:flex; flex-direction:column; gap:10px;">
+  {{range .Entries}}
+  <div class="card" style="padding:16px; display:flex; gap:16px; align-items:flex-start;">
+
+    <div style="font-size:22px; flex-shrink:0; margin-top:2px;">
+      {{if or (eq .Status "submitted") (eq .Status "approved")}}✅
+      {{else if eq .Status "missed"}}⏰
+      {{else if eq .Status "rejected"}}❌
+      {{else}}⏳{{end}}
+    </div>
+
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+        <span style="font-weight:600; font-size:13px;">
+          {{if or (eq .Status "submitted") (eq .Status "approved")}}Enviado
+          {{else if eq .Status "missed"}}No respondido
+          {{else if eq .Status "rejected"}}Rechazado
+          {{else}}Pendiente{{end}}
+        </span>
+        {{if or (eq .Status "submitted") (eq .Status "approved")}}<span class="badge badge-success">✓</span>
+        {{else if eq .Status "missed"}}<span class="badge badge-warning">timeout</span>
+        {{else if eq .Status "rejected"}}<span class="badge badge-danger">rechazado</span>
+        {{else}}<span class="badge badge-muted">esperando</span>{{end}}
+        <span style="font-size:11px; color:var(--text-muted); margin-left:auto;">{{formatDateTime .RequestedAt}}</span>
+      </div>
+      <div style="display:flex; gap:16px; font-size:12px; color:var(--text-muted); flex-wrap:wrap;">
+        {{if .RespondedAt}}<span>Respondido: {{formatDateTimePtr .RespondedAt}}</span>{{end}}
+        {{if and (or (eq .Status "submitted") (eq .Status "approved")) .ResponseTimeMins}}<span>⏱ {{.ResponseTimeMins}} min de respuesta</span>{{end}}
+      </div>
+    </div>
+
+    {{if .PhotoURL}}
+    <img src="{{safeURL .PhotoURL}}" alt="Check-in"
+      style="width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--border); cursor:zoom-in; flex-shrink:0;"
+      onclick="document.getElementById('lb3-img').src=this.src; document.getElementById('lb3-overlay').classList.add('open')">
+    {{end}}
+
+  </div>
+  {{end}}
+</div>
+{{else}}
+<div class="card">
+  <div class="empty">
+    <div class="empty-icon">📸</div>
+    <div class="empty-text">Aún no hay check-ins registrados</div>
+    <div style="font-size:12px; color:var(--text-muted); margin-top:8px;">Papi los enviará aleatoriamente durante el día</div>
+  </div>
+</div>
+{{end}}
+
+<div id="lb3-overlay" onclick="this.classList.remove('open')">
+  <img id="lb3-img" src="" alt="Check-in">
+</div>
 {{end}}`

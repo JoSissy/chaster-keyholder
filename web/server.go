@@ -42,6 +42,9 @@ func New(db *storage.DB, statePath, botUsername, password string) http.Handler {
 	mux.HandleFunc("/toys", s.auth(s.handleToys))
 	mux.HandleFunc("/wardrobe", s.auth(s.handleWardrobe))
 	mux.HandleFunc("/chatasks", s.auth(s.handleChatasks))
+	mux.HandleFunc("/galeria", s.auth(s.handleGaleria))
+	mux.HandleFunc("/contrato", s.auth(s.handleContrato))
+	mux.HandleFunc("/checkins", s.auth(s.handleCheckins))
 	return mux
 }
 

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,6 +27,7 @@ type dashData struct {
 	pageBase
 	IsLocked        bool
 	DaysLocked      int
+	Intensity       string // suave/moderada/intensa/máxima
 	Streak          int
 	ObedienceName   string
 	ObedienceLevel  int
@@ -40,11 +42,16 @@ type dashData struct {
 	CurrentTaskDesc string
 	CurrentTaskDue  time.Time
 	RecentTasks     []*storage.Task
-	OrgasmTotal        int
-	OrgasmGranted      int
-	OrgasmDenied       int
-	GrantRate          int
-	DaysSinceOrgasm    int // -1 = nunca
+	OrgasmTotal     int
+	OrgasmGranted   int
+	OrgasmEdged     int
+	OrgasmDenied    int
+	GrantRate       int
+	DaysSinceOrgasm int // -1 = nunca
+	// Active event (freeze / hidetime)
+	HasActiveEvent      bool
+	ActiveEventType     string
+	ActiveEventExpires  string // human-readable
 	// Lock timing
 	HasEndDate    bool
 	LockEndISO    string     // for JS countdown
@@ -76,7 +83,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		completionRate = st.TasksCompleted * 100 / taskTotal
 	}
 
-	total, granted, _, denied, _ := s.db.GetOrgasmStats()
+	total, granted, edged, denied, _ := s.db.GetOrgasmStats()
 	grantRate := 0
 	if total > 0 {
 		grantRate = granted * 100 / total
@@ -107,31 +114,56 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Active event
+	hasActiveEvent := st.ActiveEvent != nil
+	activeEventType := ""
+	activeEventExpires := ""
+	if hasActiveEvent {
+		activeEventType = st.ActiveEvent.Type
+		rem := time.Until(st.ActiveEvent.ExpiresAt)
+		if rem > 0 {
+			h := int(rem.Hours())
+			m := int(rem.Minutes()) % 60
+			if h > 0 {
+				activeEventExpires = fmt.Sprintf("%dh %dm", h, m)
+			} else {
+				activeEventExpires = fmt.Sprintf("%dm", m)
+			}
+		} else {
+			hasActiveEvent = false
+		}
+	}
+
 	d := dashData{
-		pageBase:        s.base("dashboard"),
-		IsLocked:        isLocked,
-		DaysLocked:      st.DaysLocked,
-		Streak:          st.TasksStreak,
-		ObedienceName:   models.ObedienceTitle(st.TasksStreak),
-		ObedienceLevel:  obLevel,
-		TasksCompleted:  st.TasksCompleted,
-		TasksFailed:     st.TasksFailed,
-		CompletionRate:  completionRate,
-		WeeklyDebt:      st.WeeklyDebt,
-		TimeAdded:       st.TotalTimeAddedHours,
-		TimeRemoved:     st.TotalTimeRemovedHours,
-		PendingCheckin:  st.PendingCheckin,
-		OrgasmTotal:     total,
-		OrgasmGranted:   granted,
-		OrgasmDenied:    denied,
-		GrantRate:       grantRate,
-		DaysSinceOrgasm: s.db.GetDaysSinceLastOrgasm(),
-		HasEndDate:      hasEndDate,
-		LockEndISO:      lockEndISO,
-		LockStartISO:    lockStartISO,
-		LockStartDate:   st.LockStartDate,
-		LockEndDate:     st.LockEndDate,
-		ProgressPct:     progressPct,
+		pageBase:           s.base("dashboard"),
+		IsLocked:           isLocked,
+		DaysLocked:         st.DaysLocked,
+		Intensity:          models.GetIntensity(st.DaysLocked).String(),
+		Streak:             st.TasksStreak,
+		ObedienceName:      models.ObedienceTitle(st.TasksStreak),
+		ObedienceLevel:     obLevel,
+		TasksCompleted:     st.TasksCompleted,
+		TasksFailed:        st.TasksFailed,
+		CompletionRate:     completionRate,
+		WeeklyDebt:         st.WeeklyDebt,
+		TimeAdded:          st.TotalTimeAddedHours,
+		TimeRemoved:        st.TotalTimeRemovedHours,
+		PendingCheckin:     st.PendingCheckin,
+		OrgasmTotal:        total,
+		OrgasmGranted:      granted,
+		OrgasmEdged:        edged,
+		OrgasmDenied:       denied,
+		GrantRate:          grantRate,
+		DaysSinceOrgasm:    s.db.GetDaysSinceLastOrgasm(),
+		HasActiveEvent:     hasActiveEvent,
+		ActiveEventType:    activeEventType,
+		ActiveEventExpires: activeEventExpires,
+		HasEndDate:         hasEndDate,
+		LockEndISO:         lockEndISO,
+		LockStartISO:       lockStartISO,
+		LockStartDate:      st.LockStartDate,
+		LockEndDate:        st.LockEndDate,
+		ProgressPct:        progressPct,
 	}
 	if st.CurrentTask != nil {
 		d.HasCurrentTask = true
@@ -494,4 +526,69 @@ func (s *Server) handleWardrobe(w http.ResponseWriter, r *http.Request) {
 		d.OutfitConfirmed = st.OutfitConfirmed
 	}
 	s.render(w, wardrobeHTML, d)
+}
+
+// ── Gallery ───────────────────────────────────────────────────────────────
+
+type galeriaData struct {
+	pageBase
+	Photos []*storage.GalleryPhoto
+	Total  int
+}
+
+func (s *Server) handleGaleria(w http.ResponseWriter, r *http.Request) {
+	photos, _ := s.db.GetGalleryPhotos()
+	s.render(w, galeriaHTML, galeriaData{
+		pageBase: s.base("galeria"),
+		Photos:   photos,
+		Total:    len(photos),
+	})
+}
+
+// ── Checkins ──────────────────────────────────────────────────────────────
+
+type checkinsData struct {
+	pageBase
+	Entries      []*storage.CheckinEntry
+	Total        int
+	Approved     int
+	Missed       int
+	AvgResponse  int
+	ResponseRate int
+}
+
+func (s *Server) handleCheckins(w http.ResponseWriter, r *http.Request) {
+	entries, _ := s.db.GetCheckinHistory(100)
+	total, approved, missed, avgResponse, _ := s.db.GetCheckinStats()
+	responseRate := 0
+	if total > 0 {
+		responseRate = approved * 100 / total
+	}
+	s.render(w, checkinsHTML, checkinsData{
+		pageBase:     s.base("checkins"),
+		Entries:      entries,
+		Total:        total,
+		Approved:     approved,
+		Missed:       missed,
+		AvgResponse:  avgResponse,
+		ResponseRate: responseRate,
+	})
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────
+
+type contratoData struct {
+	pageBase
+	HasContract bool
+	Contract    *storage.Contract
+}
+
+func (s *Server) handleContrato(w http.ResponseWriter, r *http.Request) {
+	c, err := s.db.GetLatestContract()
+	d := contratoData{pageBase: s.base("contrato")}
+	if err == nil && c != nil {
+		d.HasContract = true
+		d.Contract = c
+	}
+	s.render(w, contratoHTML, d)
 }
