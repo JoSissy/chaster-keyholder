@@ -190,6 +190,22 @@ type AppState struct {
 	ChasterTaskDBID       string     `json:"chaster_task_db_id,omitempty"`
 }
 
+// ChatMessage un mensaje de la historia de conversación con Papi
+type ChatMessage struct {
+	Role    string // "user" | "assistant"
+	Content string
+}
+
+// ContractRule una regla del contrato activo verificable por chat
+type ContractRule struct {
+	ID         string
+	LockID     string
+	RuleText   string
+	Punishment string // "add_time" | "pillory" | "freeze"
+	Hours      int
+	Minutes    int
+}
+
 // GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual
 func GetObedienceLevel(tasksStreak int) int {
 	switch {

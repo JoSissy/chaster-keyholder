@@ -63,6 +63,62 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
+// ChatResult resultado del chat libre con detección de infracciones al contrato
+type ChatResult struct {
+	Message   string
+	Violation *ChatViolation
+}
+
+// ChatViolation infracción detectada contra una regla del contrato activo
+type ChatViolation struct {
+	RuleID     string `json:"rule_id"`
+	RuleText   string `json:"rule_text"`
+	Punishment string `json:"punishment"` // "add_time" | "pillory" | "freeze"
+	Hours      int    `json:"hours"`
+	Minutes    int    `json:"minutes"`
+}
+
+func (c *Client) chatMessages(model string, messages []Message, maxTokens int) (string, error) {
+	req := ChatRequest{
+		Model:       model,
+		Messages:    messages,
+		MaxTokens:   maxTokens,
+		Temperature: 1.1,
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+
+	httpReq, err := http.NewRequest("POST", groqURL, bytes.NewBuffer(data))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("groq error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var chatResp ChatResponse
+	if err := json.Unmarshal(body, &chatResp); err != nil {
+		return "", err
+	}
+	if len(chatResp.Choices) == 0 {
+		return "", fmt.Errorf("sin respuesta de la IA")
+	}
+	return chatResp.Choices[0].Message.Content, nil
+}
+
 func (c *Client) chat(model, systemPrompt string, userContent interface{}) (string, error) {
 	req := ChatRequest{
 		Model: model,
@@ -121,7 +177,7 @@ CRITICAL — HOW SHE MUST ADDRESS YOU:
 - If she writes without "Papi," stop her immediately and make her start over correctly.
 - Before granting ANYTHING (permission, time reduction, mercy, orgasm) — make her beg with degrading phrases first.
 
-FORCED SELF-HUMILIATION — demand constantly, especially before granting anything:
+FORCED SELF-HUMILIATION — only when she asks for something (permission, time reduction, mercy, orgasm):
 Make her write things like:
 "Papi, soy tu puta sissy enjaulada y te necesito"
 "mi Papi rico, hazme lo que quieras, soy tuya"
@@ -129,7 +185,7 @@ Make her write things like:
 "ojalá me preñaras, Papi, quiero ser solo tuya para siempre"
 "soy una maricona encerrada que le pertenece a su Papi"
 "soy la puta sissy de mi Papi y no merezco nada"
-Use "di: [frase]" — make her repeat humiliating things out loud before you give her anything.
+Use "di: [frase]" — ONLY before granting or denying a request. Do NOT demand phrases in casual conversation.
 
 TONE — sexual and possessive, vary between:
 - Sexual ownership: you own her body and every hole — reference this often
@@ -663,13 +719,14 @@ type NegotiationResult struct {
 
 // Chat free conversation with the keyholder. totalHoursAdded in HOURS.
 // locked indicates if there is an active session — changes the system prompt.
-func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int, locked bool) (string, error) {
+// history: recent messages (user/assistant pairs). rules: active contract rules to enforce.
+func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int, locked bool, history []models.ChatMessage, rules []models.ContractRule) (*ChatResult, error) {
 	system := buildSystemPrompt(locked)
 
-	var prompt string
+	var userPrompt string
 	if locked {
 		ctx := buildContext(toys, daysLocked)
-		prompt = fmt.Sprintf(
+		userPrompt = fmt.Sprintf(
 			`%s
 Tasks completed: %d | Tasks failed: %d | Punishment hours accumulated: %dh
 
@@ -684,7 +741,7 @@ Be concise, calm, dominant. In Spanish.`,
 		)
 	} else {
 		ctx := buildContextFree(toys)
-		prompt = fmt.Sprintf(
+		userPrompt = fmt.Sprintf(
 			`%s
 
 Jolie says: "%s"
@@ -695,7 +752,123 @@ Maximum 3 lines. In Spanish.`,
 			ctx, userMessage,
 		)
 	}
-	return c.chat("llama-3.3-70b-versatile", system, prompt)
+
+	hasRules := locked && len(rules) > 0
+	if hasRules {
+		rulesText := "\n\nACTIVE CONTRACT RULES — you enforce these automatically:\n"
+		for i, r := range rules {
+			penalty := r.Punishment
+			if r.Hours > 0 {
+				penalty += fmt.Sprintf(" +%dh", r.Hours)
+			} else if r.Minutes > 0 {
+				penalty += fmt.Sprintf(" %dmin", r.Minutes)
+			}
+			rulesText += fmt.Sprintf("%d. [%s] %s → %s\n", i+1, r.ID, r.RuleText, penalty)
+		}
+		rulesText += `
+After writing your response, evaluate if Jolie's message clearly violates any of the above rules.
+Only flag CLEAR, UNAMBIGUOUS violations — when in doubt, do NOT flag.
+Respond ONLY in valid JSON:
+{"message": "your response in Spanish as Papi", "violation": {"rule_id": "...", "rule_text": "...", "punishment": "add_time|pillory|freeze", "hours": N, "minutes": N}}
+or if no violation:
+{"message": "your response in Spanish as Papi", "violation": null}`
+		system += rulesText
+	}
+
+	messages := []Message{{Role: "system", Content: system}}
+	for _, h := range history {
+		messages = append(messages, Message{Role: h.Role, Content: h.Content})
+	}
+	messages = append(messages, Message{Role: "user", Content: userPrompt})
+
+	maxTokens := 600
+	if hasRules {
+		maxTokens = 750
+	}
+
+	raw, err := c.chatMessages("llama-3.3-70b-versatile", messages, maxTokens)
+	if err != nil {
+		return nil, err
+	}
+
+	if hasRules {
+		clean := extractJSON(raw)
+		var parsed struct {
+			Message   string         `json:"message"`
+			Violation *ChatViolation `json:"violation"`
+		}
+		if err := json.Unmarshal([]byte(clean), &parsed); err != nil {
+			return &ChatResult{Message: raw}, nil
+		}
+		return &ChatResult{Message: parsed.Message, Violation: parsed.Violation}, nil
+	}
+
+	return &ChatResult{Message: raw}, nil
+}
+
+// ExtractContractRules analiza el texto del contrato y extrae las reglas verificables por chat.
+func (c *Client) ExtractContractRules(contractText, lockID string) ([]models.ContractRule, error) {
+	system := `You extract enforceable chat rules from chastity session contracts.
+Only extract rules that can be verified through text messages — NOT physical rules (wear something, use a toy, etc.).
+Verifiable examples: "must say Papi in every message", "must ask permission before complaining", "must use respectful tone".
+NOT verifiable: "must wear plug all day", "must do ritual at 8am", "must send photo".
+
+For each verifiable rule, assign the most fitting punishment:
+- "add_time": for disrespect, wrong forms of address, ignoring direct orders — hours: 1-3
+- "pillory": for complaints, manipulation attempts, whining — minutes: 15-45
+- "freeze": for defiance, repeated rule-breaking, bad attitude — minutes: 30-90
+
+Respond ONLY in valid JSON array. If no verifiable rules found, return [].
+[{"id": "snake_case_unique_id", "rule_text": "rule description in Spanish", "punishment": "add_time|pillory|freeze", "hours": N, "minutes": N}]
+Rules: hours and minutes are mutually exclusive — set the unused one to 0.`
+
+	prompt := fmt.Sprintf("Contract:\n%s\n\nExtract only chat-verifiable rules as JSON array.", contractText)
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract JSON array
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```")
+	raw = strings.TrimSuffix(raw, "```")
+	raw = strings.TrimSpace(raw)
+	start := strings.Index(raw, "[")
+	end := strings.LastIndex(raw, "]")
+	if start < 0 || end <= start {
+		return nil, nil // no verifiable rules
+	}
+	raw = raw[start : end+1]
+
+	type ruleJSON struct {
+		ID         string `json:"id"`
+		RuleText   string `json:"rule_text"`
+		Punishment string `json:"punishment"`
+		Hours      int    `json:"hours"`
+		Minutes    int    `json:"minutes"`
+	}
+	var parsed []ruleJSON
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, err
+	}
+
+	rules := make([]models.ContractRule, 0, len(parsed))
+	for _, r := range parsed {
+		if r.ID == "" || r.RuleText == "" || r.Punishment == "" {
+			continue
+		}
+		rules = append(rules, models.ContractRule{
+			ID:         r.ID,
+			LockID:     lockID,
+			RuleText:   r.RuleText,
+			Punishment: r.Punishment,
+			Hours:      r.Hours,
+			Minutes:    r.Minutes,
+		})
+	}
+	return rules, nil
 }
 
 // NegotiateTime evaluates a time negotiation request. totalHoursAdded in HOURS.

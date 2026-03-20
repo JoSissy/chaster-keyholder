@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"chaster-keyholder/models"
 	_ "modernc.org/sqlite"
 )
 
@@ -163,6 +164,33 @@ func (db *DB) migrate() error {
 		photo_url        TEXT DEFAULT '',
 		status           TEXT DEFAULT 'pending',
 		response_time_mins INTEGER DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS chat_history (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		role       TEXT NOT NULL,
+		content    TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS contract_rules (
+		id         TEXT PRIMARY KEY,
+		lock_id    TEXT DEFAULT '',
+		rule_text  TEXT NOT NULL,
+		punishment TEXT NOT NULL,
+		hours      INTEGER DEFAULT 0,
+		minutes    INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS violations_log (
+		id         TEXT PRIMARY KEY,
+		rule_id    TEXT NOT NULL,
+		rule_text  TEXT NOT NULL,
+		punishment TEXT NOT NULL,
+		hours      INTEGER DEFAULT 0,
+		minutes    INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	`)
@@ -1013,5 +1041,107 @@ func (db *DB) GetStats() (*Stats, error) {
 	db.conn.QueryRow(`SELECT COALESCE(SUM(time_removed_hours),0) FROM locks`).Scan(&s.TotalTimeRemovedHours)
 
 	return s, nil
+}
+
+// ── Chat History ───────────────────────────────────────────────────────────
+
+func (db *DB) SaveChatMessage(role, content string) error {
+	_, err := db.conn.Exec(`INSERT INTO chat_history (role, content, created_at) VALUES (?, ?, ?)`, role, content, time.Now())
+	return err
+}
+
+// GetRecentChatHistory devuelve los últimos n pares de mensajes.
+// Si el último mensaje tiene más de maxIdleMinutes de antigüedad, limpia y devuelve nil (nueva conversación).
+func (db *DB) GetRecentChatHistory(n int, maxIdleMinutes int) ([]models.ChatMessage, error) {
+	var lastCreated time.Time
+	err := db.conn.QueryRow(`SELECT created_at FROM chat_history ORDER BY id DESC LIMIT 1`).Scan(&lastCreated)
+	if err != nil {
+		return nil, nil // sin historial
+	}
+	if time.Since(lastCreated) > time.Duration(maxIdleMinutes)*time.Minute {
+		db.conn.Exec(`DELETE FROM chat_history`)
+		return nil, nil // expirado, nueva conversación
+	}
+
+	rows, err := db.conn.Query(`
+		SELECT role, content FROM (
+			SELECT id, role, content FROM chat_history ORDER BY id DESC LIMIT ?
+		) ORDER BY id ASC`, n*2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []models.ChatMessage
+	for rows.Next() {
+		var m models.ChatMessage
+		if err := rows.Scan(&m.Role, &m.Content); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, nil
+}
+
+func (db *DB) ClearChatHistory() error {
+	_, err := db.conn.Exec(`DELETE FROM chat_history`)
+	return err
+}
+
+// ── Contract Rules ─────────────────────────────────────────────────────────
+
+func (db *DB) SaveContractRules(rules []models.ContractRule) error {
+	db.conn.Exec(`DELETE FROM contract_rules`)
+	for _, r := range rules {
+		db.conn.Exec(
+			`INSERT INTO contract_rules (id, lock_id, rule_text, punishment, hours, minutes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			r.ID, r.LockID, r.RuleText, r.Punishment, r.Hours, r.Minutes, time.Now(),
+		)
+	}
+	return nil
+}
+
+func (db *DB) GetActiveContractRules() ([]models.ContractRule, error) {
+	rows, err := db.conn.Query(`SELECT id, lock_id, rule_text, punishment, hours, minutes FROM contract_rules ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []models.ContractRule
+	for rows.Next() {
+		var r models.ContractRule
+		if err := rows.Scan(&r.ID, &r.LockID, &r.RuleText, &r.Punishment, &r.Hours, &r.Minutes); err != nil {
+			return nil, err
+		}
+		rules = append(rules, r)
+	}
+	return rules, nil
+}
+
+func (db *DB) ClearContractRules() error {
+	_, err := db.conn.Exec(`DELETE FROM contract_rules`)
+	return err
+}
+
+// ── Violations Log ─────────────────────────────────────────────────────────
+
+func (db *DB) LogViolation(ruleID, ruleText, punishment string, hours, minutes int) error {
+	id := fmt.Sprintf("violation-%d", time.Now().UnixNano())
+	_, err := db.conn.Exec(
+		`INSERT INTO violations_log (id, rule_id, rule_text, punishment, hours, minutes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, ruleID, ruleText, punishment, hours, minutes, time.Now(),
+	)
+	return err
+}
+
+// CountRecentViolations devuelve cuántas veces se violó una regla en las últimas N horas.
+func (db *DB) CountRecentViolations(ruleID string, hoursBack int) int {
+	var count int
+	db.conn.QueryRow(
+		`SELECT COUNT(*) FROM violations_log WHERE rule_id=? AND created_at > datetime('now', ?)`,
+		ruleID, fmt.Sprintf("-%d hours", hoursBack),
+	).Scan(&count)
+	return count
 }
 

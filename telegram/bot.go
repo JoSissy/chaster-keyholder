@@ -966,7 +966,17 @@ func (b *Bot) HandleChat(text string) {
 
 	_, lockErr := b.chaster.GetActiveLock()
 	locked := lockErr == nil
-	response, err := b.ai.Chat(
+
+	var history []models.ChatMessage
+	var rules []models.ContractRule
+	if b.db != nil {
+		history, _ = b.db.GetRecentChatHistory(6, 120)
+		if locked {
+			rules, _ = b.db.GetActiveContractRules()
+		}
+	}
+
+	result, err := b.ai.Chat(
 		text,
 		b.state.Toys,
 		b.daysLocked(),
@@ -974,12 +984,95 @@ func (b *Bot) HandleChat(text string) {
 		b.state.TasksFailed,
 		b.state.TotalTimeAddedHours,
 		locked,
+		history,
+		rules,
 	)
 	if err != nil {
 		b.Send("_..._")
 		return
 	}
-	b.Send(stripMarkdown(response))
+
+	if b.db != nil {
+		b.db.SaveChatMessage("user", text)
+		b.db.SaveChatMessage("assistant", result.Message)
+	}
+
+	b.Send(stripMarkdown(result.Message))
+
+	if result.Violation != nil {
+		b.handleContractViolation(result.Violation)
+	}
+}
+
+// handleContractViolation ejecuta el castigo cuando la IA detecta una infracción al contrato.
+func (b *Bot) handleContractViolation(v *ai.ChatViolation) {
+	if b.db == nil {
+		return
+	}
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		return
+	}
+
+	hours := v.Hours
+	minutes := v.Minutes
+
+	// Reincidencia en las últimas 24h → doble castigo
+	prev := b.db.CountRecentViolations(v.RuleID, 24)
+	if prev > 0 {
+		hours *= 2
+		minutes *= 2
+	}
+
+	b.db.LogViolation(v.RuleID, v.RuleText, v.Punishment, hours, minutes)
+
+	reincidencia := prev > 0
+	suffix := ""
+	if reincidencia {
+		suffix = "\n_Doble castigo por reincidencia._"
+	}
+
+	switch v.Punishment {
+	case "add_time":
+		if hours <= 0 {
+			hours = 1
+		}
+		if err := b.chaster.AddTime(lock.ID, hours*3600); err != nil {
+			log.Printf("[ContractViolation] error add_time: %v", err)
+			return
+		}
+		b.state.TotalTimeAddedHours += hours
+		b.mustSaveState()
+		b.Send(fmt.Sprintf("⚠️ *INFRACCIÓN* — +%dh por: _%s_%s", hours, v.RuleText, suffix))
+
+	case "pillory":
+		if minutes <= 0 {
+			minutes = 15
+		}
+		reason := fmt.Sprintf("Contract violation: %s", v.RuleText)
+		engReason, rerr := b.ai.GeneratePilloryReason(b.daysLocked(), b.state.Toys, reason)
+		if rerr != nil || strings.TrimSpace(engReason) == "" {
+			engReason = "Contract violation"
+		}
+		if err := b.chaster.PutInPillory(lock.ID, minutes*60, strings.TrimSpace(engReason)); err != nil {
+			log.Printf("[ContractViolation] error pillory: %v", err)
+			return
+		}
+		b.Send(fmt.Sprintf("⛓ *INFRACCIÓN* — %dmin en el cepo por: _%s_%s", minutes, v.RuleText, suffix))
+
+	case "freeze":
+		if minutes <= 0 {
+			minutes = 30
+		}
+		if err := b.chaster.FreezeLock(lock.ID); err != nil {
+			log.Printf("[ContractViolation] error freeze: %v", err)
+			return
+		}
+		expiresAt := time.Now().Add(time.Duration(minutes) * time.Minute)
+		b.state.ActiveEvent = &models.ActiveEvent{Type: "freeze", ExpiresAt: expiresAt}
+		b.mustSaveState()
+		b.Send(fmt.Sprintf("❄️ *INFRACCIÓN* — %dmin congelada por: _%s_%s", minutes, v.RuleText, suffix))
+	}
 }
 
 // rollOrgasmOutcome decide el resultado usando la tabla de probabilidades.
@@ -1663,6 +1756,10 @@ func (b *Bot) Start() {
 			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
 		case text == "/contrato":
 			b.HandleContrato()
+		case text == "/quitar":
+			b.HandleRemoveTime("")
+		case strings.HasPrefix(text, "/quitar "):
+			b.HandleRemoveTime(strings.TrimPrefix(text, "/quitar "))
 		case text == "/dbwipe":
 			b.HandleDBWipe()
 		case text != "" && !strings.HasPrefix(text, "/"):
@@ -1950,6 +2047,18 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 				CreatedAt: time.Now(),
 			})
 			b.Send("📜 *CONTRATO DE SESIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(contractText))
+
+			// Extraer reglas verificables por chat
+			rules, rerr := b.ai.ExtractContractRules(contractText, lockID)
+			if rerr != nil {
+				log.Printf("[ExtractContractRules] error: %v", rerr)
+			} else if len(rules) > 0 {
+				if serr := b.db.SaveContractRules(rules); serr != nil {
+					log.Printf("[SaveContractRules] error: %v", serr)
+				} else {
+					log.Printf("[Contract] %d reglas activas extraídas del contrato", len(rules))
+				}
+			}
 		}()
 	}
 }
@@ -2009,6 +2118,8 @@ func (b *Bot) finishLock(lockID string) {
 	if b.db != nil {
 		b.db.ClearAllInUse()
 		b.reloadToysFromDB()
+		b.db.ClearContractRules()
+		b.db.ClearChatHistory()
 	}
 
 	b.state.CurrentLockID = ""
@@ -2645,7 +2756,7 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 	// Subir foto a Cloudinary para estadísticas
 	photoURL := ""
 	if b.cloudinary != nil {
-		if url, _, cerr := b.cloudinary.Upload(imgBytes, mime, "checkins"); cerr == nil {
+		if url, _, cerr := b.cloudinary.Upload(imgBytes, mime, "chaster/checkins"); cerr == nil {
 			photoURL = url
 		}
 	}
