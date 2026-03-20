@@ -82,6 +82,16 @@ func (db *DB) migrate() error {
 		added_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS outfit_log (
+		id           TEXT PRIMARY KEY,
+		date         TEXT NOT NULL,
+		outfit_desc  TEXT NOT NULL,
+		pose_desc    TEXT DEFAULT '',
+		photo_url    TEXT DEFAULT '',
+		comment      TEXT DEFAULT '',
+		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS events (
 		id              TEXT PRIMARY KEY,
 		lock_id         TEXT REFERENCES locks(id),
@@ -567,6 +577,47 @@ func (db *DB) GetClothingItems() ([]*ClothingItem, error) {
 func (db *DB) DeleteClothingItem(id string) error {
 	_, err := db.conn.Exec(`DELETE FROM clothing WHERE id = ?`, id)
 	return err
+}
+
+// ── Outfit log ─────────────────────────────────────────────────────────────
+
+type OutfitEntry struct {
+	ID         string
+	Date       string // "2006-01-02" COT
+	OutfitDesc string
+	PoseDesc   string
+	PhotoURL   string
+	Comment    string
+	CreatedAt  time.Time
+}
+
+func (db *DB) SaveOutfitEntry(e *OutfitEntry) error {
+	_, err := db.conn.Exec(
+		`INSERT OR REPLACE INTO outfit_log (id, date, outfit_desc, pose_desc, photo_url, comment, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Date, e.OutfitDesc, e.PoseDesc, e.PhotoURL, e.Comment, e.CreatedAt,
+	)
+	return err
+}
+
+func (db *DB) GetOutfitHistory(limit int) ([]*OutfitEntry, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, date, outfit_desc, pose_desc, photo_url, comment, created_at
+		 FROM outfit_log ORDER BY created_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*OutfitEntry
+	for rows.Next() {
+		e := &OutfitEntry{}
+		if err := rows.Scan(&e.ID, &e.Date, &e.OutfitDesc, &e.PoseDesc, &e.PhotoURL, &e.Comment, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
 }
 
 // ── Events ────────────────────────────────────────────────────────────────

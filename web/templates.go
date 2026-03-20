@@ -950,34 +950,75 @@ var wardrobeHTML = `{{define "content"}}
 </div>
 
 {{if .HasTodayOutfit}}
-<div class="card" style="border-color: var(--pink); margin-bottom: 24px;">
-  <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-    <div class="card-title" style="font-size:15px; margin:0;">👗 Outfit de hoy</div>
+<div class="card" style="border-color:var(--pink); margin-bottom:24px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+    <div class="card-title" style="font-size:16px; margin:0;">👗 Outfit de hoy</div>
     {{if .OutfitConfirmed}}
     <span class="badge badge-success">✅ confirmado</span>
     {{else}}
     <span class="badge badge-warning">⏳ esperando foto</span>
     {{end}}
   </div>
-  <p style="color: var(--text); line-height: 1.6; margin-bottom:8px;">{{.TodayOutfit}}</p>
-  {{if .TodayPose}}
-  <p style="color: var(--text-muted); font-size:13px; margin-bottom:8px;">
-    <span style="color:var(--pink);">🧍 Pose:</span> {{.TodayPose}}
-  </p>
-  {{end}}
-  {{if and .OutfitConfirmed .TodayComment}}
-  <div style="border-top: 1px solid var(--border); margin-top:12px; padding-top:12px;">
-    <p style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Comentario de Papi</p>
-    <p style="color:var(--purple); font-style:italic; line-height:1.6;">{{.TodayComment}}</p>
+  <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;">
+    {{if and .OutfitConfirmed .TodayPhotoURL}}
+    <img src="{{safeURL .TodayPhotoURL}}" alt="Outfit del día"
+      style="width:160px; height:220px; object-fit:cover; border-radius:10px; border:1px solid var(--border); flex-shrink:0;">
+    {{end}}
+    <div style="flex:1; min-width:200px;">
+      <p style="color:var(--text); line-height:1.6; margin-bottom:10px;">{{.TodayOutfit}}</p>
+      {{if .TodayPose}}
+      <p style="color:var(--text-muted); font-size:13px; margin-bottom:10px;">
+        <span style="color:var(--pink);">🧍 Pose:</span> {{.TodayPose}}
+      </p>
+      {{end}}
+      {{if and .OutfitConfirmed .TodayComment}}
+      <div style="border-top:1px solid var(--border); padding-top:10px;">
+        <p style="font-size:11px; color:var(--text-muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:.05em;">Comentario de Papi</p>
+        <p style="color:var(--purple); font-style:italic; line-height:1.6;">{{.TodayComment}}</p>
+      </div>
+      {{end}}
+    </div>
   </div>
-  {{end}}
 </div>
 {{end}}
 
+<!-- Inventario con filtro -->
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+  <h2 style="font-family:'Playfair Display',serif; font-size:18px; color:var(--text);">Inventario</h2>
+  <div id="filter-btns" style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="filter-btn active" data-type="all">Todo</button>
+    <button class="filter-btn" data-type="lingerie">👙 Lencería</button>
+    <button class="filter-btn" data-type="dress">👗 Vestido</button>
+    <button class="filter-btn" data-type="top">👚 Top</button>
+    <button class="filter-btn" data-type="bottom">👘 Falda</button>
+    <button class="filter-btn" data-type="shoes">👠 Zapatos</button>
+    <button class="filter-btn" data-type="accessory">💍 Accesorios</button>
+    <button class="filter-btn" data-type="other">🎀 Otro</button>
+  </div>
+</div>
+
+<style>
+.filter-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 5px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+  transition: all .15s;
+}
+.filter-btn:hover { border-color: var(--pink); color: var(--pink); }
+.filter-btn.active { background: rgba(232,119,154,.15); border-color: var(--pink); color: var(--pink); }
+.clothing-item { transition: opacity .2s, transform .2s; }
+.clothing-item.hidden { display: none; }
+</style>
+
 {{if .Items}}
-<div class="toy-grid">
+<div class="toy-grid" id="clothing-grid">
   {{range .Items}}
-  <div class="toy-card">
+  <div class="toy-card clothing-item" data-type="{{.Type}}">
     {{if .PhotoURL}}
     <img class="toy-img" src="{{safeURL .PhotoURL}}" alt="{{.Name}}" loading="lazy">
     {{else}}
@@ -1002,4 +1043,46 @@ var wardrobeHTML = `{{define "content"}}
   </div>
 </div>
 {{end}}
+
+<!-- Historial de outfits -->
+{{if .History}}
+<h2 style="font-family:'Playfair Display',serif; font-size:18px; color:var(--text); margin:32px 0 16px;">Historial de outfits</h2>
+<div style="display:flex; flex-direction:column; gap:14px;">
+  {{range .History}}
+  <div class="card" style="padding:16px;">
+    <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+      {{if .PhotoURL}}
+      <img src="{{safeURL .PhotoURL}}" alt="Outfit {{.Date}}"
+        style="width:90px; height:120px; object-fit:cover; border-radius:8px; border:1px solid var(--border); flex-shrink:0;">
+      {{else}}
+      <div style="width:90px; height:120px; border-radius:8px; background:var(--sidebar); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:28px; flex-shrink:0;">👗</div>
+      {{end}}
+      <div style="flex:1; min-width:160px;">
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">{{.Date}}</p>
+        <p style="color:var(--text); line-height:1.5; font-size:13px; margin-bottom:6px;">{{.OutfitDesc}}</p>
+        {{if .PoseDesc}}
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:6px;"><span style="color:var(--pink);">🧍</span> {{.PoseDesc}}</p>
+        {{end}}
+        {{if .Comment}}
+        <p style="font-size:12px; color:var(--purple); font-style:italic; line-height:1.5;">&#8220;{{.Comment}}&#8221;</p>
+        {{end}}
+      </div>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+<script>
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const type = btn.dataset.type;
+    document.querySelectorAll('.clothing-item').forEach(item => {
+      item.classList.toggle('hidden', type !== 'all' && item.dataset.type !== type);
+    });
+  });
+});
+</script>
 {{end}}`

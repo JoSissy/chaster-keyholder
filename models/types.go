@@ -109,11 +109,12 @@ type AppState struct {
 	LockStartDate *time.Time `json:"lock_start_date,omitempty"`
 
 	// Outfit diario
-	DailyOutfitDesc    string `json:"daily_outfit_desc"`
-	DailyOutfitDate    string `json:"daily_outfit_date"` // "2006-01-02" COT
-	DailyPoseDesc      string `json:"daily_pose_desc"`
-	OutfitConfirmed    bool   `json:"outfit_confirmed"`
-	DailyOutfitComment string `json:"daily_outfit_comment"` // comentario de Papi al aprobar
+	DailyOutfitDesc     string `json:"daily_outfit_desc"`
+	DailyOutfitDate     string `json:"daily_outfit_date"` // "2006-01-02" COT
+	DailyPoseDesc       string `json:"daily_pose_desc"`
+	DailyOutfitPhotoURL string `json:"daily_outfit_photo_url"`
+	OutfitConfirmed     bool   `json:"outfit_confirmed"`
+	DailyOutfitComment  string `json:"daily_outfit_comment"` // comentario de Papi al aprobar
 
 	// Control de plug diario
 	AssignedPlugID   string `json:"assigned_plug_id"`

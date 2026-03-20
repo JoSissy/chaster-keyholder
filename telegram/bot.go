@@ -3167,10 +3167,14 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 		return
 	}
 
-	// Subir foto a Cloudinary independientemente del resultado
+	// Subir foto a Cloudinary
+	var outfitPhotoURL string
 	if b.cloudinary != nil {
-		if _, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/outfits"); err != nil {
+		url, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/outfits")
+		if err != nil {
 			log.Printf("error subiendo foto de outfit: %v", err)
+		} else {
+			outfitPhotoURL = url
 		}
 	}
 
@@ -3178,6 +3182,7 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 	case "approved":
 		b.pendingAction = ""
 		b.state.OutfitConfirmed = true
+		b.state.DailyOutfitPhotoURL = outfitPhotoURL
 		// Generar comentario de Papi
 		comment, err := b.ai.GenerateOutfitComment(b.daysLocked(), b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
 		if err != nil {
@@ -3185,6 +3190,19 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 		}
 		b.state.DailyOutfitComment = strings.TrimSpace(comment)
 		b.mustSaveState()
+		// Guardar en historial DB
+		if b.db != nil {
+			loc, _ := time.LoadLocation("America/Bogota")
+			b.db.SaveOutfitEntry(&storage.OutfitEntry{
+				ID:         fmt.Sprintf("outfit-%d", time.Now().UnixNano()),
+				Date:       time.Now().In(loc).Format("2006-01-02"),
+				OutfitDesc: b.state.DailyOutfitDesc,
+				PoseDesc:   b.state.DailyPoseDesc,
+				PhotoURL:   outfitPhotoURL,
+				Comment:    b.state.DailyOutfitComment,
+				CreatedAt:  time.Now(),
+			})
+		}
 		b.Send(fmt.Sprintf(
 			"✅ *OUTFIT CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
 			stripMarkdown(b.state.DailyOutfitComment),

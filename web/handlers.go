@@ -404,17 +404,21 @@ type wardrobeData struct {
 	Items           []*storage.ClothingItem
 	TodayOutfit     string
 	TodayPose       string
+	TodayPhotoURL   string
 	TodayComment    string
 	OutfitConfirmed bool
 	HasTodayOutfit  bool
+	History         []*storage.OutfitEntry
 }
 
 func (s *Server) handleWardrobe(w http.ResponseWriter, r *http.Request) {
 	items, _ := s.db.GetClothingItems()
+	history, _ := s.db.GetOutfitHistory(30)
 	st := s.loadState()
 	d := wardrobeData{
 		pageBase: s.base("wardrobe"),
 		Items:    items,
+		History:  history,
 	}
 	loc, err := time.LoadLocation("America/Bogota")
 	if err != nil {
@@ -425,6 +429,7 @@ func (s *Server) handleWardrobe(w http.ResponseWriter, r *http.Request) {
 		d.HasTodayOutfit = true
 		d.TodayOutfit = st.DailyOutfitDesc
 		d.TodayPose = st.DailyPoseDesc
+		d.TodayPhotoURL = st.DailyOutfitPhotoURL
 		d.TodayComment = st.DailyOutfitComment
 		d.OutfitConfirmed = st.OutfitConfirmed
 	}
