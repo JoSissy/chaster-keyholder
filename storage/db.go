@@ -25,6 +25,11 @@ func NewDB(path string) (*DB, error) {
 		return nil, fmt.Errorf("error en migración: %w", err)
 	}
 
+	// Columnas añadidas en migraciones posteriores (ignora error si ya existen)
+	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN photo_url TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN result TEXT DEFAULT 'pending'`)
+	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN resolved_at DATETIME`)
+
 	log.Println("✅ Base de datos iniciada")
 	return db, nil
 }
@@ -70,7 +75,29 @@ func (db *DB) migrate() error {
 	CREATE TABLE IF NOT EXISTS chaster_tasks (
 		id          TEXT PRIMARY KEY,
 		description TEXT NOT NULL,
-		assigned_at DATETIME NOT NULL
+		photo_url   TEXT DEFAULT '',
+		result      TEXT DEFAULT 'pending',
+		assigned_at DATETIME NOT NULL,
+		resolved_at DATETIME
+	);
+
+	CREATE TABLE IF NOT EXISTS clothing (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		description TEXT,
+		photo_url   TEXT,
+		type        TEXT DEFAULT 'other',
+		added_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS outfit_log (
+		id           TEXT PRIMARY KEY,
+		date         TEXT NOT NULL,
+		outfit_desc  TEXT NOT NULL,
+		pose_desc    TEXT DEFAULT '',
+		photo_url    TEXT DEFAULT '',
+		comment      TEXT DEFAULT '',
+		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS events (
@@ -307,6 +334,59 @@ func (db *DB) GetTasksByLock(lockID string) ([]*Task, error) {
 	return tasks, nil
 }
 
+func (db *DB) GetRecentTasks(n int) ([]*Task, error) {
+	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []*Task
+	for rows.Next() {
+		t := &Task{}
+		if err := rows.Scan(&t.ID, &t.LockID, &t.Description, &t.PhotoURL, &t.AssignedAt, &t.DueAt, &t.CompletedAt, &t.Status, &t.PenaltyHours, &t.RewardHours); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+func (db *DB) GetAllTasks() ([]*Task, error) {
+	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks ORDER BY assigned_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []*Task
+	for rows.Next() {
+		t := &Task{}
+		if err := rows.Scan(&t.ID, &t.LockID, &t.Description, &t.PhotoURL, &t.AssignedAt, &t.DueAt, &t.CompletedAt, &t.Status, &t.PenaltyHours, &t.RewardHours); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+func (db *DB) GetAllOrgasmEntries() ([]*OrgasmEntry, error) {
+	rows, err := db.conn.Query(`SELECT id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at FROM orgasm_log ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*OrgasmEntry
+	for rows.Next() {
+		e := &OrgasmEntry{}
+		var granted int
+		if err := rows.Scan(&e.ID, &granted, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.Granted = granted == 1
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
 func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 	rows, err := db.conn.Query(`SELECT description FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
 	if err != nil {
@@ -440,11 +520,28 @@ func (db *DB) LoadSessionState() (*SessionState, error) {
 
 // ── Chaster Tasks ─────────────────────────────────────────────────────────
 
-func (db *DB) SaveChasterTask(description string) error {
-	id := fmt.Sprintf("chatask-%d", time.Now().UnixNano())
+type ChasterTask struct {
+	ID          string
+	Description string
+	PhotoURL    string
+	Result      string // "pending"|"verified"|"rejected"|"abandoned"|"timeout"
+	AssignedAt  time.Time
+	ResolvedAt  *time.Time
+}
+
+func (db *DB) SaveChasterTask(t *ChasterTask) error {
 	_, err := db.conn.Exec(
-		`INSERT INTO chaster_tasks (id, description, assigned_at) VALUES (?, ?, ?)`,
-		id, description, time.Now(),
+		`INSERT OR REPLACE INTO chaster_tasks (id, description, photo_url, result, assigned_at, resolved_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Description, t.PhotoURL, t.Result, t.AssignedAt, t.ResolvedAt,
+	)
+	return err
+}
+
+func (db *DB) UpdateChasterTaskResult(id, result string, photoURL string, resolvedAt *time.Time) error {
+	_, err := db.conn.Exec(
+		`UPDATE chaster_tasks SET result=?, photo_url=CASE WHEN ?!='' THEN ? ELSE photo_url END, resolved_at=? WHERE id=?`,
+		result, photoURL, photoURL, resolvedAt, id,
 	)
 	return err
 }
@@ -464,6 +561,149 @@ func (db *DB) GetRecentChasterTaskDescriptions(n int) ([]string, error) {
 		descs = append(descs, d)
 	}
 	return descs, nil
+}
+
+func (db *DB) GetChasterTaskHistory(n int) ([]*ChasterTask, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, description, photo_url, result, assigned_at, resolved_at
+		 FROM chaster_tasks ORDER BY assigned_at DESC LIMIT ?`, n,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []*ChasterTask
+	for rows.Next() {
+		t := &ChasterTask{}
+		if err := rows.Scan(&t.ID, &t.Description, &t.PhotoURL, &t.Result, &t.AssignedAt, &t.ResolvedAt); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+// ── Clothing ──────────────────────────────────────────────────────────────
+
+type ClothingItem struct {
+	ID          string
+	Name        string
+	Description string
+	PhotoURL    string
+	Type        string // "lingerie"|"dress"|"top"|"bottom"|"shoes"|"accessory"|"other"
+	AddedAt     time.Time
+}
+
+func (db *DB) SaveClothingItem(c *ClothingItem) error {
+	_, err := db.conn.Exec(
+		`INSERT OR REPLACE INTO clothing (id, name, description, photo_url, type, added_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Description, c.PhotoURL, c.Type, c.AddedAt,
+	)
+	return err
+}
+
+func (db *DB) GetClothingItems() ([]*ClothingItem, error) {
+	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, type, added_at FROM clothing ORDER BY added_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*ClothingItem
+	for rows.Next() {
+		c := &ClothingItem{}
+		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.PhotoURL, &c.Type, &c.AddedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, c)
+	}
+	return items, nil
+}
+
+func (db *DB) DeleteClothingItem(id string) error {
+	_, err := db.conn.Exec(`DELETE FROM clothing WHERE id = ?`, id)
+	return err
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+
+// ResetAllTables borra todos los datos de todas las tablas.
+func (db *DB) ResetAllTables() error {
+	tables := []string{
+		"toys", "locks", "tasks", "chaster_tasks", "clothing", "outfit_log",
+		"events", "negotiations", "orgasm_log", "session_state",
+	}
+	for _, t := range tables {
+		if _, err := db.conn.Exec("DELETE FROM " + t); err != nil {
+			return fmt.Errorf("error limpiando %s: %w", t, err)
+		}
+	}
+	return nil
+}
+
+// SeedOrgasmGranted inserta un orgasmo concedido N días en el pasado.
+func (db *DB) SeedOrgasmGranted(daysAgo int) error {
+	id := fmt.Sprintf("seed-orgasm-%d", time.Now().UnixNano())
+	createdAt := time.Now().AddDate(0, 0, -daysAgo)
+	_, err := db.conn.Exec(
+		`INSERT INTO orgasm_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
+		 VALUES (?, 1, 'permiso', 'Concedido.', '', 0, 0, ?)`,
+		id, createdAt,
+	)
+	return err
+}
+
+// GetDaysSinceLastOrgasm devuelve los días desde el último orgasmo concedido.
+// Devuelve -1 si nunca hubo uno.
+func (db *DB) GetDaysSinceLastOrgasm() int {
+	var createdAt time.Time
+	err := db.conn.QueryRow(
+		`SELECT created_at FROM orgasm_log WHERE granted=1 ORDER BY created_at DESC LIMIT 1`,
+	).Scan(&createdAt)
+	if err != nil {
+		return -1
+	}
+	return int(time.Since(createdAt).Hours()) / 24
+}
+
+// ── Outfit log ─────────────────────────────────────────────────────────────
+
+type OutfitEntry struct {
+	ID         string
+	Date       string // "2006-01-02" COT
+	OutfitDesc string
+	PoseDesc   string
+	PhotoURL   string
+	Comment    string
+	CreatedAt  time.Time
+}
+
+func (db *DB) SaveOutfitEntry(e *OutfitEntry) error {
+	_, err := db.conn.Exec(
+		`INSERT OR REPLACE INTO outfit_log (id, date, outfit_desc, pose_desc, photo_url, comment, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Date, e.OutfitDesc, e.PoseDesc, e.PhotoURL, e.Comment, e.CreatedAt,
+	)
+	return err
+}
+
+func (db *DB) GetOutfitHistory(limit int) ([]*OutfitEntry, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, date, outfit_desc, pose_desc, photo_url, comment, created_at
+		 FROM outfit_log ORDER BY created_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*OutfitEntry
+	for rows.Next() {
+		e := &OutfitEntry{}
+		if err := rows.Scan(&e.ID, &e.Date, &e.OutfitDesc, &e.PoseDesc, &e.PhotoURL, &e.Comment, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
 }
 
 // ── Events ────────────────────────────────────────────────────────────────

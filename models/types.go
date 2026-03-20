@@ -104,14 +104,27 @@ type AppState struct {
 	LastRitualDate string `json:"last_ritual_date"` // "2006-01-02" COT
 	RitualStep     int    `json:"ritual_step"`       // 0=none/done, 1=awaiting photo, 2=awaiting message
 
+	// Fechas del lock activo (sincronizadas desde Chaster al arrancar)
+	LockEndDate   *time.Time `json:"lock_end_date,omitempty"`
+	LockStartDate *time.Time `json:"lock_start_date,omitempty"`
+
+	// Outfit diario
+	DailyOutfitDesc     string `json:"daily_outfit_desc"`
+	DailyOutfitDate     string `json:"daily_outfit_date"` // "2006-01-02" COT
+	DailyPoseDesc       string `json:"daily_pose_desc"`
+	DailyOutfitPhotoURL string `json:"daily_outfit_photo_url"`
+	OutfitConfirmed     bool   `json:"outfit_confirmed"`
+	DailyOutfitComment  string `json:"daily_outfit_comment"` // comentario de Papi al aprobar
+
 	// Control de plug diario
 	AssignedPlugID   string `json:"assigned_plug_id"`
 	AssignedPlugDate string `json:"assigned_plug_date"` // "2006-01-02" COT
 	PlugConfirmed    bool   `json:"plug_confirmed"`
 
 	// Check-ins espontáneos
-	PendingCheckin  bool       `json:"pending_checkin"`
-	CheckinExpiresAt *time.Time `json:"checkin_expires_at,omitempty"`
+	PendingCheckin      bool       `json:"pending_checkin"`
+	CheckinExpiresAt    *time.Time `json:"checkin_expires_at,omitempty"`
+	CheckinReminderSent bool       `json:"checkin_reminder_sent"`
 
 	// Ruleta
 	LastRuletaDate string `json:"last_ruleta_date"` // "2006-01-02" COT
@@ -122,10 +135,11 @@ type AppState struct {
 	LastJudgmentDate  string   `json:"last_judgment_date"` // "2006-01-02" COT
 
 	// Tarea comunitaria de Chaster (asignada via extension API, verificada por la comunidad)
-	PendingChasterTask   string     `json:"pending_chaster_task,omitempty"`
-	ChasterTaskSessionID string     `json:"chaster_task_session_id,omitempty"`
-	ChasterTaskLockID    string     `json:"chaster_task_lock_id,omitempty"`
+	PendingChasterTask    string     `json:"pending_chaster_task,omitempty"`
+	ChasterTaskSessionID  string     `json:"chaster_task_session_id,omitempty"`
+	ChasterTaskLockID     string     `json:"chaster_task_lock_id,omitempty"`
 	ChasterTaskAssignedAt *time.Time `json:"chaster_task_assigned_at,omitempty"`
+	ChasterTaskDBID       string     `json:"chaster_task_db_id,omitempty"`
 }
 
 // GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual

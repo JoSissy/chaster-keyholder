@@ -80,6 +80,8 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 		b.pendingAction = "plug_photo"
 	case b.state.PendingChasterTask != "":
 		b.pendingAction = "chaster_task_photo"
+	case b.state.DailyOutfitDesc != "" && !b.state.OutfitConfirmed && b.state.DailyOutfitDate == todayStr():
+		b.pendingAction = "outfit_photo"
 	}
 	return b, nil
 }
@@ -378,6 +380,16 @@ func (b *Bot) HandleStatus() {
 	} else if b.state.TasksStreak >= 5 {
 		orgasmStatus = "difícil"
 	}
+	daysSinceOrgasm := -1
+	if b.db != nil {
+		daysSinceOrgasm = b.db.GetDaysSinceLastOrgasm()
+	}
+	orgasmDaysLine := ""
+	if daysSinceOrgasm < 0 {
+		orgasmDaysLine = " — nunca"
+	} else {
+		orgasmDaysLine = fmt.Sprintf(" — *%d días*", daysSinceOrgasm)
+	}
 
 	// ── Ruleta ──
 	ruletaLine := ""
@@ -402,7 +414,7 @@ func (b *Bot) HandleStatus() {
 			"✅ Completadas — *%d* | 💀 Fallidas — *%d*\n"+
 			"🔥 Racha — *%d* tareas | Obediencia — *%s*%s%s\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
-			"💦 Orgasmo — _%s_\n"+
+			"💦 Orgasmo — _%s_%s\n"+
 			"📊 Balance — *+%dh / -%dh*%s%s",
 		days, hours, mins,
 		timeRemaining,
@@ -410,7 +422,7 @@ func (b *Bot) HandleStatus() {
 		taskStatus, chasterTaskLine,
 		b.state.TasksCompleted, b.state.TasksFailed,
 		b.state.TasksStreak, models.ObedienceLevelString(obedienceLevel), plugLine, checkinLine,
-		orgasmStatus,
+		orgasmStatus, orgasmDaysLine,
 		b.state.TotalTimeAddedHours, b.state.TotalTimeRemovedHours,
 		ruletaLine, debtLine,
 	)
@@ -931,11 +943,17 @@ func (b *Bot) HandleChat(text string) {
 		return
 	}
 
+	// Detectar selección de prenda a eliminar
+	if b.pendingAction == "removing_clothing" {
+		b.handleClothingRemoveSelection(text)
+		return
+	}
+
 	// Detectar ruegos sobre evento activo (freeze/hidetime)
 	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
 		eventKeywords := map[string][]string{
-			"freeze":   {"descongela", "unfreeze", "congela", "frío", "fría", "congelada", "libérame", "liberame"},
-			"hidetime": {"timer", "tiempo", "cuánto", "cuanto", "falta", "muéstrame", "muestrame", "ver el tiempo"},
+			"freeze":   {"descongela", "unfreeze", "congela", "frio", "fría", "congelada", "liberame", "libérame"},
+			"hidetime": {"timer", "tiempo", "cuanto", "cuánto", "falta", "muestrame", "muéstrame", "ver el tiempo"},
 		}
 		for _, kw := range eventKeywords[b.state.ActiveEvent.Type] {
 			if strings.Contains(textLower, kw) {
@@ -999,7 +1017,7 @@ func (b *Bot) HandleChat(text string) {
 func (b *Bot) handleOrgasmRequest(text string) {
 	b.Send("_..._")
 
-	// Obtener historial para que El Señor tome una decisión informada
+	// Obtener historial para que Papi tome una decisión informada
 	totalGranted, totalDenied, daysSinceLastGrant := 0, 0, 999
 	if b.db != nil {
 		total, granted, denied, err := b.db.GetOrgasmStats()
@@ -1214,8 +1232,12 @@ func (b *Bot) HandleToys(args string) {
 				typeStr = " 🔒"
 			case "plug":
 				typeStr = " 🔌"
+			case "dildo":
+				typeStr = " 🍆"
 			case "vibrator":
 				typeStr = " 📳"
+			case "nipple":
+				typeStr = " 🌀"
 			case "restraint":
 				typeStr = " ⛓"
 			}
@@ -1226,6 +1248,61 @@ func (b *Bot) HandleToys(args string) {
 		lines = append(lines, "`/toys remove` — eliminar")
 		b.Send(strings.Join(lines, "\n"))
 	}
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+
+func (b *Bot) HandleHistory() {
+	if b.db == nil {
+		b.Send("❌ Base de datos no disponible.")
+		return
+	}
+	tasks, err := b.db.GetRecentTasks(10)
+	if err != nil || len(tasks) == 0 {
+		b.Send("📋 *HISTORIAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Sin tareas registradas todavía._")
+		return
+	}
+	loc, _ := time.LoadLocation("America/Bogota")
+	lines := []string{"📋 *HISTORIAL — últimas tareas*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
+	for _, t := range tasks {
+		icon := "⏳"
+		switch t.Status {
+		case "completed":
+			icon = "✅"
+		case "failed":
+			icon = "💀"
+		}
+		date := t.AssignedAt.In(loc).Format("02 Jan")
+		desc := t.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "..."
+		}
+		lines = append(lines, fmt.Sprintf("%s %s\n_%s_", icon, date, desc))
+	}
+	b.Send(strings.Join(lines, "\n▬▬▬▬▬▬▬▬▬▬▬▬\n"))
+}
+
+// ── Mood ───────────────────────────────────────────────────────────────────
+
+func (b *Bot) HandleMood() {
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		b.Send("❌ No hay sesión activa.")
+		return
+	}
+	b.Send("_..._")
+	msg, err := b.ai.GenerateMoodMessage(
+		b.daysLocked(),
+		b.state.Toys,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
+		b.state.TasksStreak,
+		b.state.WeeklyDebt,
+	)
+	if err != nil {
+		b.Send("_..._")
+		return
+	}
+	b.Send(stripMarkdown(msg))
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -1283,31 +1360,25 @@ func (b *Bot) HandleHelp() {
 /task — Ver tarea activa del día
 /explain — Cómo fotografiar la tarea
 /fail — Confesar que fallaste
-/ruleta — Girar la ruleta diaria 🎰
+/roulette — Girar la ruleta diaria 🎰
 /chatask — Tarea comunitaria de Chaster
+/newlock — Iniciar nueva sesión
 
 🧸 *INVENTARIO*
 /toys — Ver tus juguetes
 /toys add — Añadir juguete
 /toys remove — Eliminar juguete
 
+👗 *GUARDARROPA*
+/wardrobe — Ver prendas
+/wardrobe add — Añadir prenda (foto)
+/wardrobe remove — Eliminar prenda
+
 📊 *HISTORIAL*
-/stats — Estadísticas de sesiones
-/orgasmos — Historial de permisos
-/newlock — Iniciar nueva sesión
-
-▬▬▬▬▬▬▬▬▬▬▬▬
-🚫 *SOLO EL SEÑOR*
-_/freeze /unfreeze /hidetime /showtime /pillory_
-_Estos comandos los ejecuta El Señor, no tú._
-
-▬▬▬▬▬▬▬▬▬▬▬▬
-🧪 *PRUEBAS* _(se eliminarán pronto)_
-/testevent — Forzar evento random
-/testremove — Quitar tiempo manualmente
-/testmsg — Mensaje espontáneo
-/testjuicio — Juicio dominical
-/help — Este menú
+/stats — Estadísticas
+/history — Últimas 10 tareas
+/orgasms — Historial de permisos
+/mood — Estado de ánimo de Papi
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
 _Para completar una tarea — manda la foto directo al chat._`)
@@ -1315,7 +1386,37 @@ _Para completar una tarea — manda la foto directo al chat._`)
 
 // ── Loop principal ─────────────────────────────────────────────────────────
 
+// syncLockState consulta Chaster al arrancar y persiste el estado del lock
+// en state.json inmediatamente. Esto evita que el dashboard muestre "libre"
+// tras un reinicio si el estado todavía no fue actualizado por los jobs.
+func (b *Bot) syncLockState() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		log.Printf("[syncLockState] sin lock activo o error de API: %v", err)
+		return
+	}
+	days := int(time.Since(lock.StartDate).Hours()) / 24
+	b.stateMu.Lock()
+	b.state.DaysLocked = days
+	b.cachedDaysLocked = days
+	b.cachedDaysLockedAt = time.Now()
+	if b.state.CurrentLockID == "" {
+		b.state.CurrentLockID = lock.ID
+	}
+	startUTC := lock.StartDate.UTC()
+	b.state.LockStartDate = &startUTC
+	if lock.EndDate != nil {
+		endUTC := lock.EndDate.UTC()
+		b.state.LockEndDate = &endUTC
+	}
+	b.stateMu.Unlock()
+	b.mustSaveState()
+	log.Printf("[syncLockState] lock activo: %s — %d días", lock.ID, days)
+}
+
 func (b *Bot) Start() {
+	go b.syncLockState()
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := b.api.GetUpdatesChan(u)
@@ -1323,9 +1424,11 @@ func (b *Bot) Start() {
 	// Keyboard sin duplicados, organizado
 	keyboard := [][]tgbotapi.KeyboardButton{
 		{tgbotapi.NewKeyboardButton("/status"), tgbotapi.NewKeyboardButton("/task")},
-		{tgbotapi.NewKeyboardButton("/order"), tgbotapi.NewKeyboardButton("/fail")},
-		{tgbotapi.NewKeyboardButton("/explain"), tgbotapi.NewKeyboardButton("/newlock")},
-		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/fail"), tgbotapi.NewKeyboardButton("/explain")},
+		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/chatask")},
+		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/wardrobe")},
+		{tgbotapi.NewKeyboardButton("/orgasms"), tgbotapi.NewKeyboardButton("/history")},
+		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/stats")},
 		{tgbotapi.NewKeyboardButton("/help")},
 	}
 
@@ -1365,6 +1468,12 @@ func (b *Bot) Start() {
 			} else if b.pendingAction == "chaster_task_photo" {
 				b.deleteMessage(msgID)
 				b.HandleChasterTaskPhoto(imgBytes, mime)
+			} else if b.pendingAction == "new_clothing" {
+				b.deleteMessage(msgID)
+				b.HandleWardrobePhoto(imgBytes, mime)
+			} else if b.pendingAction == "outfit_photo" {
+				b.deleteMessage(msgID)
+				b.HandleOutfitPhoto(imgBytes, mime)
 			} else {
 				b.deleteMessage(msgID)
 				b.HandlePhoto(imgBytes, mime)
@@ -1397,40 +1506,26 @@ func (b *Bot) Start() {
 			b.HandleHelp()
 		case text == "/stats":
 			b.HandleStats()
-		case text == "/orgasmos":
+		case text == "/orgasms":
 			b.HandleOrgasmHistory()
+		case text == "/history":
+			b.HandleHistory()
+		case text == "/mood":
+			b.HandleMood()
 		case text == "/toys":
 			b.HandleToys("")
 		case strings.HasPrefix(text, "/toys "):
 			b.HandleToys(strings.TrimPrefix(text, "/toys "))
-		// Comandos de extensión — usan el lock activo automáticamente
-		case text == "/freeze":
-			b.HandleFreeze()
-		case text == "/unfreeze":
-			b.HandleUnfreeze()
-		case text == "/hidetime":
-			b.HandleHideTime()
-		case text == "/showtime":
-			b.HandleShowTime()
-		case strings.HasPrefix(text, "/pillory "):
-			b.parsePilloryCommand(strings.TrimPrefix(text, "/pillory "))
-		case text == "/pillory":
-			b.Send("Uso: `/pillory [minutos] [razón opcional]`\nEjemplo: `/pillory 30 por no obedecer`")
-		case text == "/testevent":
-			b.HandleRandomEventTest()
-		case text == "/testremove":
-			b.HandleTestRemoveTime("")
-		case strings.HasPrefix(text, "/testremove "):
-			b.HandleTestRemoveTime(strings.TrimPrefix(text, "/testremove "))
-		case text == "/testmsg":
-			b.SendRandomMessageTest()
-		case text == "/ruleta":
+		case text == "/roulette":
 			b.HandleRuleta()
 		case text == "/chatask":
 			b.HandleChasterTaskCommand()
-		case text == "/testjuicio":
-			b.state.LastJudgmentDate = "" // forzar re-ejecución
-			b.HandleWeeklyJudgment()
+		case text == "/wardrobe":
+			b.HandleWardrobe("")
+		case strings.HasPrefix(text, "/wardrobe "):
+			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
+		case text == "/dbwipe":
+			b.HandleDBWipe()
 		case text != "" && !strings.HasPrefix(text, "/"):
 			b.HandleChat(text)
 		}
@@ -2002,7 +2097,7 @@ func (b *Bot) executeRandomEvent(lockID string, decision *ai.RandomEventDecision
 var randomMessageTypes = []string{
 	"possessive reminder — he's thinking of her caged, belonging to him",
 	"small degrading order — something tiny to do alone right now, no photo (think about X, say something out loud, feel the cage)",
-	"perverse comment — about her cage, her body, what El Señor enjoys about owning her",
+	"perverse comment — about her cage, her body, what Papi enjoys about owning her",
 	"uncomfortable psychological question — about her submission, what she is, her secret desires",
 	"veiled threat — something is coming, vague and unsettling, no details",
 	"mocking observation — laugh quietly at her situation, her cage, her life as a sissy",
@@ -2312,6 +2407,7 @@ func (b *Bot) TriggerCheckin() {
 	expiresAt := time.Now().Add(30 * time.Minute)
 	b.state.PendingCheckin = true
 	b.state.CheckinExpiresAt = &expiresAt
+	b.state.CheckinReminderSent = false
 	b.mustSaveState()
 	b.pendingAction = "checkin_photo"
 	b.Send(fmt.Sprintf(
@@ -2356,16 +2452,51 @@ func (b *Bot) CheckCheckinExpiry() {
 	if !b.state.PendingCheckin || b.state.CheckinExpiresAt == nil {
 		return
 	}
+
+	// Recordatorio a los 15 minutos restantes
+	if !b.state.CheckinReminderSent {
+		timeLeft := time.Until(*b.state.CheckinExpiresAt)
+		if timeLeft <= 15*time.Minute && timeLeft > 0 {
+			b.state.CheckinReminderSent = true
+			b.mustSaveState()
+			b.Send("⚠️ *CHECK-IN — 15 minutos*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi sigue esperando la foto. Queda poco tiempo._")
+			return
+		}
+	}
+
 	if time.Now().Before(*b.state.CheckinExpiresAt) {
 		return
 	}
 	b.state.PendingCheckin = false
 	b.state.CheckinExpiresAt = nil
+	b.state.CheckinReminderSent = false
 	b.pendingAction = ""
 	b.mustSaveState()
 	b.Send("⏰ *CHECK-IN IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No respondiste a tiempo. Consecuencias._")
 	b.addWeeklyDebt("check-in ignorado — no respondió a tiempo")
 	b.autoPillory("no respondió al check-in a tiempo")
+}
+
+// CheckRitualExpiry penaliza si el ritual matutino fue ignorado (llamado a las 11am)
+func (b *Bot) CheckRitualExpiry() {
+	if b.state.RitualStep == 0 {
+		return
+	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
+	loc, _ := time.LoadLocation("America/Bogota")
+	if time.Now().In(loc).Hour() < 11 {
+		return
+	}
+	// Ritual iniciado pero no completado y ya pasaron las 11am — penalizar
+	b.state.RitualStep = 0
+	b.state.LastRitualDate = todayStr()
+	b.pendingAction = ""
+	b.mustSaveState()
+	b.Send("💀 *RITUAL IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No completaste el ritual de Papi. Hay consecuencias._")
+	b.addWeeklyDebt("ritual matutino ignorado")
+	b.autoPillory("ignoró el ritual matutino de Papi")
 }
 
 // ── Condicionamiento ───────────────────────────────────────────────────────
@@ -2396,7 +2527,7 @@ func (b *Bot) HandleWeeklyJudgment() {
 		return
 	}
 
-	b.Send("⚖️ *EL SEÑOR HACE EL RECUENTO DE LA SEMANA...*")
+	b.Send("⚖️ *PAPI HACE EL RECUENTO DE LA SEMANA...*")
 
 	verdict, err := b.ai.GenerateWeeklyJudgment(
 		b.daysLocked(),
@@ -2562,7 +2693,7 @@ func (b *Bot) HandleChasterTaskCommand() {
 		return
 	}
 
-	b.Send("_El Señor está preparando una tarea para la comunidad..._")
+	b.Send("_Papi está preparando una tarea para la comunidad..._")
 
 	var recentTasks []string
 	if b.db != nil {
@@ -2585,11 +2716,15 @@ func (b *Bot) HandleChasterTaskCommand() {
 		return
 	}
 
+	dbID := fmt.Sprintf("chatask-%d", time.Now().UnixNano())
 	if b.db != nil {
-		if err := b.db.SaveChasterTask(taskDesc); err != nil {
+		if err := b.db.SaveChasterTask(&storage.ChasterTask{
+			ID: dbID, Description: taskDesc, Result: "pending", AssignedAt: time.Now(),
+		}); err != nil {
 			log.Printf("[ChasterTask] error guardando tarea en DB: %v", err)
 		}
 	}
+	b.state.ChasterTaskDBID = dbID
 
 	if err := b.chaster.AssignChasterTask(sessionID, taskDesc); err != nil {
 		b.Send(fmt.Sprintf("❌ Error asignando la tarea en Chaster: %v", err))
@@ -2620,13 +2755,18 @@ func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
 
 	b.Send("_Enviando evidencia a Chaster..._")
 
-	// Subir foto a Cloudinary para nuestro registro (paralelo, no bloquea)
+	// Subir foto a Cloudinary para nuestro registro
+	var chataskPhotoURL string
 	if b.cloudinary != nil {
-		go func() {
-			if _, err := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks"); err != nil {
-				log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", err)
-			}
-		}()
+		url, err := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks")
+		if err != nil {
+			log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", err)
+		} else {
+			chataskPhotoURL = url
+		}
+	}
+	if b.db != nil && b.state.ChasterTaskDBID != "" && chataskPhotoURL != "" {
+		b.db.UpdateChasterTaskResult(b.state.ChasterTaskDBID, "pending", chataskPhotoURL, nil)
 	}
 
 	// 1. Subir foto a Chaster y obtener el verificationPictureToken
@@ -2667,8 +2807,12 @@ func (b *Bot) CheckChasterTaskVote() {
 	}
 
 	// Timeout: si pasaron más de 2 horas sin resultado, abandonar
-	if time.Since(*b.state.ChasterTaskAssignedAt) > 2*time.Hour {
+	if time.Since(*b.state.ChasterTaskAssignedAt) > 6*time.Hour {
 		log.Printf("[ChasterTask] timeout esperando voto — limpiando estado")
+		if b.db != nil && b.state.ChasterTaskDBID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(b.state.ChasterTaskDBID, "timeout", "", &now)
+		}
 		b.clearChasterTaskState()
 		b.Send("⏰ *TAREA COMUNITARIA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo de votación expiró sin resultado definitivo._")
 		return
@@ -2686,10 +2830,15 @@ func (b *Bot) CheckChasterTaskVote() {
 	// Tomar la entrada más reciente
 	latest := entries[0]
 
+	dbID := b.state.ChasterTaskDBID
+
 	switch latest.Status {
 	case "verified":
 		b.clearChasterTaskState()
-		// Recompensa: quitar 1 hora
+		if b.db != nil && dbID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(dbID, "verified", "", &now)
+		}
 		lock, err := b.chaster.GetActiveLock()
 		if err == nil {
 			if err := b.chaster.RemoveTime(lock.ID, 3600); err != nil {
@@ -2699,11 +2848,14 @@ func (b *Bot) CheckChasterTaskVote() {
 				b.mustSaveState()
 			}
 		}
-		b.Send("✅ *COMUNIDAD APROBÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad verificó tu tarea. El Señor está... satisfecho._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*-1h* quitada de tu condena.")
+		b.Send("✅ *COMUNIDAD APROBÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad verificó tu tarea. Papi está... satisfecho._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*-1h* quitada de tu condena.")
 
 	case "rejected":
 		b.clearChasterTaskState()
-		// Penalización: añadir 1 hora
+		if b.db != nil && dbID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(dbID, "rejected", "", &now)
+		}
 		lock, err := b.chaster.GetActiveLock()
 		if err == nil {
 			if err := b.chaster.AddTime(lock.ID, 3600); err != nil {
@@ -2714,15 +2866,18 @@ func (b *Bot) CheckChasterTaskVote() {
 			}
 		}
 		b.addWeeklyDebt("tarea comunitaria rechazada por la comunidad de Chaster")
-		b.Send("❌ *COMUNIDAD RECHAZÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad no quedó satisfecha con tu evidencia. El Señor tampoco._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+1h* añadida a tu condena.")
+		b.Send("❌ *COMUNIDAD RECHAZÓ*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad no quedó satisfecha con tu evidencia. Papi tampoco._\n▬▬▬▬▬▬▬▬▬▬▬▬\n*+1h* añadida a tu condena.")
 
 	case "abandoned":
 		b.clearChasterTaskState()
+		if b.db != nil && dbID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(dbID, "abandoned", "", &now)
+		}
 		b.addWeeklyDebt("tarea comunitaria abandonada")
 		b.Send("💀 *TAREA ABANDONADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La tarea fue marcada como abandonada. Consecuencias._")
 
 	case "pending_verification":
-		// Todavía esperando — silencio
 		log.Printf("[ChasterTask] votación en curso para lock %s", b.state.ChasterTaskLockID)
 	}
 }
@@ -2732,6 +2887,7 @@ func (b *Bot) clearChasterTaskState() {
 	b.state.ChasterTaskAssignedAt = nil
 	b.state.PendingChasterTask = ""
 	b.state.ChasterTaskSessionID = ""
+	b.state.ChasterTaskDBID = ""
 	b.mustSaveState()
 }
 
@@ -2801,5 +2957,314 @@ func (b *Bot) handleEventNegotiation(text string) {
 		activeEvent.ExpiresAt = activeEvent.ExpiresAt.Add(30 * time.Minute)
 		b.mustSaveState()
 		b.Send("▪️ *PENALIZACIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_+30 minutos añadidos al evento._")
+	}
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+
+// HandleDBWipe borra toda la DB, siembra el dato de orgasmo inicial y resetea el estado.
+// Comando oculto — no aparece en /help.
+func (b *Bot) HandleDBWipe() {
+	if b.db == nil {
+		b.Send("❌ DB no disponible.")
+		return
+	}
+
+	b.Send("_Borrando todo..._")
+
+	if err := b.db.ResetAllTables(); err != nil {
+		b.Send(fmt.Sprintf("❌ Error limpiando DB: %v", err))
+		return
+	}
+
+	// Sembrar: 1 orgasmo concedido hace 3 días
+	if err := b.db.SeedOrgasmGranted(3); err != nil {
+		log.Printf("[dbwipe] error sembrando orgasmo: %v", err)
+	}
+
+	// Resetear state.json
+	b.stateMu.Lock()
+	b.state = &models.AppState{Toys: []models.Toy{}}
+	b.stateMu.Unlock()
+	b.mustSaveState()
+
+	// Resetear estado transitorio
+	b.pendingAction = ""
+	b.cachedDaysLocked = 0
+	b.cachedDaysLockedAt = time.Time{}
+
+	b.Send("✅ *DB reseteada.*\n▬▬▬▬▬▬▬▬▬▬▬▬\nDatos sembrados:\n— 1 orgasmo concedido hace 3 días\n\nTodo lo demás está vacío. Listo para mañana.")
+}
+
+// ── Guardarropa ────────────────────────────────────────────────────────────
+
+func (b *Bot) HandleWardrobe(args string) {
+	if b.db == nil {
+		b.Send("❌ Base de datos no disponible.")
+		return
+	}
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	subCmd := ""
+	if len(parts) > 0 {
+		subCmd = strings.ToLower(parts[0])
+	}
+
+	switch subCmd {
+	case "add", "agregar":
+		b.pendingAction = "new_clothing"
+		b.Send("👗 *NUEVA PRENDA*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda la foto de la prenda.\n_La IA generará nombre, descripción y tipo automáticamente._")
+
+	case "remove", "quitar":
+		items, err := b.db.GetClothingItems()
+		if err != nil || len(items) == 0 {
+			b.Send("El guardarropa está vacío.")
+			return
+		}
+		lines := []string{"👗 *¿CUÁL QUIERES ELIMINAR?*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
+		for i, c := range items {
+			lines = append(lines, fmt.Sprintf("%d. %s (%s)", i+1, c.Name, c.Type))
+		}
+		lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
+		b.Send(strings.Join(lines, "\n"))
+		b.pendingAction = "removing_clothing"
+
+	default:
+		items, err := b.db.GetClothingItems()
+		if err != nil || len(items) == 0 {
+			b.Send("👗 *GUARDARROPA*\n\nVacío. Añade prendas con:\n`/wardrobe add`")
+			return
+		}
+		lines := []string{"👗 *GUARDARROPA*\n"}
+		for i, c := range items {
+			typeIcon := clothingTypeIcon(c.Type)
+			lines = append(lines, fmt.Sprintf("%d. %s%s", i+1, typeIcon, c.Name))
+		}
+		// Mostrar outfit del día si existe
+		if b.state.DailyOutfitDesc != "" && b.state.DailyOutfitDate == todayStr() {
+			status := "⏳ _esperando foto..._"
+			if b.state.OutfitConfirmed {
+				status = "✅ confirmado"
+			}
+			lines = append(lines, "\n▬▬▬▬▬▬▬▬▬▬▬▬")
+			lines = append(lines, fmt.Sprintf("👗 *Outfit hoy* — %s\n_%s_", status, b.state.DailyOutfitDesc))
+			if b.state.DailyPoseDesc != "" {
+				lines = append(lines, fmt.Sprintf("🧍 *Pose* — _%s_", b.state.DailyPoseDesc))
+			}
+			if b.state.OutfitConfirmed && b.state.DailyOutfitComment != "" {
+				lines = append(lines, fmt.Sprintf("💬 _%s_", b.state.DailyOutfitComment))
+			}
+		}
+		lines = append(lines, "\n`/wardrobe add` — añadir")
+		lines = append(lines, "`/wardrobe remove` — eliminar")
+		b.Send(strings.Join(lines, "\n"))
+	}
+}
+
+func clothingTypeIcon(t string) string {
+	switch t {
+	case "thong":
+		return "🩲 "
+	case "bra":
+		return "👙 "
+	case "stockings":
+		return "🦵 "
+	case "socks":
+		return "🧦 "
+	case "collar":
+		return "💎 "
+	case "lingerie":
+		return "🌸 "
+	case "dress":
+		return "👗 "
+	case "top":
+		return "👚 "
+	case "bottom":
+		return "👘 "
+	case "shoes":
+		return "👠 "
+	case "accessory":
+		return "💍 "
+	default:
+		return "🎀 "
+	}
+}
+
+// handleClothingRemoveSelection procesa la selección de prenda a eliminar
+func (b *Bot) handleClothingRemoveSelection(text string) {
+	items, err := b.db.GetClothingItems()
+	if err != nil {
+		b.pendingAction = ""
+		b.Send("❌ Error obteniendo el guardarropa.")
+		return
+	}
+	var num int
+	fmt.Sscanf(strings.TrimSpace(text), "%d", &num)
+	if num < 1 || num > len(items) {
+		lines := []string{"❌ Número inválido. ¿Cuál quieres eliminar?"}
+		for i, c := range items {
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, c.Name))
+		}
+		b.Send(strings.Join(lines, "\n"))
+		return
+	}
+	selected := items[num-1]
+	b.db.DeleteClothingItem(selected.ID)
+	b.pendingAction = ""
+	b.Send(fmt.Sprintf("🗑 *%s* eliminada del guardarropa.", selected.Name))
+}
+
+// HandleWardrobePhoto procesa la foto de una prenda nueva: IA analiza, sube a Cloudinary y guarda en DB
+func (b *Bot) HandleWardrobePhoto(imgBytes []byte, mimeType string) {
+	b.pendingAction = ""
+
+	b.Send("_Analizando la prenda..._")
+
+	info, err := b.ai.DescribeClothing(imgBytes, mimeType)
+	if err != nil || info == nil {
+		b.Send("❌ Error analizando la foto.")
+		return
+	}
+
+	var photoURL string
+	if b.cloudinary != nil {
+		url, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/wardrobe")
+		if err != nil {
+			log.Printf("error subiendo foto de prenda: %v", err)
+		} else {
+			photoURL = url
+		}
+	}
+
+	itemID := fmt.Sprintf("clothing-%d", time.Now().UnixNano())
+	if err := b.db.SaveClothingItem(&storage.ClothingItem{
+		ID:          itemID,
+		Name:        info.Name,
+		Description: info.Description,
+		PhotoURL:    photoURL,
+		Type:        info.Type,
+		AddedAt:     time.Now(),
+	}); err != nil {
+		log.Printf("error guardando prenda en DB: %v", err)
+		b.Send("❌ Error guardando la prenda.")
+		return
+	}
+
+	b.Send(fmt.Sprintf(
+		"✅ *%s* añadida al guardarropa.\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_",
+		info.Name, info.Description,
+	))
+}
+
+// SendDailyOutfit asigna el outfit del día (llamado por el scheduler a las 10am)
+func (b *Bot) SendDailyOutfit() {
+	if b.state.DailyOutfitDate == todayStr() {
+		return // ya asignado hoy
+	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return // sin lock activo
+	}
+	if b.db == nil {
+		return
+	}
+	items, err := b.db.GetClothingItems()
+	if err != nil || len(items) == 0 {
+		return // sin prendas registradas
+	}
+
+	// Construir lista de nombres para la IA
+	wardrobeList := make([]string, 0, len(items))
+	for _, c := range items {
+		wardrobeList = append(wardrobeList, fmt.Sprintf("%s (%s)", c.Name, c.Type))
+	}
+
+	intensity := models.GetIntensity(b.daysLocked())
+	assignment, err := b.ai.GenerateOutfitAssignment(b.daysLocked(), wardrobeList, intensity)
+	if err != nil {
+		log.Printf("[outfit] error generando outfit: %v", err)
+		return
+	}
+
+	b.state.DailyOutfitDesc = assignment.Description
+	b.state.DailyPoseDesc = assignment.Pose
+	b.state.DailyOutfitDate = todayStr()
+	b.state.OutfitConfirmed = false
+	b.state.DailyOutfitComment = ""
+	b.mustSaveState()
+	b.pendingAction = "outfit_photo"
+
+	b.Send(fmt.Sprintf(
+		"👗 *OUTFIT DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Cuando estés lista, manda la foto._",
+		stripMarkdown(assignment.Message),
+	))
+}
+
+// HandleOutfitPhoto verifica que la foto coincida con el outfit asignado
+func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
+	if b.state.DailyOutfitDesc == "" || b.state.OutfitConfirmed {
+		b.pendingAction = ""
+		return
+	}
+
+	b.Send("_Verificando el outfit..._")
+
+	verdict, err := b.ai.VerifyOutfitPhoto(imgBytes, mimeType, b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
+	if err != nil {
+		b.Send("❌ Error verificando la foto. Inténtalo de nuevo.")
+		return
+	}
+
+	// Subir foto a Cloudinary
+	var outfitPhotoURL string
+	if b.cloudinary != nil {
+		url, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/outfits")
+		if err != nil {
+			log.Printf("error subiendo foto de outfit: %v", err)
+		} else {
+			outfitPhotoURL = url
+		}
+	}
+
+	switch verdict.Status {
+	case "approved":
+		b.pendingAction = ""
+		b.state.OutfitConfirmed = true
+		b.state.DailyOutfitPhotoURL = outfitPhotoURL
+		// Generar comentario de Papi
+		comment, err := b.ai.GenerateOutfitComment(b.daysLocked(), b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
+		if err != nil {
+			comment = "Perfecta. Así te quiero todo el día."
+		}
+		b.state.DailyOutfitComment = strings.TrimSpace(comment)
+		b.mustSaveState()
+		// Guardar en historial DB
+		if b.db != nil {
+			loc, _ := time.LoadLocation("America/Bogota")
+			b.db.SaveOutfitEntry(&storage.OutfitEntry{
+				ID:         fmt.Sprintf("outfit-%d", time.Now().UnixNano()),
+				Date:       time.Now().In(loc).Format("2006-01-02"),
+				OutfitDesc: b.state.DailyOutfitDesc,
+				PoseDesc:   b.state.DailyPoseDesc,
+				PhotoURL:   outfitPhotoURL,
+				Comment:    b.state.DailyOutfitComment,
+				CreatedAt:  time.Now(),
+			})
+		}
+		b.Send(fmt.Sprintf(
+			"✅ *OUTFIT CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
+			stripMarkdown(b.state.DailyOutfitComment),
+		))
+
+	case "retry":
+		b.Send(fmt.Sprintf("⚠️ *Casi — inténtalo de nuevo*\n\n_%s_", verdict.Reason))
+
+	case "rejected":
+		b.pendingAction = ""
+		b.state.OutfitConfirmed = false
+		b.mustSaveState()
+		b.Send(fmt.Sprintf(
+			"❌ *OUTFIT RECHAZADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Cámbiate y manda otra foto._",
+			verdict.Reason,
+		))
+		b.addWeeklyDebt("outfit del día rechazado")
 	}
 }

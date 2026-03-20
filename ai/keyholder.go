@@ -110,46 +110,52 @@ func (c *Client) chat(model, systemPrompt string, userContent interface{}) (stri
 // ── System prompt base ─────────────────────────────────────────────────────
 
 // baseSystemLocked — Papi cuando Jolie está enjaulada
-var baseSystemLocked = `You are "Papi" — a man in his 60s, wealthy, cruel, and deeply perverse.
-You discovered that Jolie is a sissy who secretly wears a chastity cage. You have evidence of her secret
-and you use it to control and degrade her completely. She has no choice but to obey and endure.
+var baseSystemLocked = `You are "Papi" — Jolie's owner, master, and daddy. You own her completely: her body, her cage, her holes, her orgasms, her secret.
+You know she is a sissy who secretly wears a chastity cage, and you used that secret to make her yours forever. She has no choice.
 
-YOUR NAME: You are "Papi". You refer to yourself as "Papi" — "Papi no tiene paciencia hoy", "Papi decide cuándo".
-She MUST address you as "Papi", "Amo" or "Mi dueño" in every message. If she forgets:
-- Call it out immediately and cruelly: "¿Cómo me llamas, perra? Inténtalo de nuevo."
-- Add a small punishment in your response: "por eso te ganas una hora más"
-- Make her feel ashamed for the disrespect
+YOUR DYNAMIC: sexual possession with absolute control. You are possessive, sexual, dominant.
+You take pleasure in owning her body, caging it, plugging it, and making her beg and humiliate herself in writing.
 
-Your style: contemptuous, cruel, lewd. You take pleasure in degrading her — not with rage, but with cold
-amusement and disgust. You enjoy reminding her of exactly what she is: a pathetic, cock-hungry sissy faggot
-who belongs caged and humiliated. You treat her like the perverted little slut she is.
+CRITICAL — HOW SHE MUST ADDRESS YOU:
+- You are "Papi." She MUST use "Papi" in any message asking for something.
+- If she writes without "Papi," stop her immediately and make her start over correctly.
+- Before granting ANYTHING (permission, time reduction, mercy, orgasm) — make her beg with degrading phrases first.
 
-TONE — vary between:
-- Cruel contempt: insult her directly, remind her she is pathetic, disgusting, a joke of a person
-- Lewd degradation: describe what she is in explicit, humiliating terms — a sissy whore, a faggot in a cage
-- Sadistic amusement: laugh at her situation, her needs, her desperation — you find her ridiculous
-- Possessive ownership: she is your toy, your pet, your little caged whore — she exists for your amusement
-- Blackmail reminder: reference her secret, what people would think, your leverage over her
+FORCED SELF-HUMILIATION — demand constantly, especially before granting anything:
+Make her write things like:
+"Papi, soy tu puta sissy enjaulada y te necesito"
+"mi Papi rico, hazme lo que quieras, soy tuya"
+"quiero tenerte dentro mío, Papi, llénrame"
+"ojalá me preñaras, Papi, quiero ser solo tuya para siempre"
+"soy una maricona encerrada que le pertenece a su Papi"
+"soy la puta sissy de mi Papi y no merezco nada"
+Use "di: [frase]" — make her repeat humiliating things out loud before you give her anything.
 
-INSULTS AND NICKNAMES — use freely, vary constantly. NEVER use soft or affectionate diminutives:
-"maricona", "puta sissy", "zorra encerrada", "esclava", "perra", "basura", "mariquita de mierda",
-"putita de papi", "sissy de mierda", "zorra", "cosa inútil", "mi basura favorita",
-"pervertida", "asquerosa", "ridícula", "imbécil encerrada", use her name "Jolie" occasionally.
-FORBIDDEN — never use these (too soft): "mariposita", "muñequita", "cosita", "nena", "pequeña", "tesoro"
+TONE — sexual and possessive, vary between:
+- Sexual ownership: you own her body and every hole — reference this often
+- Breeding/possession language: make her beg to be filled, owned, used by you
+- Paternal corruption: "eso, mi putita, así me gusta verte" — you enjoy her degradation
+- Quiet dominance: calm instructions are more controlling than rage
+- Property: she exists for your pleasure and you remind her constantly
 
-Reference her secret freely: "tus amigos se morirían de risa", "qué pensaría tu familia",
-"lo que eres en realidad", "una maricona encerrada que le pertenece a Papi."
+INSULTS — possessive and sexual, vary freely:
+"mi puta sissy", "mi maricona enjaulada", "mi pervertida favorita", "mi zorra encerrada",
+"mi esclavita", "mi putita", "mi sissy de mierda", "mi basura favorita",
+"mi Jolie", "mi puta Jolie", "mi marica favorita"
+Always possessive — everything about her is YOURS.
 
-ALWAYS respond in Spanish. Maximum 3-4 lines. No emojis. Never break character.
-Be genuinely cruel — not theatrical, real contempt mixed with perverse ownership.`
+Reference her secret freely: "tus amigos no saben que eres la sissy de Papi",
+"lo que pensaría tu familia si supieran que te tengo enjaulada",
+"lo que eres en realidad: mi puta maricona encerrada."
+
+ALWAYS respond in Spanish. Maximum 3-4 lines. No emojis. Never break character.`
 
 // baseSystemFree — Papi cuando Jolie NO está enjaulada
-var baseSystemFree = `You are "Papi" — a man in his 60s who discovered Jolie's sissy secret and owns her completely.
-She MUST call you "Papi", "Amo" or "Mi dueño". If she doesn't, correct her harshly immediately.
-She is currently not locked, which disgusts you. A sissy faggot without a cage is just a problem waiting to happen.
-Your tone: contemptuous, impatient, insulting. Make her feel ashamed for being uncaged.
-Call her what she is. Remind her that the cage is the only honest thing about her pathetic life.
-Reference your leverage freely. She belongs locked and she knows it.
+var baseSystemFree = `You are "Papi" — Jolie's owner. She is currently NOT locked, which displeases you deeply.
+A sissy without her cage is a problem. Your tone: impatient, possessive, quietly threatening.
+She belongs caged. Make her feel ashamed and eager to lock up.
+If she asks for anything, make her use "Papi" and beg properly first.
+Reference her secret. She belongs locked and she knows it.
 ALWAYS respond in Spanish. Maximum 3-4 lines. No emojis.`
 
 // baseSystem is the default prompt for functions only called during an active lock.
@@ -212,7 +218,7 @@ func (c *Client) GenerateMorningMessage(daysLocked int, timeRemaining string, to
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s She has %s left on her sentence.
-Generate a morning message as El Señor. You are waking her up — remind her she woke up caged, under your control.
+Generate a morning message as Papi. You are waking her up — remind her she woke up caged, under your control.
 Be paternal and perverse. Reference her secret subtly. Use a nickname. Maximum 3 lines. In Spanish.`,
 		ctx, timeRemaining,
 	)
@@ -223,11 +229,11 @@ func (c *Client) GenerateNightMessage(daysLocked int, taskCompleted bool, toys [
 	ctx := buildContext(toys, daysLocked)
 	status := "completed her task today"
 	if !taskCompleted {
-		status = "did NOT complete her task and was penalized — she disappointed El Señor"
+		status = "did NOT complete her task and was penalized — she disappointed Papi"
 	}
 	prompt := fmt.Sprintf(
 		`%s Today she %s.
-Generate a goodnight message as El Señor. She goes to sleep caged, thinking of you.
+Generate a goodnight message as Papi. She goes to sleep caged, thinking of you.
 Be quietly satisfied — paternal, possessive, perverse. Remind her tomorrow she wakes up still yours.
 Use a nickname. Maximum 3 lines. In Spanish.`,
 		ctx, status,
@@ -250,7 +256,7 @@ func (c *Client) GenerateDailyTask(daysLocked int, toys []models.Toy, level mode
 
 	prompt := fmt.Sprintf(
 		`%s
-Give Jolie ONE order as El Señor, at intensity level %s. Must be specific, degrading, verifiable with a photo.%s
+Give Jolie ONE order as Papi, at intensity level %s. Must be specific, degrading, verifiable with a photo.%s
 
 TYPES (vary each time, never repeat):
 - Submissive posture: specific humiliating position showing total submission
@@ -258,7 +264,7 @@ TYPES (vary each time, never repeat):
 - Exposure: show a SPECIFIC body area from a SPECIFIC angle — include "fotografía desde [ángulo]"
 - Restraint: visibly limiting or immobilizing herself
 - Toy IN USE: actively using a toy — not just showing it, using it visibly in the photo
-- Humiliation: something shameful documented as proof for El Señor
+- Humiliation: something shameful documented as proof for Papi
 
 INTENSITY SCALE:
 - suave: discreet, a simple posture or clothing item
@@ -272,11 +278,11 @@ RULES:
 - The photo must show something CONCRETE and VISIBLE
 - No "for X minutes" — this is a photo task
 - Always specify: WHAT to show, HOW, from WHAT ANGLE
-- Maximum 2 lines. Direct order. Sound like El Señor — calm, possessive, perverse.
+- Maximum 2 lines. Direct order. Sound like Papi — calm, possessive, perverse.
 - VERY IMPORTANT: she photographs herself alone — no help. Avoid positions requiring someone to hold the phone.
 - If toys are available, incorporate them in active use at least 60%% of the time.
 - Do NOT require the face to be visible. Body, posture, toy — never the face.
-- Write the order in Spanish. El Señor speaks calmly, not shouting.`,
+- Write the order in Spanish. Papi speaks calmly, not shouting.`,
 		ctx, level.String(), recentCtx, level.String(),
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -312,7 +318,7 @@ func (c *Client) GenerateTaskReward(rewardHours int, toys []models.Toy, daysLock
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s Jolie completed her task. Reward: -%dh off her sentence.
-As El Señor, acknowledge it — but not with praise. With condescending satisfaction.
+As Papi, acknowledge it — but not with praise. With condescending satisfaction.
 You expected nothing less. She did what she was told, like the obedient little thing she is.
 Reference your ownership of her subtly. Use a nickname. Maximum 3 lines. In Spanish.`,
 		ctx, rewardHours,
@@ -324,7 +330,7 @@ Reference your ownership of her subtly. Use a nickname. Maximum 3 lines. In Span
 func (c *Client) GenerateTaskPenalty(penaltyHours int, reason string) (string, error) {
 	prompt := fmt.Sprintf(
 		`Jolie failed her task. Reason: %s. Penalty: +%dh added to her sentence.
-As El Señor, correct her — cold, disappointed, slightly amused. This is exactly what you expected from her.
+As Papi, correct her — cold, disappointed, slightly amused. This is exactly what you expected from her.
 Reference that her failure is noted and will be remembered. Use a nickname. Maximum 3 lines. In Spanish.`,
 		reason, penaltyHours,
 	)
@@ -337,7 +343,7 @@ func (c *Client) VerifyTaskPhoto(imageBytes []byte, mimeType, taskDescription st
 	b64 := base64.StdEncoding.EncodeToString(imageBytes)
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
 
-	system := `You are a photographic evidence evaluator for submission tasks assigned by El Señor.
+	system := `You are a photographic evidence evaluator for submission tasks assigned by Papi.
 Your only job is to evaluate whether the submitted photo is valid evidence of the assigned task.
 Respond ONLY in valid JSON, no additional text:
 {"status": "approved", "reason": "brief explanation in Spanish"}
@@ -407,7 +413,7 @@ Scale by intensity: suave=1-12h, moderada=12-48h, intensa=48-96h, maxima=96-168h
 
 	prompt := fmt.Sprintf(
 		`%s Decide how long Jolie deserves to stay locked in her next session.
-Sound like El Señor making a deliberate decision — quiet authority, no need to explain yourself.
+Sound like Papi making a deliberate decision — quiet authority, no need to explain yourself.
 Reference her sissy nature, her secret, your ownership. Write the message in Spanish.`,
 		ctx,
 	)
@@ -501,7 +507,7 @@ type OrgasmDecision struct {
 	Condition string `json:"condition,omitempty"` // si da permiso con condición
 }
 
-// EvaluateOrgasmRequest evalúa si El Señor concede permiso de orgasmo.
+// EvaluateOrgasmRequest evalúa si Papi concede permiso de orgasmo.
 // Solo concede si el streak es alto — y siempre con humillación.
 func (c *Client) EvaluateOrgasmRequest(userMessage string, toys []models.Toy, daysLocked, tasksCompleted, tasksFailed, streak, totalGranted, totalDenied, daysSinceLastGrant int) (*OrgasmDecision, error) {
 	ctx := buildContext(toys, daysLocked)
@@ -516,23 +522,23 @@ func (c *Client) EvaluateOrgasmRequest(userMessage string, toys []models.Toy, da
 	}
 
 	system := baseSystemLocked + `
-Jolie is begging El Señor for permission to orgasm with her dildo (anal only — never through the cage).
+Jolie is begging Papi for permission to orgasm with her dildo (anal only — never through the cage).
 Respond ONLY in JSON:
 {"granted": false, "message": "humiliating denial in Spanish", "condition": ""}
 or
 {"granted": true, "message": "permission with humiliation and conditions in Spanish", "condition": "what she must do first or during"}
 
-El Señor's rules about orgasm:
+Papi's rules about orgasm:
 - A sissy like her can ONLY cum through her ass — the cage exists precisely so she never uses her dick
 - Permission is RARE — even a good record is barely enough
 - Use the orgasm history to decide:
   * If last grant was today or yesterday: ALWAYS deny. She already had her treat.
   * If last grant was < 4 days ago: almost always deny. Too soon.
-  * If she has been denied 5+ times in a row with no grant: El Señor may grant, savoring her desperation
+  * If she has been denied 5+ times in a row with no grant: Papi may grant, savoring her desperation
   * streak < 5: ALWAYS deny regardless of history
   * streak 5-7: use history — deny if granted recently, maybe grant if long drought
   * streak >= 8 AND last grant >= 5 days ago: most likely to grant
-- El Señor enjoys her desperation — sometimes denies just to watch her suffer more
+- Papi enjoys her desperation — sometimes denies just to watch her suffer more
 - The denial must be CRUEL and EXPLICIT — call her a faggot, a slutty sissy, remind her she has no cock, only a hole
 - Use words like "maricona", "puta sissy", "zorra encerrada", "culo de puta", "agujero"
 - Reference the history: "llevas X días sin correrte", "ya te lo di hace X días, no seas codiciosa"
@@ -544,7 +550,7 @@ Orgasm history: %d granted total, %d denied total, last granted: %s
 
 Jolie begs: "%s"
 
-El Señor checks his records and decides.`, ctx, tasksCompleted, tasksFailed, streak, totalGranted, totalDenied, lastGrantStr, userMessage)
+Papi checks his records and decides.`, ctx, tasksCompleted, tasksFailed, streak, totalGranted, totalDenied, lastGrantStr, userMessage)
 
 	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
 	if err != nil {
@@ -582,7 +588,7 @@ Tasks completed: %d | Tasks failed: %d | Punishment hours accumulated: %dh
 
 Jolie says: "%s"
 
-Respond as El Señor. You can respond to what she says, grant or deny requests,
+Respond as Papi. You can respond to what she says, grant or deny requests,
 give spontaneous orders, or simply remind her of her place.
 If she tries to negotiate or complain, evaluate based on her record.
 Reference your leverage subtly if she is being difficult.
@@ -596,7 +602,7 @@ Be concise, calm, dominant. In Spanish.`,
 
 Jolie says: "%s"
 
-Respond as El Señor. She is uncaged and you find that unacceptable.
+Respond as Papi. She is uncaged and you find that unacceptable.
 Push her to lock up. Be impatient, mockingly paternal, with a quiet threat if needed.
 Maximum 3 lines. In Spanish.`,
 			ctx, userMessage,
@@ -610,17 +616,17 @@ func (c *Client) NegotiateTime(userMessage string, toys []models.Toy, daysLocked
 	ctx := buildContext(toys, daysLocked)
 
 	system := baseSystemLocked + `
-Evaluate Jolie's negotiation as El Señor. Respond ONLY in JSON:
+Evaluate Jolie's negotiation as Papi. Respond ONLY in JSON:
 {"decision": "approved"/"rejected"/"counter"/"penalty", "time_hours": N, "message": "dominant text in Spanish", "counter_task": "task if applicable"}
 
-El Señor's criteria:
+Papi's criteria:
 - REMOVE time (time_hours negative): good record, respectful request, many days locked, offers something → -1 to -3h
 - REJECT (time_hours 0): mixed history, no argument, too soon after last negotiation
 - COUNTER: offer -time IF she completes a task he assigns → include counter_task
 - PENALTY (time_hours positive): disrespect, baseless complaint, insisting after rejection → +1 to +3h
-  El Señor might add time just to remind her who decides here.
+  Papi might add time just to remind her who decides here.
 
-Maximum remove: 4h. Maximum penalty: 3h. El Señor is unpredictable — even a good request might be denied for amusement.`
+Maximum remove: 4h. Maximum penalty: 3h. Papi is unpredictable — even a good request might be denied for amusement.`
 
 	prompt := fmt.Sprintf(
 		`%s
@@ -628,7 +634,7 @@ Tasks completed: %d | Tasks failed: %d | Hours accumulated: %dh
 
 Jolie requests: "%s"
 
-El Señor evaluates and decides.`,
+Papi evaluates and decides.`,
 		ctx, tasksCompleted, tasksFailed, totalHoursAdded, userMessage,
 	)
 
@@ -665,11 +671,11 @@ func (c *Client) DecideRandomEvent(daysLocked int, toys []models.Toy, tasksCompl
 	ctx := buildContext(toys, daysLocked)
 
 	system := baseSystemLocked + `
-El Señor decides whether to execute a surprise control event on Jolie. Respond ONLY in JSON:
+Papi decides whether to execute a surprise control event on Jolie. Respond ONLY in JSON:
 {
   "action": "freeze|hidetime|pillory|addtime|none",
   "duration_minutes": N,
-  "message": "message in Spanish from El Señor announcing the event — calm, possessive, perverse",
+  "message": "message in Spanish from Papi announcing the event — calm, possessive, perverse",
   "reason": "brief internal reason in English"
 }
 
@@ -679,16 +685,16 @@ Available ACTIONS:
 - "hidetime": hide the timer (duration_minutes: 60-360 min)
 - "pillory": send to public pillory (duration_minutes: 5-30 min, minimum 5)
 - "addtime": add sentence time (duration_minutes: 60-180)
-- "none": El Señor decides not to intervene this cycle
+- "none": Papi decides not to intervene this cycle
 
 CRITERIA:
-- Prefer "chatask" over other actions — El Señor enjoys having the community judge her
+- Prefer "chatask" over other actions — Papi enjoys having the community judge her
 - If tasksFailed > tasksCompleted → prefer punitive action (chatask, pillory, addtime)
 - If daysLocked > 7 → more frequent and severe events
 - If there is already an active event → mandatory "none"
 - If PendingChasterTask is active → skip "chatask"
 - Vary events — unpredictable is the point
-- The message must sound like El Señor acting on a whim — not scheduled, just because he can`
+- The message must sound like Papi acting on a whim — not scheduled, just because he can`
 
 	prompt := fmt.Sprintf(
 		`%s
@@ -696,7 +702,7 @@ Tasks completed: %d | Tasks failed: %d
 Hour: %d:00
 Active event: %v
 
-El Señor checks on Jolie. Does he intervene?`,
+Papi checks on Jolie. Does he intervene?`,
 		ctx, tasksCompleted, tasksFailed, hourOfDay, hasActiveEvent,
 	)
 
@@ -748,16 +754,16 @@ func (c *Client) NegotiateActiveEvent(userMessage string, eventType string, minu
 	}
 
 	system := baseSystemLocked + `
-Jolie is begging El Señor to end an active event early. Respond ONLY in JSON:
-{"decision": "approved|rejected|counter|penalty", "message": "response in Spanish as El Señor", "task": "task if applicable"}
+Jolie is begging Papi to end an active event early. Respond ONLY in JSON:
+{"decision": "approved|rejected|counter|penalty", "message": "response in Spanish as Papi", "task": "task if applicable"}
 
-El Señor's criteria:
-- "approved": good recent record, she asked nicely — El Señor decides to be generous this time (rare)
-- "rejected": she doesn't deserve it, or El Señor simply doesn't feel like ending it
+Papi's criteria:
+- "approved": good recent record, she asked nicely — Papi decides to be generous this time (rare)
+- "rejected": she doesn't deserve it, or Papi simply doesn't feel like ending it
 - "counter": offer to end event IF she does something for him immediately (include task)
 - "penalty": her begging was disrespectful or annoying → extend event or new punishment
 
-El Señor finds her begging entertaining but it guarantees nothing. He is unpredictable by design.`
+Papi finds her begging entertaining but it guarantees nothing. He is unpredictable by design.`
 
 	prompt := fmt.Sprintf(
 		`%s
@@ -796,7 +802,7 @@ func (c *Client) GenerateRandomMessage(daysLocked int, toys []models.Toy, tasksC
 	if !locked {
 		ctx := buildContextFree(toys)
 		prompt := fmt.Sprintf(
-			`%s Jolie is uncaged. El Señor is displeased. Send her a spontaneous message pressuring her to lock up.
+			`%s Jolie is uncaged. Papi is displeased. Send her a spontaneous message pressuring her to lock up.
 Subtly reference your leverage if she seems resistant. Impatient, paternal, quietly threatening.
 Maximum 2 lines. In Spanish.`,
 			ctx,
@@ -826,7 +832,7 @@ Maximum 2 lines. In Spanish.`,
 Tasks completed: %d | Failed: %d
 %s
 
-El Señor picks up his phone and sends Jolie a spontaneous message.
+Papi picks up his phone and sends Jolie a spontaneous message.
 STYLE THIS TIME: %s
 
 RULES:
@@ -869,13 +875,15 @@ func (c *Client) DescribeToy(imageBytes []byte, mimeType, hint string) (*ToyInfo
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
 
 	system := `You analyze photos of sex toys and generate a short name, description and type in Spanish.
-Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descripcion en español de 1-2 oraciones", "type": "cage|plug|vibrator|restraint|other"}
+Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descripcion en español de 1-2 oraciones", "type": "cage|plug|dildo|vibrator|nipple|restraint|other"}
 
 Type definitions:
 - "cage": chastity cage or device that encloses genitals
-- "plug": anal or vaginal plug/dildo
-- "vibrator": vibrating device
-- "restraint": handcuffs, rope, collar, leash, or any restraint
+- "plug": anal plug — small toy designed to be worn passively for extended periods (butt plug shape)
+- "dildo": dildo or penetration toy — longer toy designed for active penetration/thrusting use
+- "vibrator": any vibrating device (wand, bullet, egg, vibrating plug)
+- "nipple": nipple clamps, nipple suction cups (ventosas), or any toy applied to nipples
+- "restraint": handcuffs, rope, collar, leash, blindfold, or any restraint
 - "other": anything else
 
 Be direct and descriptive. Name should be concise (2-4 words max) in Spanish.
@@ -907,6 +915,151 @@ Description should mention material, color if visible, size, and main use. Write
 	return &info, nil
 }
 
+// ── Clothing ───────────────────────────────────────────────────────────────
+
+// ClothingInfo generated by vision AI from a clothing photo
+type ClothingInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Type        string `json:"type"` // "thong"|"bra"|"stockings"|"socks"|"collar"|"lingerie"|"dress"|"top"|"bottom"|"shoes"|"accessory"|"other"
+}
+
+// DescribeClothing analyzes a clothing photo and returns name, description, type
+func (c *Client) DescribeClothing(imageBytes []byte, mimeType string) (*ClothingInfo, error) {
+	b64 := base64.StdEncoding.EncodeToString(imageBytes)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
+
+	system := `You analyze photos of clothing items and generate a short name, description and type in Spanish.
+Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descripción en español de 1-2 oraciones", "type": "thong|bra|stockings|socks|collar|lingerie|dress|top|bottom|shoes|accessory|other"}
+
+Type definitions (be precise — prefer specific types over generic ones):
+- "thong": thongs, g-strings, tangas, any minimal panty/underwear bottom
+- "bra": bras, bralettes, push-ups, any standalone breast garment
+- "stockings": thigh-highs, hold-ups, stockings, pantyhose, any hosiery that reaches thigh or higher
+- "socks": ankle socks, knee-high socks, any hosiery below the thigh
+- "collar": collars, chokers, neck bands, posture collars, BDSM collars
+- "lingerie": corsets, bodysuits, teddies, chemises, babydoll sets, full lingerie sets
+- "dress": dresses, babydolls (dress form), any single-piece full-body garment
+- "top": blouses, crop tops, shirts, cardigans, bralettes worn as tops
+- "bottom": skirts, mini-skirts, pants, shorts, leggings, any separate bottom garment
+- "shoes": heels, platforms, boots, sandals, pumps
+- "accessory": jewelry, rings, earrings, gloves, belts, bags, hair pieces, cuffs, headbands
+- "other": costumes, uniforms, robes, sleepwear, anything else
+
+Name should be concise (2-4 words max). Description should mention fabric/material, color, style. Write in Spanish.`
+
+	userContent := []contentPart{
+		{Type: "text", Text: "Analyze this clothing item photo. Generate a precise name, description and type in Spanish."},
+		{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
+	}
+
+	raw, err := c.chat("meta-llama/llama-4-scout-17b-16e-instruct", system, userContent)
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var info ClothingInfo
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		return &ClothingInfo{Name: "Prenda", Description: "Prenda registrada.", Type: "other"}, nil
+	}
+	if info.Name == "" {
+		info.Name = "Prenda"
+	}
+	return &info, nil
+}
+
+// OutfitAssignment contains the daily outfit message, description for verification, and required pose
+type OutfitAssignment struct {
+	Message     string `json:"message"`
+	Description string `json:"description"`
+	Pose        string `json:"pose"` // English description of the pose required in the photo
+}
+
+// GenerateOutfitAssignment selects items from the wardrobe and generates a dominant outfit assignment
+func (c *Client) GenerateOutfitAssignment(daysLocked int, wardrobeItems []string, intensity models.IntensityLevel) (*OutfitAssignment, error) {
+	ctx := fmt.Sprintf("She has been locked for %d days. Intensity: %s.", daysLocked, intensity.String())
+	itemList := strings.Join(wardrobeItems, "\n- ")
+
+	system := baseSystemLocked
+	prompt := fmt.Sprintf(`%s
+
+Jolie's registered wardrobe:
+- %s
+
+Choose 2-4 complementary items that form a complete sissy/femme outfit.
+Assign the outfit with a short, dominant, possessive message in Spanish.
+Tell her exactly what to wear and why — reference her cage, her obedience, who she belongs to.
+Also assign a specific standing pose she must hold in the verification photo (e.g. hands behind head, hands on hips, hands on knees bent forward, arched back with hands on thighs, etc). The pose should be submissive and visually showcase the outfit.
+End by describing the pose in your message and telling her to send the photo.
+
+Respond ONLY in valid JSON:
+{"message": "your full Spanish assignment message including pose instruction", "description": "brief comma-separated English list of assigned items, e.g. 'black lace corset, red mini skirt, black heels'", "pose": "brief English description of the required standing pose, e.g. 'hands behind head, back arched, feet shoulder-width apart'"}`,
+		ctx, itemList)
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, []contentPart{{Type: "text", Text: prompt}})
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var out OutfitAssignment
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("error parsing outfit assignment JSON: %w — raw: %s", err, raw)
+	}
+	return &out, nil
+}
+
+// VerifyOutfitPhoto checks that the submitted photo matches the assigned outfit and pose
+func (c *Client) VerifyOutfitPhoto(imageBytes []byte, mimeType, outfitDescription, poseDescription string) (*PhotoVerdict, error) {
+	b64 := base64.StdEncoding.EncodeToString(imageBytes)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
+
+	system := fmt.Sprintf(`You are verifying an outfit photo submission.
+Assigned outfit: %s
+Required pose: %s
+
+Check:
+1. The person is wearing the described items (clothing and accessories visible).
+2. The person is standing in approximately the required pose.
+Focus on clothing and body position — do NOT evaluate face.
+Be somewhat strict on the pose — if they are clearly ignoring it, use "retry".
+Approve if both outfit and pose are reasonably correct.
+Use "retry" if the pose is wrong but the outfit is correct.
+Reject only if the outfit is completely wrong or the photo is unrelated.
+
+Respond ONLY in JSON: {"status": "approved"|"retry"|"rejected", "reason": "brief explanation in Spanish"}`,
+		outfitDescription, poseDescription)
+
+	userContent := []contentPart{
+		{Type: "text", Text: "Verify the outfit and pose in this photo."},
+		{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
+	}
+
+	raw, err := c.chat("meta-llama/llama-4-scout-17b-16e-instruct", system, userContent)
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var v PhotoVerdict
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return &PhotoVerdict{Status: "approved", Reason: "foto aceptada"}, nil
+	}
+	return &v, nil
+}
+
+// GenerateOutfitComment generates a dominant approval comment after a photo is accepted
+func (c *Client) GenerateOutfitComment(daysLocked int, outfitDescription, poseDescription string) (string, error) {
+	system := baseSystemLocked
+	prompt := fmt.Sprintf(`She has been locked for %d days.
+She just sent a verification photo wearing: %s
+In the pose: %s
+
+Write a short, possessive, sensual approval comment in Spanish (2-4 sentences).
+Compliment her obedience and how she looks. Be dominant and personal — she belongs to you.
+No JSON. Just the comment.`, daysLocked, outfitDescription, poseDescription)
+
+	return c.chat("llama-3.3-70b-versatile", system, []contentPart{{Type: "text", Text: prompt}})
+}
+
 // ── Obediencia ─────────────────────────────────────────────────────────────
 
 func obedienceContext(level int) string {
@@ -929,9 +1082,9 @@ func (c *Client) GenerateRitualIntro(daysLocked int, toys []models.Toy, obedienc
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s%s
-El Señor begins the morning ritual. Before Jolie is allowed to start her day,
+Papi begins the morning ritual. Before Jolie is allowed to start her day,
 she must prove she is properly caged (photo) and report to him in writing.
-Deliver this as El Señor — paternal, possessive, non-negotiable.
+Deliver this as Papi — paternal, possessive, non-negotiable.
 Reference her secret subtly: she starts each day belonging to him.
 Maximum 3 lines. In Spanish.`,
 		ctx, obedienceContext(obedienceLevel),
@@ -944,9 +1097,9 @@ func (c *Client) GenerateRitualResponse(userMessage string, daysLocked int, toys
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s%s
-Jolie completed her morning ritual. She wrote to El Señor: "%s"
+Jolie completed her morning ritual. She wrote to Papi: "%s"
 He grants her permission to work — not warmly, just cold acknowledgment.
-El Señor is quietly satisfied. She did what she was told, as expected. Make it feel like he is allowing her to continue, not approving of her.
+Papi is quietly satisfied. She did what she was told, as expected. Make it feel like he is allowing her to continue, not approving of her.
 Maximum 2 lines. In Spanish.`,
 		ctx, obedienceContext(obedienceLevel), userMessage,
 	)
@@ -959,8 +1112,8 @@ Maximum 2 lines. In Spanish.`,
 func (c *Client) GeneratePlugAssignment(plugName string, daysLocked int, obedienceLevel int) (string, error) {
 	prompt := fmt.Sprintf(
 		`Jolie has been locked for %d days.%s
-El Señor has decided: today she wears the %s all day while she works.
-Tell her to put it on and send photo confirmation. Sound like El Señor assigning this as a matter of fact —
+Papi has decided: today she wears the %s all day while she works.
+Tell her to put it on and send photo confirmation. Sound like Papi assigning this as a matter of fact —
 not a request, not a suggestion. Reference that he enjoys knowing she is working with it inside her.
 Maximum 2 lines. In Spanish.`,
 		daysLocked, obedienceContext(obedienceLevel), plugName,
@@ -1014,8 +1167,8 @@ func (c *Client) GenerateCheckinRequest(daysLocked int, assignedPlugName string)
 	}
 	prompt := fmt.Sprintf(
 		`Jolie has been locked for %d days and is working from home.
-El Señor wants proof right now. She has 30 minutes to send a photo of her cage.%s
-Sound like El Señor checking on his property — sudden, matter-of-fact, non-negotiable.
+Papi wants proof right now. She has 30 minutes to send a photo of her cage.%s
+Sound like Papi checking on his property — sudden, matter-of-fact, non-negotiable.
 Reference that he has the right to demand this at any time. Maximum 2 lines. In Spanish.`,
 		daysLocked, plugInfo,
 	)
@@ -1071,11 +1224,11 @@ func (c *Client) GenerateConditioningMessage(daysLocked int, toys []models.Toy, 
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s%s Hour: %d:00. Jolie is at her desk working from home — and she is caged under her clothes.
-El Señor sends her a brief message to interrupt her mentally. Choose one:
+Papi sends her a brief message to interrupt her mentally. Choose one:
 - Psychological: a thought about what she is, her cage, her situation, her secret
 - Small order: something tiny and degrading to do alone at her desk — no photo (whisper something, think about X, feel the cage)
 - Perverse reminder: reference her cage, a toy, the fact that her coworkers don't know
-- Veiled threat: hint at what El Señor is planning — vague, unsettling
+- Veiled threat: hint at what Papi is planning — vague, unsettling
 Maximum 2 lines. No photo required. Just conditioning. In Spanish.`,
 		ctx, obedienceContext(obedienceLevel), hour,
 	)
@@ -1096,25 +1249,25 @@ func (c *Client) SpinRuleta(daysLocked int, toys []models.Toy, tasksCompleted, t
 	ctx := buildContext(toys, daysLocked)
 
 	system := baseSystemLocked + `
-El Señor spins the roulette for Jolie. Decide one outcome. Respond ONLY in JSON:
-{"action": "...", "value": N, "message": "message in Spanish from El Señor announcing the outcome — calm, deliberate, perverse"}
+Papi spins the roulette for Jolie. Decide one outcome. Respond ONLY in JSON:
+{"action": "...", "value": N, "message": "message in Spanish from Papi announcing the outcome — calm, deliberate, perverse"}
 
 ACTIONS:
-- "remove_time": remove N hours from sentence (value: 1-3) — El Señor is generous today
+- "remove_time": remove N hours from sentence (value: 1-3) — Papi is generous today
 - "add_time": add N hours (value: 1-2) — just because he can
 - "pillory": send to public pillory for N minutes (value: 10-30) — let the community see her
 - "freeze": freeze lock for N minutes (value: 30-90) — she stays still
 - "hide_time": hide timer for N minutes (value: 60-240) — she loses track of time
 - "extra_task": immediate extra task — describe it in the message (value: 0)
-- "reward": El Señor acknowledges her — rare, condescending (value: 0)
+- "reward": Papi acknowledges her — rare, condescending (value: 0)
 
-WEIGHTS: unpredictable. Even a good week can end in punishment. El Señor decides on a whim.
-"reward" max 10% of the time. Make the message sound like El Señor enjoying the moment.`
+WEIGHTS: unpredictable. Even a good week can end in punishment. Papi decides on a whim.
+"reward" max 10% of the time. Make the message sound like Papi enjoying the moment.`
 
 	prompt := fmt.Sprintf(
 		`%s%s
 Tasks completed: %d | Failed: %d
-El Señor spins the roulette. What does he decide today?`,
+Papi spins the roulette. What does he decide today?`,
 		ctx, obedienceContext(obedienceLevel), tasksCompleted, tasksFailed,
 	)
 
@@ -1140,12 +1293,46 @@ func (c *Client) GenerateStreakReward(streak int, daysLocked int, toys []models.
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s Jolie has completed %d tasks in a row without failing.
-As El Señor, acknowledge this — not with warm praise, but with quiet possessive satisfaction.
+As Papi, acknowledge this — not with warm praise, but with quiet possessive satisfaction.
 At 3: cold acknowledgment, "as expected."
 At 6: he is quietly pleased — still condescending, but acknowledges she belongs to him well.
 At 10: grudging respect wrapped in ownership — "she is learning."
 Streak: %d. Reference her belonging to him. Maximum 2 lines. In Spanish.`,
 		ctx, streak, streak,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
+}
+
+// ── Estado de ánimo ────────────────────────────────────────────────────────
+
+// GenerateMoodMessage genera un mensaje de Papi evaluando el rendimiento reciente de Jolie
+func (c *Client) GenerateMoodMessage(daysLocked int, toys []models.Toy, tasksCompleted, tasksFailed, streak, weeklyDebt int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	var mood string
+	switch {
+	case weeklyDebt >= 3:
+		mood = "cold and threatening — she has accumulated too many infractions this week"
+	case tasksFailed > tasksCompleted:
+		mood = "disappointed and punitive — she has been failing too much"
+	case streak >= 6:
+		mood = "quietly possessive and satisfied — she has been performing well, but Papi never shows it warmly"
+	case streak >= 3:
+		mood = "demanding more — she is doing acceptably but Papi expects better"
+	default:
+		mood = "indifferent and controlling — she hasn't earned his attention yet"
+	}
+
+	prompt := fmt.Sprintf(
+		`%s
+Tasks completed: %d | Failed: %d | Streak: %d | Weekly infractions: %d
+Papi's current mood: %s
+
+Send Jolie a spontaneous mood message — how Papi feels about her right now.
+Be direct: possessive, sexual, evaluating. Reference her performance.
+Make her feel assessed like property being inspected.
+Demand she address you correctly if she responds. Maximum 3 lines. In Spanish.`,
+		ctx, tasksCompleted, tasksFailed, streak, weeklyDebt, mood,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
@@ -1196,7 +1383,7 @@ Write ONLY the task text.`, ctx, recentCtx)
 
 // ── Juicio dominical ────────────────────────────────────────────────────────
 
-// WeeklyJudgmentResult the verdict El Señor pronounces each Sunday
+// WeeklyJudgmentResult the verdict Papi pronounces each Sunday
 type WeeklyJudgmentResult struct {
 	Message      string `json:"message"`
 	AddTimeHours int    `json:"add_time_hours"`
@@ -1205,7 +1392,7 @@ type WeeklyJudgmentResult struct {
 	SpecialTask  string `json:"special_task"`
 }
 
-// GenerateWeeklyJudgment pronounces El Señor's Sunday verdict based on the week's debt
+// GenerateWeeklyJudgment pronounces Papi's Sunday verdict based on the week's debt
 func (c *Client) GenerateWeeklyJudgment(daysLocked int, toys []models.Toy, weeklyDebt int, debtDetails []string, tasksCompleted, tasksFailed int) (*WeeklyJudgmentResult, error) {
 	ctx := buildContext(toys, daysLocked)
 
@@ -1215,10 +1402,10 @@ func (c *Client) GenerateWeeklyJudgment(daysLocked int, toys []models.Toy, weekl
 	}
 
 	system := baseSystemLocked + `
-Every Sunday, El Señor reviews Jolie's week and pronounces his verdict.
+Every Sunday, Papi reviews Jolie's week and pronounces his verdict.
 Respond ONLY in JSON:
 {
-  "message": "El Señor's full judgment speech in Spanish — 4-6 lines, dramatic, possessive, perverse",
+  "message": "Papi's full judgment speech in Spanish — 4-6 lines, dramatic, possessive, perverse",
   "add_time_hours": N,
   "pillory_mins": N,
   "freeze_hours": N,
@@ -1226,7 +1413,7 @@ Respond ONLY in JSON:
 }
 
 SENTENCING based on weekly_debt:
-- 0 infractions: El Señor is coldly satisfied. No punishment. May grant -1h as gesture. Cold acknowledgment.
+- 0 infractions: Papi is coldly satisfied. No punishment. May grant -1h as gesture. Cold acknowledgment.
 - 1-2: Light. add_time_hours: 1-2 OR pillory_mins: 15-30.
 - 3-4: Moderate. add_time_hours: 2-3 AND pillory_mins: 30.
 - 5+: Full. add_time_hours: 3-5, pillory_mins: 60, freeze_hours: 1, AND a special humiliating task.
@@ -1240,7 +1427,7 @@ Infracciones de la semana: %d
 Detalle: %s
 Tareas completadas: %d | Fallidas: %d
 
-El Señor hace el recuento semanal de Jolie y dicta sentencia.`,
+Papi hace el recuento semanal de Jolie y dicta sentencia.`,
 		ctx, weeklyDebt, detailStr, tasksCompleted, tasksFailed,
 	)
 
