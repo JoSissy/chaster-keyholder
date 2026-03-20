@@ -500,65 +500,111 @@ var dashboardHTML = `{{define "content"}}
 {{if .IsLocked}}
 <div class="lock-hero">
   <div class="lock-emoji">🔒</div>
-  <div class="lock-info" style="flex:1;">
+  <div class="lock-info" style="flex:1;display:flex;gap:0;align-items:stretch;min-width:0;">
 
-    <!-- Contador ascendente: tiempo encerrada -->
-    <div style="margin-bottom:4px;">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--pink);margin-bottom:8px;display:flex;align-items:center;gap:5px;">
-        <span style="font-size:11px;">▲</span> tiempo encerrada
+    <!-- ── Columna izquierda: contadores ── -->
+    <div style="flex:1;min-width:0;">
+
+      <!-- Contador ascendente -->
+      <div style="margin-bottom:4px;">
+        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--pink);margin-bottom:8px;display:flex;align-items:center;gap:5px;">
+          <span>▲</span> tiempo encerrada
+        </div>
+        {{if .LockStartISO}}
+        <div id="cu-wrap" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:5px;">
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-d">—</span><span class="cd-lbl">días</span></div>
+          <span class="cd-sep" style="color:rgba(232,119,154,0.45);">:</span>
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-h">——</span><span class="cd-lbl">horas</span></div>
+          <span class="cd-sep" style="color:rgba(232,119,154,0.45);">:</span>
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-m">——</span><span class="cd-lbl">min</span></div>
+          <span class="cd-sep" style="color:rgba(232,119,154,0.45);">:</span>
+          <div class="cd-unit"><span class="cd-num c-pink" id="cu-s">——</span><span class="cd-lbl">seg</span></div>
+        </div>
+        {{else}}
+        <div style="display:flex;align-items:baseline;gap:6px;">
+          <span class="lock-days">{{.DaysLocked}}</span>
+          <span style="color:var(--text-muted);font-size:13px;">días</span>
+        </div>
+        {{end}}
       </div>
-      {{if .LockStartISO}}
-      <div id="cu-wrap" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:5px;">
-        <div class="cd-unit"><span class="cd-num c-pink" id="cu-d">—</span><span class="cd-lbl">días</span></div>
-        <span class="cd-sep" style="color:rgba(232,119,154,0.5);">:</span>
-        <div class="cd-unit"><span class="cd-num c-pink" id="cu-h">——</span><span class="cd-lbl">horas</span></div>
-        <span class="cd-sep" style="color:rgba(232,119,154,0.5);">:</span>
-        <div class="cd-unit"><span class="cd-num c-pink" id="cu-m">——</span><span class="cd-lbl">min</span></div>
-        <span class="cd-sep" style="color:rgba(232,119,154,0.5);">:</span>
-        <div class="cd-unit"><span class="cd-num c-pink" id="cu-s">——</span><span class="cd-lbl">seg</span></div>
-      </div>
-      {{else}}
-      <div style="display:flex;align-items:baseline;gap:6px;">
-        <span class="lock-days">{{.DaysLocked}}</span>
-        <span style="color:var(--text-muted);font-size:13px;">días</span>
+
+      <!-- Contador descendente -->
+      {{if .HasEndDate}}
+      <div style="padding-top:14px;border-top:1px solid rgba(58,29,72,0.6);margin-top:10px;">
+        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--text-muted);margin-bottom:8px;display:flex;align-items:center;gap:5px;">
+          <span>▼</span> tiempo restante
+        </div>
+        <div id="cd-wrap" data-end="{{.LockEndISO}}" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:5px;">
+          <div class="cd-unit"><span class="cd-num" id="cd-d">—</span><span class="cd-lbl">días</span></div>
+          <span class="cd-sep">:</span>
+          <div class="cd-unit"><span class="cd-num" id="cd-h">——</span><span class="cd-lbl">horas</span></div>
+          <span class="cd-sep">:</span>
+          <div class="cd-unit"><span class="cd-num" id="cd-m">——</span><span class="cd-lbl">min</span></div>
+          <span class="cd-sep">:</span>
+          <div class="cd-unit"><span class="cd-num" id="cd-s">——</span><span class="cd-lbl">seg</span></div>
+        </div>
+        <div style="margin-top:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:5px;">
+            <span>{{formatDatePtr .LockStartDate}}</span>
+            <span>{{.ProgressPct}}% completado</span>
+            <span>{{formatDatePtr .LockEndDate}}</span>
+          </div>
+          <div class="prog-bar" style="height:5px;">
+            <div class="prog-fill" id="lock-prog" style="{{pctStyle .ProgressPct 100}}"></div>
+          </div>
+        </div>
       </div>
       {{end}}
+
+      <!-- Badges -->
+      <div class="lock-badges" style="margin-top:16px;">
+        <span class="badge badge-muted">intensidad {{.Intensity}}</span>
+        {{if .WeeklyDebt}}<span class="badge badge-danger">⚠ Deuda: {{.WeeklyDebt}}h</span>{{end}}
+        {{if .PendingCheckin}}<span class="badge badge-warning">📸 Check-in pendiente</span>{{end}}
+      </div>
     </div>
 
-    <!-- Contador descendente: tiempo restante -->
-    {{if .HasEndDate}}
-    <div style="padding-top:14px;border-top:1px solid rgba(58,29,72,0.6);margin-top:6px;">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--text-muted);margin-bottom:8px;display:flex;align-items:center;gap:5px;">
-        <span style="font-size:11px;">▼</span> tiempo restante
-      </div>
-      <div id="cd-wrap" data-end="{{.LockEndISO}}" data-start="{{.LockStartISO}}" style="display:flex;align-items:flex-end;gap:5px;">
-        <div class="cd-unit"><span class="cd-num" id="cd-d">—</span><span class="cd-lbl">días</span></div>
-        <span class="cd-sep">:</span>
-        <div class="cd-unit"><span class="cd-num" id="cd-h">——</span><span class="cd-lbl">horas</span></div>
-        <span class="cd-sep">:</span>
-        <div class="cd-unit"><span class="cd-num" id="cd-m">——</span><span class="cd-lbl">min</span></div>
-        <span class="cd-sep">:</span>
-        <div class="cd-unit"><span class="cd-num" id="cd-s">——</span><span class="cd-lbl">seg</span></div>
-      </div>
-      <div style="margin-top:14px;">
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:5px;">
-          <span>{{formatDatePtr .LockStartDate}}</span>
-          <span id="prog-pct">{{.ProgressPct}}% completado</span>
-          <span>{{formatDatePtr .LockEndDate}}</span>
-        </div>
-        <div class="prog-bar" style="height:6px;">
-          <div class="prog-fill" id="lock-prog" style="{{pctStyle .ProgressPct 100}}"></div>
-        </div>
-      </div>
-    </div>
-    {{end}}
+    <!-- ── Columna derecha: rendimiento ── -->
+    <div style="border-left:1px solid var(--border);padding-left:24px;margin-left:24px;min-width:168px;display:flex;flex-direction:column;gap:16px;justify-content:center;">
 
-    <div class="lock-badges">
-      <span class="badge badge-pink">🔥 Racha: {{.Streak}}</span>
-      <span class="badge badge-purple">{{.ObedienceName}}</span>
-      <span class="badge badge-muted">intensidad {{.Intensity}}</span>
-      {{if .WeeklyDebt}}<span class="badge badge-danger">Deuda: {{.WeeklyDebt}}h</span>{{end}}
-      {{if .PendingCheckin}}<span class="badge badge-warning">⚠️ Check-in pendiente</span>{{end}}
+      <!-- Obediencia -->
+      <div>
+        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:6px;">Obediencia</div>
+        <div style="font-size:13px;font-weight:600;color:var(--purple);line-height:1.3;margin-bottom:7px;">{{.ObedienceName}}</div>
+        <div style="display:flex;gap:5px;align-items:center;">
+          <span style="font-size:13px;{{if ge .ObedienceLevel 1}}color:var(--purple){{else}}color:var(--border){{end}};">●</span>
+          <span style="font-size:13px;{{if ge .ObedienceLevel 2}}color:var(--purple){{else}}color:var(--border){{end}};">●</span>
+          <span style="font-size:13px;{{if ge .ObedienceLevel 3}}color:var(--purple){{else}}color:var(--border){{end}};">●</span>
+          <span style="font-size:13px;{{if ge .ObedienceLevel 4}}color:var(--purple){{else}}color:var(--border){{end}};">●</span>
+          <span style="font-size:11px;color:var(--text-muted);margin-left:4px;">🔥 {{.Streak}} racha</span>
+        </div>
+      </div>
+
+      <!-- Tareas -->
+      <div style="border-top:1px solid rgba(58,29,72,0.5);padding-top:14px;">
+        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:8px;">Tareas</div>
+        <div style="display:flex;gap:14px;margin-bottom:7px;">
+          <span style="font-size:20px;font-weight:700;color:var(--success);font-family:'Playfair Display',serif;">{{.TasksCompleted}}<span style="font-size:11px;margin-left:2px;font-family:'Inter',sans-serif;">✓</span></span>
+          <span style="font-size:20px;font-weight:700;color:var(--danger);font-family:'Playfair Display',serif;">{{.TasksFailed}}<span style="font-size:11px;margin-left:2px;font-family:'Inter',sans-serif;">✗</span></span>
+        </div>
+        <div class="prog-bar" style="height:4px;">
+          <div class="prog-fill prog-green" style="{{pctStyle .TasksCompleted (add .TasksCompleted .TasksFailed)}}"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">{{.CompletionRate}}% completadas</div>
+      </div>
+
+      <!-- Permisos -->
+      <div style="border-top:1px solid rgba(58,29,72,0.5);padding-top:14px;">
+        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:6px;">Permisos</div>
+        {{if lt .DaysSinceOrgasm 0}}
+        <div style="font-size:20px;font-weight:700;color:var(--purple);font-family:'Playfair Display',serif;">∞</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">nunca concedido</div>
+        {{else}}
+        <div style="font-size:20px;font-weight:700;color:var(--purple);font-family:'Playfair Display',serif;">{{.DaysSinceOrgasm}}<span style="font-size:12px;font-family:'Inter',sans-serif;">d</span></div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">sin orgasmo · {{.GrantRate}}% aprobación</div>
+        {{end}}
+      </div>
+
     </div>
   </div>
 </div>
