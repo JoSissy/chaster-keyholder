@@ -493,6 +493,25 @@ func (c *Client) CreateLock(combinationID string, durationSeconds int) (string, 
 		},
 	}
 
+	// Extensión verification-picture (verificación comunitaria de la jaula)
+	extensions = append(extensions, map[string]interface{}{
+		"slug": "verification-picture",
+		"config": map[string]interface{}{
+			"visibility": "all",
+			"peerVerification": map[string]interface{}{
+				"enabled": true,
+				"punishments": []interface{}{
+					map[string]interface{}{
+						"name":   "pillory",
+						"params": map[string]interface{}{"duration": 900},
+					},
+				},
+			},
+		},
+		"mode":       "unlimited",
+		"regularity": 86400,
+	})
+
 	// Añadir extensión de chaster-ai solo si está configurada
 	if c.HasExtension() {
 		extensions = append(extensions, map[string]interface{}{
@@ -587,6 +606,84 @@ func (c *Client) DownloadCombinationImage(imageURL string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+// ── Verification Picture ──────────────────────────────────────────────────
+
+// GetVerificationPictureCode obtiene el currentVerificationCode de la extensión verification-picture del lock.
+func (c *Client) GetVerificationPictureCode(lockID string) (string, error) {
+	data, err := c.doRequest("GET", fmt.Sprintf("/locks/%s", lockID), nil)
+	if err != nil {
+		return "", err
+	}
+
+	var lock struct {
+		Extensions []struct {
+			Slug     string `json:"slug"`
+			UserData struct {
+				CurrentVerificationCode string `json:"currentVerificationCode"`
+			} `json:"userData"`
+		} `json:"extensions"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return "", fmt.Errorf("error parseando lock: %w", err)
+	}
+	for _, ext := range lock.Extensions {
+		if ext.Slug == "verification-picture" {
+			return ext.UserData.CurrentVerificationCode, nil
+		}
+	}
+	return "", fmt.Errorf("extensión verification-picture no encontrada en el lock")
+}
+
+// RequestVerificationPicture solicita una nueva verificación de foto al portador.
+func (c *Client) RequestVerificationPicture(lockID string) error {
+	_, err := c.doRequest("POST", fmt.Sprintf("/extensions/verification-picture/%s/request", lockID), nil)
+	return err
+}
+
+// SubmitVerificationPicture sube la foto de verificación al endpoint de Chaster.
+func (c *Client) SubmitVerificationPicture(lockID string, imageBytes []byte, mimeType string) error {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	ext := "jpg"
+	if mimeType == "image/png" {
+		ext = "png"
+	} else if mimeType == "image/webp" {
+		ext = "webp"
+	}
+
+	part, err := writer.CreateFormFile("file", "checkin."+ext)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(imageBytes); err != nil {
+		return err
+	}
+	if err := writer.WriteField("enableVerificationCode", "true"); err != nil {
+		return err
+	}
+	writer.Close()
+
+	req, err := http.NewRequest("POST", baseURL+fmt.Sprintf("/extensions/verification-picture/%s/submit", lockID), &buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("error enviando verificación: %d %s", resp.StatusCode, string(respBytes))
+	}
+	return nil
 }
 
 // ── Tasks de extensión ────────────────────────────────────────────────────

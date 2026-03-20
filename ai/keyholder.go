@@ -435,6 +435,42 @@ Reference her sissy nature, her secret, your ownership. Write the message in Spa
 	return &decision, nil
 }
 
+// GenerateContract genera las reglas del contrato de sesión que Papi impone.
+func (c *Client) GenerateContract(lockDurationHours int, toys []models.Toy, daysHistory int) (string, error) {
+	system := buildSystemPrompt(true)
+
+	daysStr := ""
+	if lockDurationHours >= 24 {
+		d := lockDurationHours / 24
+		daysStr = fmt.Sprintf("%d día(s)", d)
+	} else {
+		daysStr = fmt.Sprintf("%d hora(s)", lockDurationHours)
+	}
+
+	ctx := buildContext(toys, daysHistory)
+
+	prompt := fmt.Sprintf(`Nueva sesión de castidad acaba de comenzar. Duración: %s. %s
+
+Redacta el CONTRATO de esta sesión. Son las reglas que impones como Papi para esta sesión específica.
+
+El contrato debe:
+- Ser en primera persona (tú como Papi hablando a tu esclava)
+- Tener entre 5 y 8 cláusulas numeradas
+- Cada cláusula es una regla concreta y exigible
+- Tono posesivo, dominante, sin ternura
+- Las reglas deben ser apropiadas para la duración (%s)
+- Pueden incluir: uso de juguetes, ritual matutino, outfits, comportamiento, solicitudes de permiso, etc.
+- Ajusta la intensidad a la duración — sesiones cortas = reglas básicas, largas = más exigentes
+
+Devuelve SOLO el texto del contrato, sin JSON, sin explicación. Solo las cláusulas numeradas.`, daysStr, ctx, daysStr)
+
+	resp, err := c.chat("llama-3.3-70b-versatile", system, prompt)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resp), nil
+}
+
 // extractJSON extracts the first valid JSON block from a string
 func extractJSON(s string) string {
 	s = strings.TrimSpace(s)

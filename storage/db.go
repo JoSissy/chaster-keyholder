@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -31,6 +32,7 @@ func NewDB(path string) (*DB, error) {
 	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN resolved_at DATETIME`)
 	db.conn.Exec(`ALTER TABLE toys ADD COLUMN photo_public_id TEXT DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN outcome TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN verification_code TEXT DEFAULT ''`)
 
 	log.Println("✅ Base de datos iniciada")
 	return db, nil
@@ -144,6 +146,23 @@ func (db *DB) migrate() error {
 		last_judgment_date      TEXT DEFAULT '',
 		current_lock_id         TEXT DEFAULT '',
 		updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS contracts (
+		id         TEXT PRIMARY KEY,
+		lock_id    TEXT DEFAULT '',
+		text       TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS checkins (
+		id               TEXT PRIMARY KEY,
+		lock_id          TEXT DEFAULT '',
+		requested_at     DATETIME NOT NULL,
+		responded_at     DATETIME,
+		photo_url        TEXT DEFAULT '',
+		status           TEXT DEFAULT 'pending',
+		response_time_mins INTEGER DEFAULT 0
 	);
 
 	`)
@@ -661,7 +680,7 @@ func (db *DB) DeleteClothingItem(id string) error {
 func (db *DB) ResetAllTables() error {
 	tables := []string{
 		"toys", "locks", "tasks", "chaster_tasks", "clothing", "outfit_log",
-		"events", "negotiations", "orgasm_log", "session_state",
+		"events", "negotiations", "orgasm_log", "session_state", "checkins", "contracts",
 	}
 	for _, t := range tables {
 		if _, err := db.conn.Exec("DELETE FROM " + t); err != nil {
@@ -669,6 +688,133 @@ func (db *DB) ResetAllTables() error {
 		}
 	}
 	return nil
+}
+
+// ── Gallery ────────────────────────────────────────────────────────────────
+
+// GalleryPhoto represents a photo from any source for the gallery page.
+type GalleryPhoto struct {
+	URL      string
+	Category string // "task" | "outfit" | "toy" | "clothing" | "chatask"
+	Caption  string
+	Date     time.Time
+	Status   string // task status or chatask result
+}
+
+func (db *DB) GetGalleryPhotos() ([]*GalleryPhoto, error) {
+	var photos []*GalleryPhoto
+
+	// Tasks
+	{
+		rows, err := db.conn.Query(`SELECT COALESCE(description,''), COALESCE(photo_url,''), COALESCE(status,''), assigned_at FROM tasks WHERE photo_url != '' AND photo_url IS NOT NULL ORDER BY assigned_at DESC`)
+		if err == nil {
+			for rows.Next() {
+				p := &GalleryPhoto{Category: "task"}
+				rows.Scan(&p.Caption, &p.URL, &p.Status, &p.Date)
+				photos = append(photos, p)
+			}
+			rows.Close()
+		}
+	}
+
+	// Outfit log
+	{
+		rows, err := db.conn.Query(`SELECT COALESCE(outfit_desc,''), COALESCE(photo_url,''), created_at FROM outfit_log WHERE photo_url != '' AND photo_url IS NOT NULL ORDER BY created_at DESC`)
+		if err == nil {
+			for rows.Next() {
+				p := &GalleryPhoto{Category: "outfit", Status: "confirmed"}
+				rows.Scan(&p.Caption, &p.URL, &p.Date)
+				photos = append(photos, p)
+			}
+			rows.Close()
+		}
+	}
+
+	// Toys
+	{
+		rows, err := db.conn.Query(`SELECT COALESCE(name,''), COALESCE(photo_url,''), COALESCE(type,''), created_at FROM toys WHERE photo_url != '' AND photo_url IS NOT NULL ORDER BY created_at DESC`)
+		if err == nil {
+			for rows.Next() {
+				p := &GalleryPhoto{Category: "toy"}
+				rows.Scan(&p.Caption, &p.URL, &p.Status, &p.Date)
+				photos = append(photos, p)
+			}
+			rows.Close()
+		}
+	}
+
+	// Clothing
+	{
+		rows, err := db.conn.Query(`SELECT COALESCE(name,''), COALESCE(photo_url,''), COALESCE(type,''), added_at FROM clothing WHERE photo_url != '' AND photo_url IS NOT NULL ORDER BY added_at DESC`)
+		if err == nil {
+			for rows.Next() {
+				p := &GalleryPhoto{Category: "clothing"}
+				rows.Scan(&p.Caption, &p.URL, &p.Status, &p.Date)
+				photos = append(photos, p)
+			}
+			rows.Close()
+		}
+	}
+
+	// Chaster tasks
+	{
+		rows, err := db.conn.Query(`SELECT COALESCE(description,''), COALESCE(photo_url,''), COALESCE(result,''), assigned_at FROM chaster_tasks WHERE photo_url != '' AND photo_url IS NOT NULL ORDER BY assigned_at DESC`)
+		if err == nil {
+			for rows.Next() {
+				p := &GalleryPhoto{Category: "chatask"}
+				rows.Scan(&p.Caption, &p.URL, &p.Status, &p.Date)
+				photos = append(photos, p)
+			}
+			rows.Close()
+		}
+	}
+
+	// Sort all photos by date desc
+	sort.Slice(photos, func(i, j int) bool {
+		return photos[i].Date.After(photos[j].Date)
+	})
+
+	return photos, nil
+}
+
+// ── Contracts ─────────────────────────────────────────────────────────────
+
+type Contract struct {
+	ID        string
+	LockID    string
+	Text      string
+	CreatedAt time.Time
+}
+
+func (db *DB) SaveContract(c *Contract) error {
+	_, err := db.conn.Exec(
+		`INSERT OR REPLACE INTO contracts (id, lock_id, text, created_at) VALUES (?, ?, ?, ?)`,
+		c.ID, c.LockID, c.Text, c.CreatedAt,
+	)
+	return err
+}
+
+func (db *DB) GetLatestContract() (*Contract, error) {
+	c := &Contract{}
+	err := db.conn.QueryRow(
+		`SELECT id, lock_id, text, created_at FROM contracts ORDER BY created_at DESC LIMIT 1`,
+	).Scan(&c.ID, &c.LockID, &c.Text, &c.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (db *DB) GetContractByLockID(lockID string) (*Contract, error) {
+	c := &Contract{}
+	err := db.conn.QueryRow(
+		`SELECT id, lock_id, text, created_at FROM contracts WHERE lock_id=? ORDER BY created_at DESC LIMIT 1`,
+		lockID,
+	).Scan(&c.ID, &c.LockID, &c.Text, &c.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // SeedOrgasmGranted inserta un orgasmo concedido N días en el pasado.
@@ -681,6 +827,66 @@ func (db *DB) SeedOrgasmGranted(daysAgo int) error {
 		id, createdAt,
 	)
 	return err
+}
+
+// ── Checkins ──────────────────────────────────────────────────────────────
+
+type CheckinEntry struct {
+	ID               string
+	LockID           string
+	RequestedAt      time.Time
+	RespondedAt      *time.Time
+	PhotoURL         string
+	Status           string // "pending" | "submitted" | "missed"
+	ResponseTimeMins int
+	VerificationCode string
+}
+
+func (db *DB) SaveCheckin(c *CheckinEntry) error {
+	_, err := db.conn.Exec(
+		`INSERT OR REPLACE INTO checkins (id, lock_id, requested_at, responded_at, photo_url, status, response_time_mins, verification_code)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.LockID, c.RequestedAt, c.RespondedAt, c.PhotoURL, c.Status, c.ResponseTimeMins, c.VerificationCode,
+	)
+	return err
+}
+
+func (db *DB) UpdateCheckin(id, status, photoURL string, respondedAt *time.Time, responseTimeMins int) error {
+	_, err := db.conn.Exec(
+		`UPDATE checkins SET status=?, photo_url=CASE WHEN ?!='' THEN ? ELSE photo_url END, responded_at=?, response_time_mins=? WHERE id=?`,
+		status, photoURL, photoURL, respondedAt, responseTimeMins, id,
+	)
+	return err
+}
+
+func (db *DB) GetCheckinHistory(limit int) ([]*CheckinEntry, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, lock_id, requested_at, responded_at, photo_url, status, response_time_mins
+		 FROM checkins ORDER BY requested_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*CheckinEntry
+	for rows.Next() {
+		c := &CheckinEntry{}
+		if err := rows.Scan(&c.ID, &c.LockID, &c.RequestedAt, &c.RespondedAt, &c.PhotoURL, &c.Status, &c.ResponseTimeMins); err != nil {
+			return nil, err
+		}
+		entries = append(entries, c)
+	}
+	return entries, nil
+}
+
+func (db *DB) GetCheckinStats() (total, approved, missed int, avgResponseMins int, err error) {
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*),
+		       SUM(CASE WHEN status='submitted' OR status='approved' THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN status='missed' OR status='rejected' THEN 1 ELSE 0 END),
+		       COALESCE(AVG(CASE WHEN (status='submitted' OR status='approved') AND response_time_mins > 0 THEN response_time_mins END), 0)
+		FROM checkins`).Scan(&total, &approved, &missed, &avgResponseMins)
+	return
 }
 
 // GetDaysSinceLastOrgasm devuelve los días desde el último orgasmo concedido.

@@ -1570,6 +1570,7 @@ func (b *Bot) HandleHelp() {
 /roulette — Girar la ruleta diaria 🎰
 /chatask — Tarea comunitaria de Chaster
 /newlock — Iniciar nueva sesión
+/contrato — Ver el contrato de sesión actual
 
 🧸 *INVENTARIO*
 /toys — Ver tus juguetes
@@ -1635,7 +1636,8 @@ func (b *Bot) Start() {
 		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/chatask")},
 		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/wardrobe")},
 		{tgbotapi.NewKeyboardButton("/orgasms"), tgbotapi.NewKeyboardButton("/history")},
-		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/contrato")},
+		{tgbotapi.NewKeyboardButton("/stats")},
 		{tgbotapi.NewKeyboardButton("/help")},
 	}
 
@@ -1731,6 +1733,8 @@ func (b *Bot) Start() {
 			b.HandleWardrobe("")
 		case strings.HasPrefix(text, "/wardrobe "):
 			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
+		case text == "/contrato":
+			b.HandleContrato()
 		case text == "/dbwipe":
 			b.HandleDBWipe()
 		case text != "" && !strings.HasPrefix(text, "/"):
@@ -2002,6 +2006,24 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 		stripMarkdown(lockMsg),
 		durStr,
 	))
+
+	// Generar y enviar contrato de sesión
+	if b.db != nil {
+		go func() {
+			contractText, err := b.ai.GenerateContract(durationSeconds/3600, b.state.Toys, b.daysLocked())
+			if err != nil {
+				log.Printf("[GenerateContract] error: %v", err)
+				return
+			}
+			b.db.SaveContract(&storage.Contract{
+				ID:        fmt.Sprintf("contract-%d", time.Now().UnixNano()),
+				LockID:    lockID,
+				Text:      contractText,
+				CreatedAt: time.Now(),
+			})
+			b.Send("📜 *CONTRATO DE SESIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(contractText))
+		}()
+	}
 }
 
 // finishLock ejecuta el cierre completo de una sesión: manda la combinación,
@@ -2611,23 +2633,54 @@ func (b *Bot) TriggerCheckin() {
 	if b.state.PendingCheckin {
 		return
 	}
-	if _, err := b.chaster.GetActiveLock(); err != nil {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
 		return
 	}
+
+	// Solicitar verificación a Chaster
+	if err := b.chaster.RequestVerificationPicture(lock.ID); err != nil {
+		log.Printf("[checkin] error solicitando verificación a Chaster: %v", err)
+		return
+	}
+
+	// Obtener código de verificación actual
+	code, err := b.chaster.GetVerificationPictureCode(lock.ID)
+	if err != nil {
+		log.Printf("[checkin] error obteniendo código de verificación: %v", err)
+		return
+	}
+
 	plugName := b.getAssignedPlugName()
 	msg, err := b.ai.GenerateCheckinRequest(b.daysLocked(), plugName)
 	if err != nil {
 		return
 	}
+
 	expiresAt := time.Now().Add(30 * time.Minute)
 	b.state.PendingCheckin = true
 	b.state.CheckinExpiresAt = &expiresAt
 	b.state.CheckinReminderSent = false
+	b.state.CheckinVerificationCode = code
+
+	// Crear entrada en DB
+	checkinID := fmt.Sprintf("checkin-%d", time.Now().UnixNano())
+	b.state.CurrentCheckinID = checkinID
+	if b.db != nil {
+		b.db.SaveCheckin(&storage.CheckinEntry{
+			ID:               checkinID,
+			LockID:           lock.ID,
+			RequestedAt:      time.Now(),
+			Status:           "pending",
+			VerificationCode: code,
+		})
+	}
+
 	b.mustSaveState()
 	b.pendingAction = "checkin_photo"
 	b.Send(fmt.Sprintf(
-		"📸 *CHECK-IN REQUERIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Tienes 30 minutos para responder._",
-		stripMarkdown(msg),
+		"📸 *CHECK-IN REQUERIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n🔢 *Código de verificación: `%s`*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Tienes 30 minutos para responder._",
+		stripMarkdown(msg), code,
 	))
 }
 
@@ -2636,32 +2689,49 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 		b.pendingAction = ""
 		return
 	}
-	b.Send("_Verificando..._")
-	plugName := b.getAssignedPlugName()
-	verdict, err := b.ai.VerifyCheckinPhoto(imgBytes, mime, plugName)
-	if err != nil {
-		b.Send("❌ Error verificando la foto. Inténtalo de nuevo.")
+	b.Send("_Enviando a Chaster..._")
+
+	lockID := b.state.CurrentLockID
+	if lockID == "" {
+		if lock, err := b.chaster.GetActiveLock(); err == nil {
+			lockID = lock.ID
+		}
+	}
+
+	if err := b.chaster.SubmitVerificationPicture(lockID, imgBytes, mime); err != nil {
+		log.Printf("[checkin] error enviando foto a Chaster: %v", err)
+		b.Send("❌ Error enviando la foto a Chaster. Inténtalo de nuevo.")
 		return
 	}
-	switch verdict.Status {
-	case "approved":
-		b.pendingAction = ""
-		b.state.PendingCheckin = false
-		b.state.CheckinExpiresAt = nil
-		b.state.TasksStreak++
-		b.mustSaveState()
-		b.Send("✅ *CHECK-IN VERIFICADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todo en orden. +1 obediencia._")
-	case "retry":
-		b.Send(fmt.Sprintf("⚠️ *Intenta de nuevo*\n\n_%s_", verdict.Reason))
-	case "rejected":
-		b.pendingAction = ""
-		b.state.PendingCheckin = false
-		b.state.CheckinExpiresAt = nil
-		b.mustSaveState()
-		b.Send(fmt.Sprintf("❌ *CHECK-IN RECHAZADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.Reason))
-		b.addWeeklyDebt("check-in rechazado — evidencia inválida")
-		b.autoPillory("check-in rechazado — evidencia no válida")
+
+	b.pendingAction = ""
+	respondedAt := time.Now()
+	responseTimeMins := 0
+	if b.state.CheckinExpiresAt != nil {
+		responseTimeMins = int(30 - time.Until(*b.state.CheckinExpiresAt).Minutes())
+		if responseTimeMins < 0 {
+			responseTimeMins = 0
+		}
 	}
+
+	// Subir foto a Cloudinary para estadísticas
+	photoURL := ""
+	if b.cloudinary != nil {
+		if url, _, cerr := b.cloudinary.Upload(imgBytes, mime, "checkins"); cerr == nil {
+			photoURL = url
+		}
+	}
+	if b.db != nil && b.state.CurrentCheckinID != "" {
+		b.db.UpdateCheckin(b.state.CurrentCheckinID, "submitted", photoURL, &respondedAt, responseTimeMins)
+	}
+
+	b.state.PendingCheckin = false
+	b.state.CheckinExpiresAt = nil
+	b.state.CurrentCheckinID = ""
+	b.state.CheckinVerificationCode = ""
+	b.state.TasksStreak++
+	b.mustSaveState()
+	b.Send("✅ *CHECK-IN ENVIADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Foto enviada a la comunidad de Chaster. +1 obediencia._")
 }
 
 // CheckObedienceDecay resta 1 punto si llevan 2+ días sin completar tarea.
@@ -2703,9 +2773,15 @@ func (b *Bot) CheckCheckinExpiry() {
 	if time.Now().Before(*b.state.CheckinExpiresAt) {
 		return
 	}
+	if b.db != nil && b.state.CurrentCheckinID != "" {
+		now := time.Now()
+		b.db.UpdateCheckin(b.state.CurrentCheckinID, "missed", "", &now, 30)
+	}
 	b.state.PendingCheckin = false
 	b.state.CheckinExpiresAt = nil
 	b.state.CheckinReminderSent = false
+	b.state.CurrentCheckinID = ""
+	b.state.CheckinVerificationCode = ""
 	b.pendingAction = ""
 	b.mustSaveState()
 	b.Send("⏰ *CHECK-IN IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No respondiste a tiempo. Consecuencias._")
@@ -3194,6 +3270,21 @@ func (b *Bot) handleEventNegotiation(text string) {
 		b.mustSaveState()
 		b.Send("▪️ *PENALIZACIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_+30 minutos añadidos al evento._")
 	}
+}
+
+// ── Contrato ───────────────────────────────────────────────────────────────
+
+func (b *Bot) HandleContrato() {
+	if b.db == nil {
+		b.Send("❌ Base de datos no disponible.")
+		return
+	}
+	c, err := b.db.GetLatestContract()
+	if err != nil || c == nil {
+		b.Send("📜 No hay contrato activo para esta sesión.")
+		return
+	}
+	b.Send("📜 *CONTRATO ACTUAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(c.Text))
 }
 
 // ── Reset ──────────────────────────────────────────────────────────────────

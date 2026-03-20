@@ -155,9 +155,11 @@ type AppState struct {
 	PlugConfirmed    bool   `json:"plug_confirmed"`
 
 	// Check-ins espontáneos
-	PendingCheckin      bool       `json:"pending_checkin"`
-	CheckinExpiresAt    *time.Time `json:"checkin_expires_at,omitempty"`
-	CheckinReminderSent bool       `json:"checkin_reminder_sent"`
+	PendingCheckin           bool       `json:"pending_checkin"`
+	CheckinExpiresAt         *time.Time `json:"checkin_expires_at,omitempty"`
+	CheckinReminderSent      bool       `json:"checkin_reminder_sent"`
+	CurrentCheckinID         string     `json:"current_checkin_id,omitempty"`
+	CheckinVerificationCode  string     `json:"checkin_verification_code,omitempty"`
 
 	// Ruleta
 	LastRuletaDate string `json:"last_ruleta_date"` // "2006-01-02" COT
