@@ -411,8 +411,10 @@ func (b *Bot) HandleStatus() {
 			"🌡 Nivel — *%s*%s\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
 			"📋 Tarea — %s%s\n"+
-			"✅ Completadas — *%d* | 💀 Fallidas — *%d*\n"+
-			"🔥 Racha — *%d* tareas | Obediencia — *%s*%s%s\n"+
+			"✅ Completadas — *%d*\n"+
+			"💀 Fallidas — *%d*\n"+
+			"🔥 Racha — *%d* tareas\n"+
+			"🏅 Obediencia — *%s*%s%s\n"+
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n"+
 			"💦 Orgasmo — _%s_%s\n"+
 			"📊 Balance — *+%dh / -%dh*%s%s",
@@ -420,7 +422,8 @@ func (b *Bot) HandleStatus() {
 		timeRemaining,
 		intensity.String(), stateLines,
 		taskStatus, chasterTaskLine,
-		b.state.TasksCompleted, b.state.TasksFailed,
+		b.state.TasksCompleted,
+		b.state.TasksFailed,
 		b.state.TasksStreak, models.ObedienceTitle(b.state.TasksStreak), plugLine, checkinLine,
 		orgasmStatus, orgasmDaysLine,
 		b.state.TotalTimeAddedHours, b.state.TotalTimeRemovedHours,
@@ -1317,7 +1320,7 @@ func (b *Bot) HandleOrgasmHistory() {
 
 	total, granted, edged, denied, err := b.db.GetOrgasmStats()
 	if err != nil || total == 0 {
-		b.Send("💦 *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ningún registro todavía._")
+		b.Send("▪️ *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ningún registro todavía._")
 		return
 	}
 
@@ -1329,7 +1332,7 @@ func (b *Bot) HandleOrgasmHistory() {
 
 	loc, _ := time.LoadLocation("America/Bogota")
 	lines := []string{fmt.Sprintf(
-		"💦 *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n🌊 Edges — *%d*\n❌ Denegados — *%d*\nTotal — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
+		"▪️ *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n🌊 Edges — *%d*\n❌ Denegados — *%d*\n📊 Total — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
 		granted, edged, denied, total,
 	)}
 
@@ -1494,11 +1497,11 @@ func (b *Bot) HandleHistory() {
 	}
 	tasks, err := b.db.GetRecentTasks(10)
 	if err != nil || len(tasks) == 0 {
-		b.Send("📋 *HISTORIAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Sin tareas registradas todavía._")
+		b.Send("▪️ *HISTORIAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Sin tareas registradas todavía._")
 		return
 	}
 	loc, _ := time.LoadLocation("America/Bogota")
-	lines := []string{"📋 *HISTORIAL — últimas tareas*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
+	lines := []string{"▪️ *HISTORIAL — ÚLTIMAS TAREAS*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
 	for _, t := range tasks {
 		icon := "⏳"
 		switch t.Status {
@@ -1537,7 +1540,7 @@ func (b *Bot) HandleMood() {
 		b.Send("_..._")
 		return
 	}
-	b.Send(stripMarkdown(msg))
+	b.Send("▪️ *ESTADO DE ÁNIMO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(msg))
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -1587,7 +1590,7 @@ func (b *Bot) HandleStats() {
 // ── Help ───────────────────────────────────────────────────────────────────
 
 func (b *Bot) HandleHelp() {
-	b.Send(`🔒 *CHASTER KEYHOLDER BOT*
+	b.Send(`▪️ *CHASTER KEYHOLDER BOT*
 ▬▬▬▬▬▬▬▬▬▬▬▬
 
 📋 *SESIÓN Y TAREAS*
