@@ -80,6 +80,8 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 		b.pendingAction = "plug_photo"
 	case b.state.PendingChasterTask != "":
 		b.pendingAction = "chaster_task_photo"
+	case b.state.DailyOutfitDesc != "" && !b.state.OutfitConfirmed && b.state.DailyOutfitDate == todayStr():
+		b.pendingAction = "outfit_photo"
 	}
 	return b, nil
 }
@@ -931,6 +933,12 @@ func (b *Bot) HandleChat(text string) {
 		return
 	}
 
+	// Detectar selección de prenda a eliminar
+	if b.pendingAction == "removing_clothing" {
+		b.handleClothingRemoveSelection(text)
+		return
+	}
+
 	// Detectar ruegos sobre evento activo (freeze/hidetime)
 	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
 		eventKeywords := map[string][]string{
@@ -1350,6 +1358,11 @@ func (b *Bot) HandleHelp() {
 /toys add — Añadir juguete
 /toys remove — Eliminar juguete
 
+👗 *GUARDARROPA*
+/wardrobe — Ver prendas
+/wardrobe add — Añadir prenda (foto)
+/wardrobe remove — Eliminar prenda
+
 📊 *HISTORIAL*
 /stats — Estadísticas de sesiones
 /history — Últimas 10 tareas
@@ -1419,7 +1432,7 @@ func (b *Bot) Start() {
 		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/stats")},
 		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/orgasms")},
 		{tgbotapi.NewKeyboardButton("/history"), tgbotapi.NewKeyboardButton("/mood")},
-		{tgbotapi.NewKeyboardButton("/help")},
+		{tgbotapi.NewKeyboardButton("/wardrobe"), tgbotapi.NewKeyboardButton("/help")},
 	}
 
 	for update := range updates {
@@ -1458,6 +1471,12 @@ func (b *Bot) Start() {
 			} else if b.pendingAction == "chaster_task_photo" {
 				b.deleteMessage(msgID)
 				b.HandleChasterTaskPhoto(imgBytes, mime)
+			} else if b.pendingAction == "new_clothing" {
+				b.deleteMessage(msgID)
+				b.HandleWardrobePhoto(imgBytes, mime)
+			} else if b.pendingAction == "outfit_photo" {
+				b.deleteMessage(msgID)
+				b.HandleOutfitPhoto(imgBytes, mime)
 			} else {
 				b.deleteMessage(msgID)
 				b.HandlePhoto(imgBytes, mime)
@@ -1525,6 +1544,10 @@ func (b *Bot) Start() {
 			b.HandleRuleta()
 		case text == "/chatask":
 			b.HandleChasterTaskCommand()
+		case text == "/wardrobe":
+			b.HandleWardrobe("")
+		case strings.HasPrefix(text, "/wardrobe "):
+			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
 		case text == "/testjudgment":
 			b.state.LastJudgmentDate = "" // forzar re-ejecución
 			b.HandleWeeklyJudgment()
@@ -2934,5 +2957,250 @@ func (b *Bot) handleEventNegotiation(text string) {
 		activeEvent.ExpiresAt = activeEvent.ExpiresAt.Add(30 * time.Minute)
 		b.mustSaveState()
 		b.Send("▪️ *PENALIZACIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_+30 minutos añadidos al evento._")
+	}
+}
+
+// ── Guardarropa ────────────────────────────────────────────────────────────
+
+func (b *Bot) HandleWardrobe(args string) {
+	if b.db == nil {
+		b.Send("❌ Base de datos no disponible.")
+		return
+	}
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	subCmd := ""
+	if len(parts) > 0 {
+		subCmd = strings.ToLower(parts[0])
+	}
+
+	switch subCmd {
+	case "add", "agregar":
+		b.pendingAction = "new_clothing"
+		b.Send("👗 *NUEVA PRENDA*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda la foto de la prenda.\n_La IA generará nombre, descripción y tipo automáticamente._")
+
+	case "remove", "quitar":
+		items, err := b.db.GetClothingItems()
+		if err != nil || len(items) == 0 {
+			b.Send("El guardarropa está vacío.")
+			return
+		}
+		lines := []string{"👗 *¿CUÁL QUIERES ELIMINAR?*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
+		for i, c := range items {
+			lines = append(lines, fmt.Sprintf("%d. %s (%s)", i+1, c.Name, c.Type))
+		}
+		lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
+		b.Send(strings.Join(lines, "\n"))
+		b.pendingAction = "removing_clothing"
+
+	default:
+		items, err := b.db.GetClothingItems()
+		if err != nil || len(items) == 0 {
+			b.Send("👗 *GUARDARROPA*\n\nVacío. Añade prendas con:\n`/wardrobe add`")
+			return
+		}
+		lines := []string{"👗 *GUARDARROPA*\n"}
+		for i, c := range items {
+			typeIcon := clothingTypeIcon(c.Type)
+			lines = append(lines, fmt.Sprintf("%d. %s%s", i+1, typeIcon, c.Name))
+		}
+		// Mostrar outfit del día si existe
+		if b.state.DailyOutfitDesc != "" && b.state.DailyOutfitDate == todayStr() {
+			status := "⏳ _esperando foto..._"
+			if b.state.OutfitConfirmed {
+				status = "✅ confirmado"
+			}
+			lines = append(lines, "\n▬▬▬▬▬▬▬▬▬▬▬▬")
+			lines = append(lines, fmt.Sprintf("👗 *Outfit hoy* — %s\n_%s_", status, b.state.DailyOutfitDesc))
+			if b.state.DailyPoseDesc != "" {
+				lines = append(lines, fmt.Sprintf("🧍 *Pose* — _%s_", b.state.DailyPoseDesc))
+			}
+			if b.state.OutfitConfirmed && b.state.DailyOutfitComment != "" {
+				lines = append(lines, fmt.Sprintf("💬 _%s_", b.state.DailyOutfitComment))
+			}
+		}
+		lines = append(lines, "\n`/wardrobe add` — añadir")
+		lines = append(lines, "`/wardrobe remove` — eliminar")
+		b.Send(strings.Join(lines, "\n"))
+	}
+}
+
+func clothingTypeIcon(t string) string {
+	switch t {
+	case "lingerie":
+		return "👙 "
+	case "dress":
+		return "👗 "
+	case "top":
+		return "👚 "
+	case "bottom":
+		return "👘 "
+	case "shoes":
+		return "👠 "
+	case "accessory":
+		return "💍 "
+	default:
+		return "🎀 "
+	}
+}
+
+// handleClothingRemoveSelection procesa la selección de prenda a eliminar
+func (b *Bot) handleClothingRemoveSelection(text string) {
+	items, err := b.db.GetClothingItems()
+	if err != nil {
+		b.pendingAction = ""
+		b.Send("❌ Error obteniendo el guardarropa.")
+		return
+	}
+	var num int
+	fmt.Sscanf(strings.TrimSpace(text), "%d", &num)
+	if num < 1 || num > len(items) {
+		lines := []string{"❌ Número inválido. ¿Cuál quieres eliminar?"}
+		for i, c := range items {
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, c.Name))
+		}
+		b.Send(strings.Join(lines, "\n"))
+		return
+	}
+	selected := items[num-1]
+	b.db.DeleteClothingItem(selected.ID)
+	b.pendingAction = ""
+	b.Send(fmt.Sprintf("🗑 *%s* eliminada del guardarropa.", selected.Name))
+}
+
+// HandleWardrobePhoto procesa la foto de una prenda nueva: IA analiza, sube a Cloudinary y guarda en DB
+func (b *Bot) HandleWardrobePhoto(imgBytes []byte, mimeType string) {
+	b.pendingAction = ""
+
+	b.Send("_Analizando la prenda..._")
+
+	info, err := b.ai.DescribeClothing(imgBytes, mimeType)
+	if err != nil || info == nil {
+		b.Send("❌ Error analizando la foto.")
+		return
+	}
+
+	var photoURL string
+	if b.cloudinary != nil {
+		url, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/wardrobe")
+		if err != nil {
+			log.Printf("error subiendo foto de prenda: %v", err)
+		} else {
+			photoURL = url
+		}
+	}
+
+	itemID := fmt.Sprintf("clothing-%d", time.Now().UnixNano())
+	if err := b.db.SaveClothingItem(&storage.ClothingItem{
+		ID:          itemID,
+		Name:        info.Name,
+		Description: info.Description,
+		PhotoURL:    photoURL,
+		Type:        info.Type,
+		AddedAt:     time.Now(),
+	}); err != nil {
+		log.Printf("error guardando prenda en DB: %v", err)
+		b.Send("❌ Error guardando la prenda.")
+		return
+	}
+
+	b.Send(fmt.Sprintf(
+		"✅ *%s* añadida al guardarropa.\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_",
+		info.Name, info.Description,
+	))
+}
+
+// SendDailyOutfit asigna el outfit del día (llamado por el scheduler a las 10am)
+func (b *Bot) SendDailyOutfit() {
+	if b.state.DailyOutfitDate == todayStr() {
+		return // ya asignado hoy
+	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return // sin lock activo
+	}
+	if b.db == nil {
+		return
+	}
+	items, err := b.db.GetClothingItems()
+	if err != nil || len(items) == 0 {
+		return // sin prendas registradas
+	}
+
+	// Construir lista de nombres para la IA
+	wardrobeList := make([]string, 0, len(items))
+	for _, c := range items {
+		wardrobeList = append(wardrobeList, fmt.Sprintf("%s (%s)", c.Name, c.Type))
+	}
+
+	intensity := models.GetIntensity(b.daysLocked())
+	assignment, err := b.ai.GenerateOutfitAssignment(b.daysLocked(), wardrobeList, intensity)
+	if err != nil {
+		log.Printf("[outfit] error generando outfit: %v", err)
+		return
+	}
+
+	b.state.DailyOutfitDesc = assignment.Description
+	b.state.DailyPoseDesc = assignment.Pose
+	b.state.DailyOutfitDate = todayStr()
+	b.state.OutfitConfirmed = false
+	b.state.DailyOutfitComment = ""
+	b.mustSaveState()
+	b.pendingAction = "outfit_photo"
+
+	b.Send(fmt.Sprintf(
+		"👗 *OUTFIT DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Cuando estés lista, manda la foto._",
+		stripMarkdown(assignment.Message),
+	))
+}
+
+// HandleOutfitPhoto verifica que la foto coincida con el outfit asignado
+func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
+	if b.state.DailyOutfitDesc == "" || b.state.OutfitConfirmed {
+		b.pendingAction = ""
+		return
+	}
+
+	b.Send("_Verificando el outfit..._")
+
+	verdict, err := b.ai.VerifyOutfitPhoto(imgBytes, mimeType, b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
+	if err != nil {
+		b.Send("❌ Error verificando la foto. Inténtalo de nuevo.")
+		return
+	}
+
+	// Subir foto a Cloudinary independientemente del resultado
+	if b.cloudinary != nil {
+		if _, err := b.cloudinary.Upload(imgBytes, mimeType, "chaster/outfits"); err != nil {
+			log.Printf("error subiendo foto de outfit: %v", err)
+		}
+	}
+
+	switch verdict.Status {
+	case "approved":
+		b.pendingAction = ""
+		b.state.OutfitConfirmed = true
+		// Generar comentario de Papi
+		comment, err := b.ai.GenerateOutfitComment(b.daysLocked(), b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
+		if err != nil {
+			comment = "Perfecta. Así te quiero todo el día."
+		}
+		b.state.DailyOutfitComment = strings.TrimSpace(comment)
+		b.mustSaveState()
+		b.Send(fmt.Sprintf(
+			"✅ *OUTFIT CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
+			stripMarkdown(b.state.DailyOutfitComment),
+		))
+
+	case "retry":
+		b.Send(fmt.Sprintf("⚠️ *Casi — inténtalo de nuevo*\n\n_%s_", verdict.Reason))
+
+	case "rejected":
+		b.pendingAction = ""
+		b.state.OutfitConfirmed = false
+		b.mustSaveState()
+		b.Send(fmt.Sprintf(
+			"❌ *OUTFIT RECHAZADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Cámbiate y manda otra foto._",
+			verdict.Reason,
+		))
+		b.addWeeklyDebt("outfit del día rechazado")
 	}
 }

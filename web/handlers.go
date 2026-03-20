@@ -396,3 +396,37 @@ func (s *Server) handleToys(w http.ResponseWriter, r *http.Request) {
 		Toys:     toys,
 	})
 }
+
+// ── Wardrobe ──────────────────────────────────────────────────────────────
+
+type wardrobeData struct {
+	pageBase
+	Items           []*storage.ClothingItem
+	TodayOutfit     string
+	TodayPose       string
+	TodayComment    string
+	OutfitConfirmed bool
+	HasTodayOutfit  bool
+}
+
+func (s *Server) handleWardrobe(w http.ResponseWriter, r *http.Request) {
+	items, _ := s.db.GetClothingItems()
+	st := s.loadState()
+	d := wardrobeData{
+		pageBase: s.base("wardrobe"),
+		Items:    items,
+	}
+	loc, err := time.LoadLocation("America/Bogota")
+	if err != nil {
+		loc = time.FixedZone("COT", -5*3600)
+	}
+	today := time.Now().In(loc).Format("2006-01-02")
+	if st.DailyOutfitDesc != "" && st.DailyOutfitDate == today {
+		d.HasTodayOutfit = true
+		d.TodayOutfit = st.DailyOutfitDesc
+		d.TodayPose = st.DailyPoseDesc
+		d.TodayComment = st.DailyOutfitComment
+		d.OutfitConfirmed = st.OutfitConfirmed
+	}
+	s.render(w, wardrobeHTML, d)
+}

@@ -93,6 +93,15 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
+	// Outfit del día — 10:00 AM
+	s.NewJob(
+		gocron.CronJob("0 10 * * *", false),
+		gocron.NewTask(func() {
+			log.Println("[scheduler] Asignando outfit del día...")
+			bot.SendDailyOutfit()
+		}),
+	)
+
 	// Mensajes de condicionamiento — 10am y 2pm
 	s.NewJob(
 		gocron.CronJob("0 10,14 * * *", false),

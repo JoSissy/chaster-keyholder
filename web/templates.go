@@ -457,6 +457,9 @@ a:hover { color: var(--purple); }
     <a href="/toys" class="nav-link {{if eq .Nav "toys"}}active{{end}}">
       <span class="nav-icon">🎀</span> Inventario
     </a>
+    <a href="/wardrobe" class="nav-link {{if eq .Nav "wardrobe"}}active{{end}}">
+      <span class="nav-icon">👗</span> Guardarropa
+    </a>
   </nav>
   <div class="sidebar-foot">
     <a href="{{.TelegramLink}}" target="_blank" class="tg-btn">
@@ -935,6 +938,67 @@ var toysHTML = `{{define "content"}}
   <div class="empty">
     <div class="empty-icon">🎀</div>
     <div class="empty-text">No hay juguetes registrados todavía</div>
+  </div>
+</div>
+{{end}}
+{{end}}`
+
+var wardrobeHTML = `{{define "content"}}
+<div class="page-hd">
+  <h1 class="page-title">Guardarropa</h1>
+  <p class="page-sub">Prendas registradas y outfit del día</p>
+</div>
+
+{{if .HasTodayOutfit}}
+<div class="card" style="border-color: var(--pink); margin-bottom: 24px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+    <div class="card-title" style="font-size:15px; margin:0;">👗 Outfit de hoy</div>
+    {{if .OutfitConfirmed}}
+    <span class="badge badge-success">✅ confirmado</span>
+    {{else}}
+    <span class="badge badge-warning">⏳ esperando foto</span>
+    {{end}}
+  </div>
+  <p style="color: var(--text); line-height: 1.6; margin-bottom:8px;">{{.TodayOutfit}}</p>
+  {{if .TodayPose}}
+  <p style="color: var(--text-muted); font-size:13px; margin-bottom:8px;">
+    <span style="color:var(--pink);">🧍 Pose:</span> {{.TodayPose}}
+  </p>
+  {{end}}
+  {{if and .OutfitConfirmed .TodayComment}}
+  <div style="border-top: 1px solid var(--border); margin-top:12px; padding-top:12px;">
+    <p style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Comentario de Papi</p>
+    <p style="color:var(--purple); font-style:italic; line-height:1.6;">{{.TodayComment}}</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{if .Items}}
+<div class="toy-grid">
+  {{range .Items}}
+  <div class="toy-card">
+    {{if .PhotoURL}}
+    <img class="toy-img" src="{{safeURL .PhotoURL}}" alt="{{.Name}}" loading="lazy">
+    {{else}}
+    <div class="toy-placeholder">{{clothingIcon .Type}}</div>
+    {{end}}
+    <div class="toy-info">
+      <div class="toy-name">{{.Name}}</div>
+      {{if .Description}}<div class="toy-desc">{{truncate .Description 80}}</div>{{end}}
+    </div>
+    <div class="toy-foot">
+      <span class="badge badge-muted">{{clothingIcon .Type}} {{clothingLabel .Type}}</span>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{else}}
+<div class="card">
+  <div class="empty">
+    <div class="empty-icon">👗</div>
+    <div class="empty-text">No hay prendas registradas todavía</div>
+    <div class="empty-sub">Usa <code>/wardrobe add</code> en Telegram para añadir</div>
   </div>
 </div>
 {{end}}

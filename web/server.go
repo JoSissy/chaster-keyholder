@@ -40,6 +40,7 @@ func New(db *storage.DB, statePath, botUsername, password string) http.Handler {
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
 	mux.HandleFunc("/orgasms", s.auth(s.handleOrgasms))
 	mux.HandleFunc("/toys", s.auth(s.handleToys))
+	mux.HandleFunc("/wardrobe", s.auth(s.handleWardrobe))
 	return mux
 }
 
@@ -184,6 +185,42 @@ func funcMap() template.FuncMap {
 				return "Restricción"
 			default:
 				return "Juguete"
+			}
+		},
+		"clothingIcon": func(t string) string {
+			switch t {
+			case "lingerie":
+				return "👙"
+			case "dress":
+				return "👗"
+			case "top":
+				return "👚"
+			case "bottom":
+				return "👘"
+			case "shoes":
+				return "👠"
+			case "accessory":
+				return "💍"
+			default:
+				return "🎀"
+			}
+		},
+		"clothingLabel": func(t string) string {
+			switch t {
+			case "lingerie":
+				return "Lencería"
+			case "dress":
+				return "Vestido"
+			case "top":
+				return "Top"
+			case "bottom":
+				return "Falda/Pantalón"
+			case "shoes":
+				return "Zapatos"
+			case "accessory":
+				return "Accesorio"
+			default:
+				return "Prenda"
 			}
 		},
 	}

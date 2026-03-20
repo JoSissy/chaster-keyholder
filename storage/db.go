@@ -73,6 +73,15 @@ func (db *DB) migrate() error {
 		assigned_at DATETIME NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS clothing (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		description TEXT,
+		photo_url   TEXT,
+		type        TEXT DEFAULT 'other',
+		added_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS events (
 		id              TEXT PRIMARY KEY,
 		lock_id         TEXT REFERENCES locks(id),
@@ -517,6 +526,47 @@ func (db *DB) GetRecentChasterTaskDescriptions(n int) ([]string, error) {
 		descs = append(descs, d)
 	}
 	return descs, nil
+}
+
+// ── Clothing ──────────────────────────────────────────────────────────────
+
+type ClothingItem struct {
+	ID          string
+	Name        string
+	Description string
+	PhotoURL    string
+	Type        string // "lingerie"|"dress"|"top"|"bottom"|"shoes"|"accessory"|"other"
+	AddedAt     time.Time
+}
+
+func (db *DB) SaveClothingItem(c *ClothingItem) error {
+	_, err := db.conn.Exec(
+		`INSERT OR REPLACE INTO clothing (id, name, description, photo_url, type, added_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Description, c.PhotoURL, c.Type, c.AddedAt,
+	)
+	return err
+}
+
+func (db *DB) GetClothingItems() ([]*ClothingItem, error) {
+	rows, err := db.conn.Query(`SELECT id, name, description, photo_url, type, added_at FROM clothing ORDER BY added_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*ClothingItem
+	for rows.Next() {
+		c := &ClothingItem{}
+		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.PhotoURL, &c.Type, &c.AddedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, c)
+	}
+	return items, nil
+}
+
+func (db *DB) DeleteClothingItem(id string) error {
+	_, err := db.conn.Exec(`DELETE FROM clothing WHERE id = ?`, id)
+	return err
 }
 
 // ── Events ────────────────────────────────────────────────────────────────
