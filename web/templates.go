@@ -793,34 +793,70 @@ var tasksHTML = `{{define "content"}}
   </div>
 </div>
 
+<!-- Filtros -->
+<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px;">
+  <button class="filter-btn active" data-status="all">Todas</button>
+  <button class="filter-btn" data-status="completed">✅ Completadas</button>
+  <button class="filter-btn" data-status="failed">💀 Fallidas</button>
+  <button class="filter-btn" data-status="pending">⏳ Pendientes</button>
+</div>
+
+<style>
+.filter-btn {
+  background: var(--card); border: 1px solid var(--border);
+  color: var(--text-muted); padding: 5px 14px; border-radius: 20px;
+  cursor: pointer; font-size: 12px; font-family: 'Inter', sans-serif; transition: all .15s;
+}
+.filter-btn:hover { border-color: var(--pink); color: var(--pink); }
+.filter-btn.active { background: rgba(232,119,154,.15); border-color: var(--pink); color: var(--pink); }
+.task-card { transition: opacity .15s; }
+.task-card.hidden { display: none; }
+
+/* Lightbox */
+#lb-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85);
+  z-index: 1000; align-items: center; justify-content: center; cursor: zoom-out;
+}
+#lb-overlay.open { display: flex; }
+#lb-overlay img { max-width: 90vw; max-height: 90vh; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+</style>
+
 {{if .Tasks}}
-<div class="card" style="padding:0;overflow:hidden;">
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th style="padding-left:20px;">Fecha</th>
-        <th>Descripción</th>
-        <th>Estado</th>
-        <th>Vence</th>
-        <th>±h</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Tasks}}
-      <tr>
-        <td class="no-wrap c-muted" style="padding-left:20px;">{{formatDate .AssignedAt}}</td>
-        <td class="desc-cell">{{.Description}}</td>
-        <td>{{statusBadge .Status}}</td>
-        <td class="no-wrap c-muted">{{formatShort .DueAt}}</td>
-        <td class="no-wrap" style="font-size:12px;">
-          {{if .RewardHours}}<span class="c-green">−{{.RewardHours}}h</span>{{end}}
-          {{if .PenaltyHours}}<span class="c-red">+{{.PenaltyHours}}h</span>{{end}}
-          {{if and (eq .RewardHours 0) (eq .PenaltyHours 0)}}<span class="c-muted">—</span>{{end}}
-        </td>
-      </tr>
+<div id="task-list" style="display:flex; flex-direction:column; gap:10px;">
+  {{range .Tasks}}
+  <div class="card task-card" data-status="{{.Status}}" style="padding:16px; display:flex; gap:16px; align-items:flex-start;">
+
+    <!-- Icono de estado -->
+    <div style="font-size:22px; flex-shrink:0; margin-top:2px;">
+      {{if eq .Status "completed"}}✅{{else if eq .Status "failed"}}💀{{else}}⏳{{end}}
+    </div>
+
+    <!-- Contenido -->
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+        <span style="font-size:12px; color:var(--text-muted);">{{formatDate .AssignedAt}}</span>
+        {{statusBadge .Status}}
+        {{if eq .Status "completed"}}
+          {{if .RewardHours}}<span class="badge" style="background:rgba(134,239,172,.12); color:var(--success); border:1px solid rgba(134,239,172,.25);">−{{.RewardHours}}h</span>{{end}}
+        {{else if eq .Status "failed"}}
+          {{if .PenaltyHours}}<span class="badge" style="background:rgba(248,113,113,.12); color:var(--danger); border:1px solid rgba(248,113,113,.25);">+{{.PenaltyHours}}h</span>{{end}}
+        {{end}}
+      </div>
+      <p style="color:var(--text); line-height:1.6; font-size:13.5px;">{{.Description}}</p>
+      {{if .CompletedAt}}
+      <p style="font-size:11px; color:var(--text-muted); margin-top:5px;">Completada: {{formatDateTimePtr .CompletedAt}}</p>
       {{end}}
-    </tbody>
-  </table>
+    </div>
+
+    <!-- Foto (si existe) -->
+    {{if .PhotoURL}}
+    <img src="{{safeURL .PhotoURL}}" alt="Evidencia"
+      style="width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--border); cursor:zoom-in; flex-shrink:0;"
+      onclick="openLightbox(this.src)">
+    {{end}}
+
+  </div>
+  {{end}}
 </div>
 {{else}}
 <div class="card">
@@ -830,6 +866,33 @@ var tasksHTML = `{{define "content"}}
   </div>
 </div>
 {{end}}
+
+<!-- Lightbox -->
+<div id="lb-overlay" onclick="closeLightbox()">
+  <img id="lb-img" src="" alt="Evidencia">
+</div>
+
+<script>
+function openLightbox(src) {
+  document.getElementById('lb-img').src = src;
+  document.getElementById('lb-overlay').classList.add('open');
+}
+function closeLightbox() {
+  document.getElementById('lb-overlay').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const status = btn.dataset.status;
+    document.querySelectorAll('.task-card').forEach(card => {
+      card.classList.toggle('hidden', status !== 'all' && card.dataset.status !== status);
+    });
+  });
+});
+</script>
 {{end}}`
 
 // ── Orgasms ────────────────────────────────────────────────────────────────
