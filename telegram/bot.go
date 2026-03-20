@@ -43,7 +43,8 @@ type Bot struct {
 	cachedDaysLockedAt time.Time
 
 	// Estado de UI transitorio — no se persiste entre reinicios
-	pendingAction string
+	pendingAction  string
+	pendingToyHint string
 }
 
 func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient *ai.Client, db *storage.DB, cloudinary *storage.CloudinaryClient) (*Bot, error) {
@@ -810,8 +811,11 @@ func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
 
 	b.Send("_Analizando el juguete..._")
 
+	hint := b.pendingToyHint
+	b.pendingToyHint = ""
+
 	// IA genera nombre y descripción
-	toyInfo, err := b.ai.DescribeToy(imageBytes, mimeType, "")
+	toyInfo, err := b.ai.DescribeToy(imageBytes, mimeType, hint)
 	if err != nil || toyInfo == nil {
 		b.Send("❌ Error analizando la foto del juguete.")
 		return
@@ -1424,6 +1428,11 @@ func (b *Bot) HandleToys(args string) {
 
 	switch subCmd {
 	case "add", "agregar":
+		hint := ""
+		if len(parts) > 1 {
+			hint = strings.TrimSpace(parts[1])
+		}
+		b.pendingToyHint = hint
 		b.pendingAction = "new_toy"
 		b.Send("▪️ *NUEVO JUGUETE*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda la foto del juguete.\n_La IA generará nombre, descripción y tipo automáticamente._")
 
