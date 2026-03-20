@@ -3026,8 +3026,18 @@ func (b *Bot) HandleWardrobe(args string) {
 
 func clothingTypeIcon(t string) string {
 	switch t {
-	case "lingerie":
+	case "thong":
+		return "🩲 "
+	case "bra":
 		return "👙 "
+	case "stockings":
+		return "🦵 "
+	case "socks":
+		return "🧦 "
+	case "collar":
+		return "💎 "
+	case "lingerie":
+		return "🌸 "
 	case "dress":
 		return "👗 "
 	case "top":

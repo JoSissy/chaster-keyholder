@@ -189,8 +189,18 @@ func funcMap() template.FuncMap {
 		},
 		"clothingIcon": func(t string) string {
 			switch t {
-			case "lingerie":
+			case "thong":
+				return "🩲"
+			case "bra":
 				return "👙"
+			case "stockings":
+				return "🦵"
+			case "socks":
+				return "🧦"
+			case "collar":
+				return "💎"
+			case "lingerie":
+				return "🌸"
 			case "dress":
 				return "👗"
 			case "top":
@@ -207,6 +217,16 @@ func funcMap() template.FuncMap {
 		},
 		"clothingLabel": func(t string) string {
 			switch t {
+			case "thong":
+				return "Tanga"
+			case "bra":
+				return "Sujetador"
+			case "stockings":
+				return "Medias"
+			case "socks":
+				return "Calcetines"
+			case "collar":
+				return "Collar"
 			case "lingerie":
 				return "Lencería"
 			case "dress":

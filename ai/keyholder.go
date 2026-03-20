@@ -921,7 +921,7 @@ Description should mention material, color if visible, size, and main use. Write
 type ClothingInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Type        string `json:"type"` // "lingerie"|"dress"|"top"|"bottom"|"shoes"|"accessory"|"other"
+	Type        string `json:"type"` // "thong"|"bra"|"stockings"|"socks"|"collar"|"lingerie"|"dress"|"top"|"bottom"|"shoes"|"accessory"|"other"
 }
 
 // DescribeClothing analyzes a clothing photo and returns name, description, type
@@ -930,15 +930,20 @@ func (c *Client) DescribeClothing(imageBytes []byte, mimeType string) (*Clothing
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
 
 	system := `You analyze photos of clothing items and generate a short name, description and type in Spanish.
-Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descripción en español de 1-2 oraciones", "type": "lingerie|dress|top|bottom|shoes|accessory|other"}
+Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descripción en español de 1-2 oraciones", "type": "thong|bra|stockings|socks|collar|lingerie|dress|top|bottom|shoes|accessory|other"}
 
-Type definitions:
-- "lingerie": underwear, bras, panties, corsets, bodysuits, stockings, thigh-highs
-- "dress": dresses, babydolls, or any single-piece full body garment
-- "top": blouses, crop tops, shirts, cardigans, sweaters, bralettes worn as tops
-- "bottom": skirts, pants, shorts, leggings (any separate bottom garment)
-- "shoes": shoes, heels, boots, sandals, platforms
-- "accessory": jewelry, collars, chokers, gloves, belts, bags, hair pieces, headbands
+Type definitions (be precise — prefer specific types over generic ones):
+- "thong": thongs, g-strings, tangas, any minimal panty/underwear bottom
+- "bra": bras, bralettes, push-ups, any standalone breast garment
+- "stockings": thigh-highs, hold-ups, stockings, pantyhose, any hosiery that reaches thigh or higher
+- "socks": ankle socks, knee-high socks, any hosiery below the thigh
+- "collar": collars, chokers, neck bands, posture collars, BDSM collars
+- "lingerie": corsets, bodysuits, teddies, chemises, babydoll sets, full lingerie sets
+- "dress": dresses, babydolls (dress form), any single-piece full-body garment
+- "top": blouses, crop tops, shirts, cardigans, bralettes worn as tops
+- "bottom": skirts, mini-skirts, pants, shorts, leggings, any separate bottom garment
+- "shoes": heels, platforms, boots, sandals, pumps
+- "accessory": jewelry, rings, earrings, gloves, belts, bags, hair pieces, cuffs, headbands
 - "other": costumes, uniforms, robes, sleepwear, anything else
 
 Name should be concise (2-4 words max). Description should mention fabric/material, color, style. Write in Spanish.`

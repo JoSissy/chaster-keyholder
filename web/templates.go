@@ -987,12 +987,17 @@ var wardrobeHTML = `{{define "content"}}
   <h2 style="font-family:'Playfair Display',serif; font-size:18px; color:var(--text);">Inventario</h2>
   <div id="filter-btns" style="display:flex; gap:6px; flex-wrap:wrap;">
     <button class="filter-btn active" data-type="all">Todo</button>
-    <button class="filter-btn" data-type="lingerie">👙 Lencería</button>
+    <button class="filter-btn" data-type="thong">🩲 Tanga</button>
+    <button class="filter-btn" data-type="bra">👙 Sujetador</button>
+    <button class="filter-btn" data-type="stockings">🦵 Medias</button>
+    <button class="filter-btn" data-type="socks">🧦 Calcetines</button>
+    <button class="filter-btn" data-type="collar">💎 Collar</button>
+    <button class="filter-btn" data-type="lingerie">🌸 Lencería</button>
     <button class="filter-btn" data-type="dress">👗 Vestido</button>
     <button class="filter-btn" data-type="top">👚 Top</button>
     <button class="filter-btn" data-type="bottom">👘 Falda</button>
     <button class="filter-btn" data-type="shoes">👠 Zapatos</button>
-    <button class="filter-btn" data-type="accessory">💍 Accesorios</button>
+    <button class="filter-btn" data-type="accessory">💍 Accesorio</button>
     <button class="filter-btn" data-type="other">🎀 Otro</button>
   </div>
 </div>
