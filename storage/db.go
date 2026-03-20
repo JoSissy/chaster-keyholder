@@ -624,6 +624,34 @@ func (db *DB) DeleteClothingItem(id string) error {
 	return err
 }
 
+// ── Reset ──────────────────────────────────────────────────────────────────
+
+// ResetAllTables borra todos los datos de todas las tablas.
+func (db *DB) ResetAllTables() error {
+	tables := []string{
+		"toys", "locks", "tasks", "chaster_tasks", "clothing", "outfit_log",
+		"events", "negotiations", "orgasm_log", "session_state",
+	}
+	for _, t := range tables {
+		if _, err := db.conn.Exec("DELETE FROM " + t); err != nil {
+			return fmt.Errorf("error limpiando %s: %w", t, err)
+		}
+	}
+	return nil
+}
+
+// SeedOrgasmDenial inserta una denegación de orgasmo N días en el pasado.
+func (db *DB) SeedOrgasmDenial(daysAgo int) error {
+	id := fmt.Sprintf("seed-orgasm-%d", time.Now().UnixNano())
+	createdAt := time.Now().AddDate(0, 0, -daysAgo)
+	_, err := db.conn.Exec(
+		`INSERT INTO orgasm_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
+		 VALUES (?, 0, 'permiso', 'Denegado.', '', 0, 0, ?)`,
+		id, createdAt,
+	)
+	return err
+}
+
 // ── Outfit log ─────────────────────────────────────────────────────────────
 
 type OutfitEntry struct {

@@ -1548,6 +1548,8 @@ func (b *Bot) Start() {
 			b.HandleWardrobe("")
 		case strings.HasPrefix(text, "/wardrobe "):
 			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
+		case text == "/dbwipe":
+			b.HandleDBWipe()
 		case text == "/testjudgment":
 			b.state.LastJudgmentDate = "" // forzar re-ejecución
 			b.HandleWeeklyJudgment()
@@ -2983,6 +2985,42 @@ func (b *Bot) handleEventNegotiation(text string) {
 		b.mustSaveState()
 		b.Send("▪️ *PENALIZACIÓN*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(result.Message) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_+30 minutos añadidos al evento._")
 	}
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+
+// HandleDBWipe borra toda la DB, siembra el dato de orgasmo inicial y resetea el estado.
+// Comando oculto — no aparece en /help.
+func (b *Bot) HandleDBWipe() {
+	if b.db == nil {
+		b.Send("❌ DB no disponible.")
+		return
+	}
+
+	b.Send("_Borrando todo..._")
+
+	if err := b.db.ResetAllTables(); err != nil {
+		b.Send(fmt.Sprintf("❌ Error limpiando DB: %v", err))
+		return
+	}
+
+	// Sembrar: 1 denegación de orgasmo hace 3 días
+	if err := b.db.SeedOrgasmDenial(3); err != nil {
+		log.Printf("[dbwipe] error sembrando orgasmo: %v", err)
+	}
+
+	// Resetear state.json
+	b.stateMu.Lock()
+	b.state = &models.AppState{Toys: []models.Toy{}}
+	b.stateMu.Unlock()
+	b.mustSaveState()
+
+	// Resetear estado transitorio
+	b.pendingAction = ""
+	b.cachedDaysLocked = 0
+	b.cachedDaysLockedAt = time.Time{}
+
+	b.Send("✅ *DB reseteada.*\n▬▬▬▬▬▬▬▬▬▬▬▬\nDatos sembrados:\n— 1 denegación de orgasmo hace 3 días\n\nTodo lo demás está vacío. Listo para mañana.")
 }
 
 // ── Guardarropa ────────────────────────────────────────────────────────────
