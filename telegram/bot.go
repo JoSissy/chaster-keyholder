@@ -1376,7 +1376,31 @@ _Para completar una tarea — manda la foto directo al chat._`)
 
 // ── Loop principal ─────────────────────────────────────────────────────────
 
+// syncLockState consulta Chaster al arrancar y persiste el estado del lock
+// en state.json inmediatamente. Esto evita que el dashboard muestre "libre"
+// tras un reinicio si el estado todavía no fue actualizado por los jobs.
+func (b *Bot) syncLockState() {
+	lock, err := b.chaster.GetActiveLock()
+	if err != nil {
+		log.Printf("[syncLockState] sin lock activo o error de API: %v", err)
+		return
+	}
+	days := int(time.Since(lock.StartDate).Hours()) / 24
+	b.stateMu.Lock()
+	b.state.DaysLocked = days
+	b.cachedDaysLocked = days
+	b.cachedDaysLockedAt = time.Now()
+	if b.state.CurrentLockID == "" {
+		b.state.CurrentLockID = lock.ID
+	}
+	b.stateMu.Unlock()
+	b.mustSaveState()
+	log.Printf("[syncLockState] lock activo: %s — %d días", lock.ID, days)
+}
+
 func (b *Bot) Start() {
+	go b.syncLockState()
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := b.api.GetUpdatesChan(u)
