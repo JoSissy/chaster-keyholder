@@ -2741,11 +2741,15 @@ func (b *Bot) HandleChasterTaskCommand() {
 		return
 	}
 
+	dbID := fmt.Sprintf("chatask-%d", time.Now().UnixNano())
 	if b.db != nil {
-		if err := b.db.SaveChasterTask(taskDesc); err != nil {
+		if err := b.db.SaveChasterTask(&storage.ChasterTask{
+			ID: dbID, Description: taskDesc, Result: "pending", AssignedAt: time.Now(),
+		}); err != nil {
 			log.Printf("[ChasterTask] error guardando tarea en DB: %v", err)
 		}
 	}
+	b.state.ChasterTaskDBID = dbID
 
 	if err := b.chaster.AssignChasterTask(sessionID, taskDesc); err != nil {
 		b.Send(fmt.Sprintf("❌ Error asignando la tarea en Chaster: %v", err))
@@ -2776,13 +2780,18 @@ func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
 
 	b.Send("_Enviando evidencia a Chaster..._")
 
-	// Subir foto a Cloudinary para nuestro registro (paralelo, no bloquea)
+	// Subir foto a Cloudinary para nuestro registro
+	var chataskPhotoURL string
 	if b.cloudinary != nil {
-		go func() {
-			if _, err := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks"); err != nil {
-				log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", err)
-			}
-		}()
+		url, err := b.cloudinary.Upload(imgBytes, mime, "chaster/community-tasks")
+		if err != nil {
+			log.Printf("[ChasterTask] error subiendo foto a Cloudinary: %v", err)
+		} else {
+			chataskPhotoURL = url
+		}
+	}
+	if b.db != nil && b.state.ChasterTaskDBID != "" && chataskPhotoURL != "" {
+		b.db.UpdateChasterTaskResult(b.state.ChasterTaskDBID, "pending", chataskPhotoURL, nil)
 	}
 
 	// 1. Subir foto a Chaster y obtener el verificationPictureToken
@@ -2825,6 +2834,10 @@ func (b *Bot) CheckChasterTaskVote() {
 	// Timeout: si pasaron más de 2 horas sin resultado, abandonar
 	if time.Since(*b.state.ChasterTaskAssignedAt) > 6*time.Hour {
 		log.Printf("[ChasterTask] timeout esperando voto — limpiando estado")
+		if b.db != nil && b.state.ChasterTaskDBID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(b.state.ChasterTaskDBID, "timeout", "", &now)
+		}
 		b.clearChasterTaskState()
 		b.Send("⏰ *TAREA COMUNITARIA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo de votación expiró sin resultado definitivo._")
 		return
@@ -2842,10 +2855,15 @@ func (b *Bot) CheckChasterTaskVote() {
 	// Tomar la entrada más reciente
 	latest := entries[0]
 
+	dbID := b.state.ChasterTaskDBID
+
 	switch latest.Status {
 	case "verified":
 		b.clearChasterTaskState()
-		// Recompensa: quitar 1 hora
+		if b.db != nil && dbID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(dbID, "verified", "", &now)
+		}
 		lock, err := b.chaster.GetActiveLock()
 		if err == nil {
 			if err := b.chaster.RemoveTime(lock.ID, 3600); err != nil {
@@ -2859,7 +2877,10 @@ func (b *Bot) CheckChasterTaskVote() {
 
 	case "rejected":
 		b.clearChasterTaskState()
-		// Penalización: añadir 1 hora
+		if b.db != nil && dbID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(dbID, "rejected", "", &now)
+		}
 		lock, err := b.chaster.GetActiveLock()
 		if err == nil {
 			if err := b.chaster.AddTime(lock.ID, 3600); err != nil {
@@ -2874,11 +2895,14 @@ func (b *Bot) CheckChasterTaskVote() {
 
 	case "abandoned":
 		b.clearChasterTaskState()
+		if b.db != nil && dbID != "" {
+			now := time.Now()
+			b.db.UpdateChasterTaskResult(dbID, "abandoned", "", &now)
+		}
 		b.addWeeklyDebt("tarea comunitaria abandonada")
 		b.Send("💀 *TAREA ABANDONADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La tarea fue marcada como abandonada. Consecuencias._")
 
 	case "pending_verification":
-		// Todavía esperando — silencio
 		log.Printf("[ChasterTask] votación en curso para lock %s", b.state.ChasterTaskLockID)
 	}
 }
@@ -2888,6 +2912,7 @@ func (b *Bot) clearChasterTaskState() {
 	b.state.ChasterTaskAssignedAt = nil
 	b.state.PendingChasterTask = ""
 	b.state.ChasterTaskSessionID = ""
+	b.state.ChasterTaskDBID = ""
 	b.mustSaveState()
 }
 

@@ -45,12 +45,19 @@ type dashData struct {
 	OrgasmDenied    int
 	GrantRate       int
 	// Lock timing
-	HasEndDate      bool
-	LockEndISO      string     // for JS countdown
-	LockStartISO    string     // for JS progress bar
-	LockStartDate   *time.Time // for display
-	LockEndDate     *time.Time // for display
-	ProgressPct     int        // % del lock completado
+	HasEndDate    bool
+	LockEndISO    string     // for JS countdown
+	LockStartISO  string     // for JS progress bar
+	LockStartDate *time.Time // for display
+	LockEndDate   *time.Time // for display
+	ProgressPct   int        // % del lock completado
+	// Outfit del día
+	HasTodayOutfit      bool
+	TodayOutfitDesc     string
+	TodayPoseDesc       string
+	TodayOutfitPhotoURL string
+	TodayOutfitComment  string
+	OutfitConfirmed     bool
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +139,53 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	recent, _ := s.db.GetRecentTasks(6)
 	d.RecentTasks = recent
 
+	// Outfit del día
+	loc, err := time.LoadLocation("America/Bogota")
+	if err != nil {
+		loc = time.FixedZone("COT", -5*3600)
+	}
+	today := time.Now().In(loc).Format("2006-01-02")
+	if st.DailyOutfitDesc != "" && st.DailyOutfitDate == today {
+		d.HasTodayOutfit = true
+		d.TodayOutfitDesc = st.DailyOutfitDesc
+		d.TodayPoseDesc = st.DailyPoseDesc
+		d.TodayOutfitPhotoURL = st.DailyOutfitPhotoURL
+		d.TodayOutfitComment = st.DailyOutfitComment
+		d.OutfitConfirmed = st.OutfitConfirmed
+	}
+
 	s.render(w, dashboardHTML, d)
+}
+
+// ── Chatasks ──────────────────────────────────────────────────────────────
+
+type chataskData struct {
+	pageBase
+	Tasks    []*storage.ChasterTask
+	Total    int
+	Verified int
+	Rejected int
+	Pending  int
+}
+
+func (s *Server) handleChatasks(w http.ResponseWriter, r *http.Request) {
+	tasks, _ := s.db.GetChasterTaskHistory(50)
+	d := chataskData{
+		pageBase: s.base("chatasks"),
+		Tasks:    tasks,
+		Total:    len(tasks),
+	}
+	for _, t := range tasks {
+		switch t.Result {
+		case "verified":
+			d.Verified++
+		case "rejected", "abandoned", "timeout":
+			d.Rejected++
+		default:
+			d.Pending++
+		}
+	}
+	s.render(w, chataskHTML, d)
 }
 
 // ── Calendar ──────────────────────────────────────────────────────────────

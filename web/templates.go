@@ -451,6 +451,9 @@ a:hover { color: var(--purple); }
     <a href="/tasks" class="nav-link {{if eq .Nav "tasks"}}active{{end}}">
       <span class="nav-icon">📋</span> Órdenes
     </a>
+    <a href="/chatasks" class="nav-link {{if eq .Nav "chatasks"}}active{{end}}">
+      <span class="nav-icon">🌐</span> Comunidad
+    </a>
     <a href="/orgasms" class="nav-link {{if eq .Nav "orgasms"}}active{{end}}">
       <span class="nav-icon">🌸</span> Permisos
     </a>
@@ -591,6 +594,34 @@ var dashboardHTML = `{{define "content"}}
   </div>
   <div class="cur-task-desc">{{.CurrentTaskDesc}}</div>
   <div class="cur-task-meta">Vence: {{formatDate .CurrentTaskDue}}</div>
+</div>
+{{end}}
+
+{{if .HasTodayOutfit}}
+<div class="card" style="border-color:var(--pink); margin-bottom:22px;">
+  <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+    {{if and .OutfitConfirmed .TodayOutfitPhotoURL}}
+    <img src="{{safeURL .TodayOutfitPhotoURL}}" alt="Outfit"
+      style="width:80px; height:110px; object-fit:cover; border-radius:8px; border:1px solid var(--border); flex-shrink:0;">
+    {{else}}
+    <div style="width:80px; height:110px; border-radius:8px; background:var(--sidebar); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:30px; flex-shrink:0;">👗</div>
+    {{end}}
+    <div style="flex:1; min-width:160px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <span style="font-size:14px; font-weight:600; color:var(--pink);">Outfit de hoy</span>
+        {{if .OutfitConfirmed}}
+        <span class="badge badge-success">✅ confirmado</span>
+        {{else}}
+        <span class="badge badge-warning">⏳ pendiente</span>
+        {{end}}
+      </div>
+      <p style="color:var(--text); font-size:13px; line-height:1.5; margin-bottom:6px;">{{.TodayOutfitDesc}}</p>
+      {{if .TodayPoseDesc}}<p style="font-size:12px; color:var(--text-muted);"><span style="color:var(--pink);">🧍</span> {{.TodayPoseDesc}}</p>{{end}}
+      {{if and .OutfitConfirmed .TodayOutfitComment}}
+      <p style="font-size:12px; color:var(--purple); font-style:italic; margin-top:6px; line-height:1.5;">&#8220;{{.TodayOutfitComment}}&#8221;</p>
+      {{end}}
+    </div>
+  </div>
 </div>
 {{end}}
 
@@ -895,6 +926,112 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
 </script>
 {{end}}`
 
+var chataskHTML = `{{define "content"}}
+<div class="page-hd">
+  <h1 class="page-title">Tareas de Comunidad</h1>
+  <p class="page-sub">Historial de tareas verificadas por Chaster</p>
+</div>
+
+<div class="stats-grid g3" style="margin-bottom:22px;">
+  <div class="stat-card">
+    <div class="stat-lbl">Aprobadas</div>
+    <div class="stat-val c-green">{{.Verified}}</div>
+    <div class="stat-sub">de {{.Total}} totales</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Rechazadas</div>
+    <div class="stat-val c-red">{{.Rejected}}</div>
+    <div class="stat-sub">incluye timeout y abandonadas</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Pendientes</div>
+    <div class="stat-val c-yellow">{{.Pending}}</div>
+    <div class="stat-sub">en votación</div>
+  </div>
+</div>
+
+<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px;">
+  <button class="filter-btn active" data-result="all">Todas</button>
+  <button class="filter-btn" data-result="verified">✅ Aprobadas</button>
+  <button class="filter-btn" data-result="rejected">❌ Rechazadas</button>
+  <button class="filter-btn" data-result="abandoned">💀 Abandonadas</button>
+  <button class="filter-btn" data-result="timeout">⏰ Timeout</button>
+  <button class="filter-btn" data-result="pending">⏳ Pendientes</button>
+</div>
+
+<style>
+.filter-btn { background:var(--card); border:1px solid var(--border); color:var(--text-muted); padding:5px 14px; border-radius:20px; cursor:pointer; font-size:12px; font-family:'Inter',sans-serif; transition:all .15s; }
+.filter-btn:hover { border-color:var(--pink); color:var(--pink); }
+.filter-btn.active { background:rgba(232,119,154,.15); border-color:var(--pink); color:var(--pink); }
+.ct-card.hidden { display: none !important; }
+#lb-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:1000; align-items:center; justify-content:center; cursor:zoom-out; }
+#lb-overlay.open { display:flex; }
+#lb-overlay img { max-width:90vw; max-height:90vh; border-radius:8px; }
+</style>
+
+{{if .Tasks}}
+<div id="ct-list" style="display:flex; flex-direction:column; gap:10px;">
+  {{range .Tasks}}
+  <div class="card ct-card" data-result="{{.Result}}" style="padding:16px; display:flex; gap:16px; align-items:flex-start;">
+
+    <div style="font-size:22px; flex-shrink:0; margin-top:2px;">
+      {{if eq .Result "verified"}}✅
+      {{else if eq .Result "rejected"}}❌
+      {{else if eq .Result "abandoned"}}💀
+      {{else if eq .Result "timeout"}}⏰
+      {{else}}⏳{{end}}
+    </div>
+
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+        <span style="font-size:12px; color:var(--text-muted);">{{formatDate .AssignedAt}}</span>
+        {{if eq .Result "verified"}}<span class="badge badge-success">Aprobada</span>
+        {{else if eq .Result "rejected"}}<span class="badge badge-danger">Rechazada</span>
+        {{else if eq .Result "abandoned"}}<span class="badge badge-danger">Abandonada</span>
+        {{else if eq .Result "timeout"}}<span class="badge badge-muted">Timeout</span>
+        {{else}}<span class="badge badge-warning">Pendiente</span>{{end}}
+        {{if .ResolvedAt}}<span style="font-size:11px; color:var(--text-muted);">→ {{formatDateTimePtr .ResolvedAt}}</span>{{end}}
+      </div>
+      <p style="color:var(--text); font-size:13.5px; line-height:1.6;">{{.Description}}</p>
+    </div>
+
+    {{if .PhotoURL}}
+    <img src="{{safeURL .PhotoURL}}" alt="Evidencia"
+      style="width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--border); cursor:zoom-in; flex-shrink:0;"
+      onclick="openLightbox(this.src)">
+    {{end}}
+
+  </div>
+  {{end}}
+</div>
+{{else}}
+<div class="card">
+  <div class="empty">
+    <div class="empty-icon">🌐</div>
+    <div class="empty-text">Aún no hay tareas comunitarias registradas</div>
+    <div class="empty-sub">Usa <code>/chatask</code> en Telegram para asignar una</div>
+  </div>
+</div>
+{{end}}
+
+<div id="lb-overlay" onclick="closeLightbox()"><img id="lb-img" src="" alt=""></div>
+
+<script>
+function openLightbox(src) { document.getElementById('lb-img').src=src; document.getElementById('lb-overlay').classList.add('open'); }
+function closeLightbox() { document.getElementById('lb-overlay').classList.remove('open'); }
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeLightbox(); });
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const result = btn.dataset.result;
+    document.querySelectorAll('.ct-card').forEach(card => {
+      card.classList.toggle('hidden', result !== 'all' && card.dataset.result !== result);
+    });
+  });
+});
+</script>
+{{end}}`
 // ── Orgasms ────────────────────────────────────────────────────────────────
 
 var orgasmsHTML = `{{define "content"}}

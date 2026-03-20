@@ -25,6 +25,11 @@ func NewDB(path string) (*DB, error) {
 		return nil, fmt.Errorf("error en migración: %w", err)
 	}
 
+	// Columnas añadidas en migraciones posteriores (ignora error si ya existen)
+	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN photo_url TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN result TEXT DEFAULT 'pending'`)
+	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN resolved_at DATETIME`)
+
 	log.Println("✅ Base de datos iniciada")
 	return db, nil
 }
@@ -70,7 +75,10 @@ func (db *DB) migrate() error {
 	CREATE TABLE IF NOT EXISTS chaster_tasks (
 		id          TEXT PRIMARY KEY,
 		description TEXT NOT NULL,
-		assigned_at DATETIME NOT NULL
+		photo_url   TEXT DEFAULT '',
+		result      TEXT DEFAULT 'pending',
+		assigned_at DATETIME NOT NULL,
+		resolved_at DATETIME
 	);
 
 	CREATE TABLE IF NOT EXISTS clothing (
@@ -512,11 +520,28 @@ func (db *DB) LoadSessionState() (*SessionState, error) {
 
 // ── Chaster Tasks ─────────────────────────────────────────────────────────
 
-func (db *DB) SaveChasterTask(description string) error {
-	id := fmt.Sprintf("chatask-%d", time.Now().UnixNano())
+type ChasterTask struct {
+	ID          string
+	Description string
+	PhotoURL    string
+	Result      string // "pending"|"verified"|"rejected"|"abandoned"|"timeout"
+	AssignedAt  time.Time
+	ResolvedAt  *time.Time
+}
+
+func (db *DB) SaveChasterTask(t *ChasterTask) error {
 	_, err := db.conn.Exec(
-		`INSERT INTO chaster_tasks (id, description, assigned_at) VALUES (?, ?, ?)`,
-		id, description, time.Now(),
+		`INSERT OR REPLACE INTO chaster_tasks (id, description, photo_url, result, assigned_at, resolved_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Description, t.PhotoURL, t.Result, t.AssignedAt, t.ResolvedAt,
+	)
+	return err
+}
+
+func (db *DB) UpdateChasterTaskResult(id, result string, photoURL string, resolvedAt *time.Time) error {
+	_, err := db.conn.Exec(
+		`UPDATE chaster_tasks SET result=?, photo_url=CASE WHEN ?!='' THEN ? ELSE photo_url END, resolved_at=? WHERE id=?`,
+		result, photoURL, photoURL, resolvedAt, id,
 	)
 	return err
 }
@@ -536,6 +561,26 @@ func (db *DB) GetRecentChasterTaskDescriptions(n int) ([]string, error) {
 		descs = append(descs, d)
 	}
 	return descs, nil
+}
+
+func (db *DB) GetChasterTaskHistory(n int) ([]*ChasterTask, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, description, photo_url, result, assigned_at, resolved_at
+		 FROM chaster_tasks ORDER BY assigned_at DESC LIMIT ?`, n,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []*ChasterTask
+	for rows.Next() {
+		t := &ChasterTask{}
+		if err := rows.Scan(&t.ID, &t.Description, &t.PhotoURL, &t.Result, &t.AssignedAt, &t.ResolvedAt); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
 }
 
 // ── Clothing ──────────────────────────────────────────────────────────────
