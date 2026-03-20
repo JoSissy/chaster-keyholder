@@ -875,13 +875,15 @@ func (c *Client) DescribeToy(imageBytes []byte, mimeType, hint string) (*ToyInfo
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, b64)
 
 	system := `You analyze photos of sex toys and generate a short name, description and type in Spanish.
-Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descripcion en español de 1-2 oraciones", "type": "cage|plug|vibrator|restraint|other"}
+Respond ONLY in JSON: {"name": "nombre corto en español", "description": "descripcion en español de 1-2 oraciones", "type": "cage|plug|dildo|vibrator|nipple|restraint|other"}
 
 Type definitions:
 - "cage": chastity cage or device that encloses genitals
-- "plug": anal or vaginal plug/dildo
-- "vibrator": vibrating device
-- "restraint": handcuffs, rope, collar, leash, or any restraint
+- "plug": anal plug — small toy designed to be worn passively for extended periods (butt plug shape)
+- "dildo": dildo or penetration toy — longer toy designed for active penetration/thrusting use
+- "vibrator": any vibrating device (wand, bullet, egg, vibrating plug)
+- "nipple": nipple clamps, nipple suction cups (ventosas), or any toy applied to nipples
+- "restraint": handcuffs, rope, collar, leash, blindfold, or any restraint
 - "other": anything else
 
 Be direct and descriptive. Name should be concise (2-4 words max) in Spanish.

@@ -1214,8 +1214,12 @@ func (b *Bot) HandleToys(args string) {
 				typeStr = " 🔒"
 			case "plug":
 				typeStr = " 🔌"
+			case "dildo":
+				typeStr = " 🍆"
 			case "vibrator":
 				typeStr = " 📳"
+			case "nipple":
+				typeStr = " 🌀"
 			case "restraint":
 				typeStr = " ⛓"
 			}

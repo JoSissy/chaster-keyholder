@@ -144,8 +144,12 @@ func funcMap() template.FuncMap {
 				return "🔒"
 			case "plug":
 				return "🔌"
+			case "dildo":
+				return "🍆"
 			case "vibrator":
 				return "💜"
+			case "nipple":
+				return "🌀"
 			case "restraint":
 				return "⛓️"
 			default:
@@ -158,8 +162,12 @@ func funcMap() template.FuncMap {
 				return "Jaula"
 			case "plug":
 				return "Plug"
+			case "dildo":
+				return "Dildo"
 			case "vibrator":
 				return "Vibrador"
+			case "nipple":
+				return "Ventosas"
 			case "restraint":
 				return "Restricción"
 			default:
