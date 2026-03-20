@@ -1567,8 +1567,10 @@ func (b *Bot) HandleHelp() {
 /task — Ver tarea activa del día
 /explain — Cómo fotografiar la tarea
 /fail — Confesar que fallaste
+/quitar [h] — Quitar horas de la condena
 /roulette — Girar la ruleta diaria 🎰
 /chatask — Tarea comunitaria de Chaster
+/testcheckin — Forzar check-in ahora
 /newlock — Iniciar nueva sesión
 /contrato — Ver el contrato de sesión actual
 
@@ -1735,6 +1737,12 @@ func (b *Bot) Start() {
 			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
 		case text == "/contrato":
 			b.HandleContrato()
+		case text == "/quitar":
+			b.HandleRemoveTime("1")
+		case strings.HasPrefix(text, "/quitar "):
+			b.HandleRemoveTime(strings.TrimPrefix(text, "/quitar "))
+		case text == "/testcheckin":
+			b.TriggerCheckin()
 		case text == "/dbwipe":
 			b.HandleDBWipe()
 		case text != "" && !strings.HasPrefix(text, "/"):
@@ -2372,8 +2380,8 @@ func (b *Bot) SendRandomMessage() {
 	b.sendRandomMessageInternal()
 }
 
-// HandleTestRemoveTime quita N horas de la condena — /testremove [horas]
-func (b *Bot) HandleTestRemoveTime(args string) {
+// HandleRemoveTime quita N horas de la condena — /quitar [horas]
+func (b *Bot) HandleRemoveTime(args string) {
 	hours := 1
 	if args != "" {
 		fmt.Sscanf(strings.TrimSpace(args), "%d", &hours)
@@ -2392,7 +2400,7 @@ func (b *Bot) HandleTestRemoveTime(args string) {
 	}
 	b.state.TotalTimeRemovedHours += hours
 	b.mustSaveState()
-	b.Send(fmt.Sprintf("🧪 *TEST* — Se quitaron *%dh* de tu condena.", hours))
+	b.Send(fmt.Sprintf("✂️ *-%dh* quitadas de tu condena.", hours))
 }
 
 // SendRandomMessageTest fuerza un mensaje random — solo para testing con /testmsg
@@ -3525,18 +3533,10 @@ func (b *Bot) SendDailyOutfit() {
 	))
 }
 
-// HandleOutfitPhoto verifica que la foto coincida con el outfit asignado
+// HandleOutfitPhoto acepta la foto del outfit y genera el comentario de Papi
 func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 	if b.state.DailyOutfitDesc == "" || b.state.OutfitConfirmed {
 		b.pendingAction = ""
-		return
-	}
-
-	b.Send("_Verificando el outfit..._")
-
-	verdict, err := b.ai.VerifyOutfitPhoto(imgBytes, mimeType, b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
-	if err != nil {
-		b.Send("❌ Error verificando la foto. Inténtalo de nuevo.")
 		return
 	}
 
@@ -3551,47 +3551,34 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 		}
 	}
 
-	switch verdict.Status {
-	case "approved":
-		b.pendingAction = ""
-		b.state.OutfitConfirmed = true
-		b.state.DailyOutfitPhotoURL = outfitPhotoURL
-		// Generar comentario de Papi
-		comment, err := b.ai.GenerateOutfitComment(b.daysLocked(), b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
-		if err != nil {
-			comment = "Perfecta. Así te quiero todo el día."
-		}
-		b.state.DailyOutfitComment = strings.TrimSpace(comment)
-		b.mustSaveState()
-		// Guardar en historial DB
-		if b.db != nil {
-			loc, _ := time.LoadLocation("America/Bogota")
-			b.db.SaveOutfitEntry(&storage.OutfitEntry{
-				ID:         fmt.Sprintf("outfit-%d", time.Now().UnixNano()),
-				Date:       time.Now().In(loc).Format("2006-01-02"),
-				OutfitDesc: b.state.DailyOutfitDesc,
-				PoseDesc:   b.state.DailyPoseDesc,
-				PhotoURL:   outfitPhotoURL,
-				Comment:    b.state.DailyOutfitComment,
-				CreatedAt:  time.Now(),
-			})
-		}
-		b.Send(fmt.Sprintf(
-			"✅ *OUTFIT CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
-			stripMarkdown(b.state.DailyOutfitComment),
-		))
+	b.pendingAction = ""
+	b.state.OutfitConfirmed = true
+	b.state.DailyOutfitPhotoURL = outfitPhotoURL
 
-	case "retry":
-		b.Send(fmt.Sprintf("⚠️ *Casi — inténtalo de nuevo*\n\n_%s_", verdict.Reason))
-
-	case "rejected":
-		b.pendingAction = ""
-		b.state.OutfitConfirmed = false
-		b.mustSaveState()
-		b.Send(fmt.Sprintf(
-			"❌ *OUTFIT RECHAZADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Cámbiate y manda otra foto._",
-			verdict.Reason,
-		))
-		b.addWeeklyDebt("outfit del día rechazado")
+	// Generar comentario de Papi
+	comment, err := b.ai.GenerateOutfitComment(b.daysLocked(), b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
+	if err != nil {
+		comment = "Perfecta. Así te quiero todo el día."
 	}
+	b.state.DailyOutfitComment = strings.TrimSpace(comment)
+	b.mustSaveState()
+
+	// Guardar en historial DB
+	if b.db != nil {
+		loc, _ := time.LoadLocation("America/Bogota")
+		b.db.SaveOutfitEntry(&storage.OutfitEntry{
+			ID:         fmt.Sprintf("outfit-%d", time.Now().UnixNano()),
+			Date:       time.Now().In(loc).Format("2006-01-02"),
+			OutfitDesc: b.state.DailyOutfitDesc,
+			PoseDesc:   b.state.DailyPoseDesc,
+			PhotoURL:   outfitPhotoURL,
+			Comment:    b.state.DailyOutfitComment,
+			CreatedAt:  time.Now(),
+		})
+	}
+
+	b.Send(fmt.Sprintf(
+		"✅ *OUTFIT DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
+		stripMarkdown(b.state.DailyOutfitComment),
+	))
 }
