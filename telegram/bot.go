@@ -1597,7 +1597,9 @@ func (b *Bot) Start() {
 			} else if b.pendingAction == "plug_photo" {
 				b.deleteMessage(msgID)
 				b.HandlePlugPhoto(imgBytes, mime)
-			} else if b.pendingAction == "checkin_photo" {
+			} else if b.pendingAction == "checkin_photo" ||
+				(b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt)) {
+				b.pendingAction = "checkin_photo"
 				b.deleteMessage(msgID)
 				b.HandleCheckinPhoto(imgBytes, mime)
 			} else if b.pendingAction == "chaster_task_photo" {
