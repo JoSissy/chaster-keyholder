@@ -2024,6 +2024,9 @@ func (b *Bot) HandleLockPhoto(imageBytes []byte, mimeType string, messageID int)
 	b.state.CurrentLockID = lockID
 	b.mustSaveState()
 
+	// Sincronizar fechas y duración desde Chaster para que el dashboard las tenga de inmediato
+	b.syncLockState()
+
 	// Guardar lock en DB
 	if b.db != nil {
 		b.db.SaveLock(&storage.Lock{
