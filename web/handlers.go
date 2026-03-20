@@ -138,11 +138,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // ── Calendar ──────────────────────────────────────────────────────────────
 
 type calDay struct {
-	Day        int
-	Date       time.Time
-	IsToday    bool
-	IsLocked   bool
-	TaskStatus string // "" | "completed" | "failed" | "pending"
+	Day           int
+	Date          time.Time
+	IsToday       bool
+	IsLocked      bool
+	HoursLocked   int
+	TaskStatus    string // "" | "completed" | "failed" | "pending"
+	OrgasmGranted int
+	OrgasmDenied  int
 }
 
 type calData struct {
@@ -171,7 +174,6 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 		month = int(now.Month())
 	}
 
-	// Clamp month to 1-12
 	if month < 1 {
 		month = 12
 		year--
@@ -193,8 +195,9 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 
 	locks, _ := s.db.GetLocks()
 	tasks, _ := s.db.GetAllTasks()
+	orgasms, _ := s.db.GetAllOrgasmEntries()
 
-	weeks := buildCalendar(year, month, locks, tasks, loc)
+	weeks := buildCalendar(year, month, locks, tasks, orgasms, loc)
 
 	cd := calData{
 		pageBase: s.base("calendar"),
@@ -217,7 +220,9 @@ func monthName(m int) string {
 	return names[m]
 }
 
-func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task, loc *time.Location) [][]calDay {
+type orgasmDayCounts struct{ Granted, Denied int }
+
+func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task, orgasms []*storage.OrgasmEntry, loc *time.Location) [][]calDay {
 	firstDay := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
 	daysInMonth := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, loc).Day()
 	today := time.Now().In(loc)
@@ -226,7 +231,7 @@ func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task
 	// ISO week: Monday = 0
 	offset := (int(firstDay.Weekday()) + 6) % 7
 
-	// Build task map by date string
+	// Task map: date → task
 	taskMap := map[string]*storage.Task{}
 	for _, t := range tasks {
 		key := t.AssignedAt.In(loc).Format("2006-01-02")
@@ -235,7 +240,20 @@ func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task
 		}
 	}
 
-	// Build flat slice of cells (padding + days + trailing padding)
+	// Orgasm map: date → counts
+	orgasmMap := map[string]*orgasmDayCounts{}
+	for _, e := range orgasms {
+		key := e.CreatedAt.In(loc).Format("2006-01-02")
+		if orgasmMap[key] == nil {
+			orgasmMap[key] = &orgasmDayCounts{}
+		}
+		if e.Granted {
+			orgasmMap[key].Granted++
+		} else {
+			orgasmMap[key].Denied++
+		}
+	}
+
 	totalCells := offset + daysInMonth
 	if totalCells%7 != 0 {
 		totalCells += 7 - totalCells%7
@@ -245,21 +263,31 @@ func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task
 	for d := 1; d <= daysInMonth; d++ {
 		date := time.Date(year, time.Month(month), d, 0, 0, 0, 0, loc)
 		dateStr := date.Format("2006-01-02")
-		t := taskMap[dateStr]
+
 		taskStatus := ""
-		if t != nil {
+		if t := taskMap[dateStr]; t != nil {
 			taskStatus = t.Status
 		}
+
+		og := orgasmMap[dateStr]
+		granted, denied := 0, 0
+		if og != nil {
+			granted = og.Granted
+			denied = og.Denied
+		}
+
 		cells[offset+d-1] = calDay{
-			Day:        d,
-			Date:       date,
-			IsToday:    dateStr == todayStr,
-			IsLocked:   dayIsLocked(date, locks),
-			TaskStatus: taskStatus,
+			Day:           d,
+			Date:          date,
+			IsToday:       dateStr == todayStr,
+			IsLocked:      dayIsLocked(date, locks),
+			HoursLocked:   hoursLockedOnDay(date, locks),
+			TaskStatus:    taskStatus,
+			OrgasmGranted: granted,
+			OrgasmDenied:  denied,
 		}
 	}
 
-	// Split into weeks
 	var weeks [][]calDay
 	for i := 0; i < len(cells); i += 7 {
 		weeks = append(weeks, cells[i:i+7])
@@ -268,21 +296,31 @@ func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task
 }
 
 func dayIsLocked(day time.Time, locks []*storage.Lock) bool {
-	dayEnd := day.Add(24 * time.Hour)
+	return hoursLockedOnDay(day, locks) > 0
+}
+
+func hoursLockedOnDay(dayStart time.Time, locks []*storage.Lock) int {
+	dayEnd := dayStart.Add(24 * time.Hour)
+	var totalSecs int64
 	for _, l := range locks {
+		lockEnd := time.Now()
+		if l.EndedAt != nil {
+			lockEnd = *l.EndedAt
+		}
+		// overlap = max(lockStart, dayStart) .. min(lockEnd, dayEnd)
 		start := l.StartedAt
-		if l.EndedAt == nil {
-			// Still active
-			if !day.Before(start) {
-				return true
-			}
-		} else {
-			if !day.Before(start) && day.Before(*l.EndedAt) && dayEnd.After(start) {
-				return true
-			}
+		if dayStart.After(start) {
+			start = dayStart
+		}
+		end := lockEnd
+		if dayEnd.Before(end) {
+			end = dayEnd
+		}
+		if end.After(start) {
+			totalSecs += int64(end.Sub(start).Seconds())
 		}
 	}
-	return false
+	return int(totalSecs / 3600)
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────

@@ -292,14 +292,14 @@ a:hover { color: var(--purple); }
 }
 .cal-btn:hover { border-color: var(--pink); color: var(--pink); }
 .cal-legend {
-  display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
-  font-size: 12px; color: var(--text-muted);
+  display: flex; gap: 14px; margin-bottom: 16px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text-muted); align-items: center;
 }
-.legend-dot {
-  width: 10px; height: 10px; border-radius: 3px;
-  display: inline-block; margin-right: 4px;
+.legend-swatch {
+  width: 12px; height: 12px; border-radius: 3px;
+  display: inline-block; margin-right: 4px; vertical-align: middle;
 }
-.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
 .cal-day-hd {
   text-align: center;
   font-size: 10px;
@@ -310,45 +310,53 @@ a:hover { color: var(--purple); }
   padding: 6px 0 10px;
 }
 .cal-cell {
-  min-height: 62px;
+  min-height: 76px;
   border-radius: 8px;
   padding: 8px;
   font-size: 13px;
-  position: relative;
+  display: flex;
+  flex-direction: column;
 }
-.cal-num { font-weight: 600; display: block; margin-bottom: 4px; }
+.cal-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+.cal-num { font-weight: 700; font-size: 15px; line-height: 1; }
+.cal-hours { font-size: 10px; color: var(--text-muted); font-weight: 500; margin-top: 1px; }
+.cal-body { flex: 1; }
+.cal-foot { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }
+.ci { font-size: 12px; line-height: 1; display: inline-flex; align-items: center; gap: 2px; }
+.ci-task { font-size: 11px; font-weight: 700; }
+.ci-done { color: var(--success); }
+.ci-fail { color: var(--danger); }
+.ci-pend { color: var(--warning); }
+.ci-og { color: #f9c74f; } /* gold */
+.ci-od { color: var(--text-muted); }
+.ci-count { font-size: 10px; font-weight: 600; }
+
 .cal-empty { background: transparent; }
 .cal-free {
   background: rgba(167,141,176,0.04);
   border: 1px solid rgba(58,29,72,0.28);
-  color: var(--text-muted);
 }
+.cal-free .cal-num { color: var(--text-muted); }
 .cal-locked {
-  background: rgba(232,119,154,0.06);
-  border: 1px solid rgba(232,119,154,0.18);
+  background: rgba(232,119,154,0.07);
+  border: 1px solid rgba(232,119,154,0.22);
 }
 .cal-locked .cal-num { color: var(--pink); }
+.cal-locked .cal-hours { color: rgba(232,119,154,0.6); }
 .cal-done {
-  background: rgba(134,239,172,0.07);
-  border: 1px solid rgba(134,239,172,0.22);
+  background: rgba(134,239,172,0.08);
+  border: 1px solid rgba(134,239,172,0.28);
 }
 .cal-done .cal-num { color: var(--success); }
+.cal-done .cal-hours { color: rgba(134,239,172,0.6); }
 .cal-failed {
-  background: rgba(248,113,113,0.07);
-  border: 1px solid rgba(248,113,113,0.22);
+  background: rgba(248,113,113,0.08);
+  border: 1px solid rgba(248,113,113,0.28);
 }
 .cal-failed .cal-num { color: var(--danger); }
+.cal-failed .cal-hours { color: rgba(248,113,113,0.6); }
 .cal-today { box-shadow: 0 0 0 2px var(--warning) !important; }
-.cal-today .cal-num { color: var(--warning); }
-.cal-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  display: inline-block;
-  margin-top: 2px;
-}
-.dot-c { background: var(--success); }
-.dot-f { background: var(--danger); }
-.dot-p { background: var(--warning); }
+.cal-today .cal-num { color: var(--warning) !important; }
 
 /* ── Countdown ── */
 .cd-unit { display:flex; flex-direction:column; align-items:center; }
@@ -708,10 +716,15 @@ var calendarHTML = `{{define "content"}}
 </div>
 
 <div class="cal-legend">
-  <span><span class="legend-dot" style="background:rgba(232,119,154,0.35);border:1px solid rgba(232,119,154,0.4);"></span>Encerrada</span>
-  <span><span class="legend-dot" style="background:rgba(134,239,172,0.35);border:1px solid rgba(134,239,172,0.4);"></span>Tarea completada</span>
-  <span><span class="legend-dot" style="background:rgba(248,113,113,0.35);border:1px solid rgba(248,113,113,0.4);"></span>Tarea fallida</span>
-  <span><span class="legend-dot" style="background:transparent;border:2px solid var(--warning);"></span>Hoy</span>
+  <span><span class="legend-swatch" style="background:rgba(232,119,154,0.3);border:1px solid rgba(232,119,154,0.5);"></span>Encerrada</span>
+  <span><span class="legend-swatch" style="background:rgba(134,239,172,0.3);border:1px solid rgba(134,239,172,0.5);"></span>Tarea completada</span>
+  <span><span class="legend-swatch" style="background:rgba(248,113,113,0.3);border:1px solid rgba(248,113,113,0.5);"></span>Tarea fallida</span>
+  <span><span class="legend-swatch" style="border:2px solid var(--warning);background:transparent;"></span>Hoy</span>
+  <span style="margin-left:8px;"><span class="ci ci-done ci-task">✓</span> tarea hecha</span>
+  <span><span class="ci ci-fail ci-task">✗</span> tarea fallida</span>
+  <span><span class="ci ci-pend ci-task">…</span> pendiente</span>
+  <span><span class="ci ci-og">🌸</span> orgasmo concedido</span>
+  <span><span class="ci ci-od">💧</span> orgasmo negado</span>
 </div>
 
 <div class="cal-grid">
@@ -726,24 +739,25 @@ var calendarHTML = `{{define "content"}}
   {{range .Weeks}}{{range .}}
   {{if eq .Day 0}}
   <div class="cal-cell cal-empty"></div>
-  {{else if eq .TaskStatus "completed"}}
-  <div class="cal-cell cal-done {{if .IsToday}}cal-today{{end}}">
-    <span class="cal-num">{{.Day}}</span>
-    <span class="cal-dot dot-c"></span>
-  </div>
-  {{else if eq .TaskStatus "failed"}}
-  <div class="cal-cell cal-failed {{if .IsToday}}cal-today{{end}}">
-    <span class="cal-num">{{.Day}}</span>
-    <span class="cal-dot dot-f"></span>
-  </div>
-  {{else if .IsLocked}}
-  <div class="cal-cell cal-locked {{if .IsToday}}cal-today{{end}}">
-    <span class="cal-num">{{.Day}}</span>
-    {{if eq .TaskStatus "pending"}}<span class="cal-dot dot-p"></span>{{end}}
-  </div>
   {{else}}
-  <div class="cal-cell cal-free {{if .IsToday}}cal-today{{end}}">
-    <span class="cal-num">{{.Day}}</span>
+  {{$cls := "cal-free"}}
+  {{if eq .TaskStatus "completed"}}{{$cls = "cal-done"}}{{end}}
+  {{if eq .TaskStatus "failed"}}{{$cls = "cal-failed"}}{{end}}
+  {{if and .IsLocked (eq .TaskStatus "")}}{{$cls = "cal-locked"}}{{end}}
+  {{if and .IsLocked (eq .TaskStatus "pending")}}{{$cls = "cal-locked"}}{{end}}
+  <div class="cal-cell {{$cls}}{{if .IsToday}} cal-today{{end}}">
+    <div class="cal-head">
+      <span class="cal-num">{{.Day}}</span>
+      {{if .HoursLocked}}<span class="cal-hours">{{.HoursLocked}}h</span>{{end}}
+    </div>
+    <div class="cal-body"></div>
+    <div class="cal-foot">
+      {{if eq .TaskStatus "completed"}}<span class="ci ci-task ci-done" title="Tarea completada">✓</span>{{end}}
+      {{if eq .TaskStatus "failed"}}<span class="ci ci-task ci-fail" title="Tarea fallida">✗</span>{{end}}
+      {{if eq .TaskStatus "pending"}}<span class="ci ci-task ci-pend" title="Tarea pendiente">…</span>{{end}}
+      {{if .OrgasmGranted}}<span class="ci ci-og" title="{{.OrgasmGranted}} orgasmo(s) concedido(s)">🌸{{if gt .OrgasmGranted 1}}<span class="ci-count">{{.OrgasmGranted}}</span>{{end}}</span>{{end}}
+      {{if .OrgasmDenied}}<span class="ci ci-od" title="{{.OrgasmDenied}} orgasmo(s) negado(s)">💧{{if gt .OrgasmDenied 1}}<span class="ci-count">{{.OrgasmDenied}}</span>{{end}}</span>{{end}}
+    </div>
   </div>
   {{end}}
   {{end}}{{end}}
