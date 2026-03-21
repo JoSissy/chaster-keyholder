@@ -428,7 +428,7 @@ func (b *Bot) HandleStatus() {
 	}
 	daysSinceOrgasm := -1
 	if b.db != nil {
-		daysSinceOrgasm = b.db.GetDaysSinceLastRealOrgasm()
+		daysSinceOrgasm = b.db.GetDaysSinceLastOrgasm()
 	}
 	orgasmDaysLine := ""
 	if daysSinceOrgasm < 0 {
@@ -1197,9 +1197,9 @@ func orgasmCooldownHours(lastOutcome string) time.Duration {
 
 // countConsecutiveDenials cuenta cuántos "denied" seguidos hay desde el último edge o granted.
 func countConsecutiveDenials(db interface {
-	GetOrgasmHistory(int) ([]*storage.OrgasmEntry, error)
+	GetPermissionHistory(int) ([]*storage.PermissionEntry, error)
 }) int {
-	entries, err := db.GetOrgasmHistory(20)
+	entries, err := db.GetPermissionHistory(20)
 	if err != nil {
 		return 0
 	}
@@ -1228,7 +1228,7 @@ func (b *Bot) handleOrgasmRequest(text string) {
 	// Si ya tiene permiso de cum activo, recordarlo
 	if b.state.GrantedCumPendingAt != nil {
 		if time.Now().Before(b.state.GrantedCumPendingAt.Add(3 * time.Hour)) {
-			b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso para venirte. Cuando termines, usa `/came [método]`._")
+			b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso para venirte. Cuando termines, usa `/corri [método]`._")
 			return
 		}
 		b.state.GrantedCumPendingAt = nil
@@ -1252,10 +1252,10 @@ func (b *Bot) handleOrgasmRequest(text string) {
 
 	b.Send("_..._")
 
-	// Días desde el último orgasmo REAL (de orgasm_events, no de permisos)
+	// Días desde el último orgasmo real (orgasm_log)
 	daysSinceLastOrgasm := 999
 	if b.db != nil {
-		d := b.db.GetDaysSinceLastRealOrgasm()
+		d := b.db.GetDaysSinceLastOrgasm()
 		if d >= 0 {
 			daysSinceLastOrgasm = d
 		}
@@ -1282,7 +1282,7 @@ func (b *Bot) handleOrgasmRequest(text string) {
 	b.state.LastOrgasmOutcome = outcome
 
 	if b.db != nil {
-		b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
+		b.db.SavePermissionEntry(&storage.PermissionEntry{
 			Outcome:       outcome,
 			UserMessage:   text,
 			SenorResponse: decision.Message,
@@ -1373,10 +1373,10 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 	b.Send("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Al borde y sin correrte. Como debe ser._")
 }
 
-// HandleCame procesa el reporte de orgasmo real de Jolie — /came [método]
+// HandleCorri procesa el reporte de orgasmo real de Jolie — /corri [método]
 // Métodos válidos: nipples/pezones, toys/juguetes, anal, ruined/arruinado, manual, other
-func (b *Bot) HandleCame(args string) {
-	// Separar método y juguete opcional: "/came anal dildo" → method="anal", toyHint="dildo"
+func (b *Bot) HandleCorri(args string) {
+	// Separar método y juguete opcional: "/corri anal dildo" → method="anal", toyHint="dildo"
 	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
 	methodRaw := strings.ToLower(parts[0])
 	toyHint := ""
@@ -1388,7 +1388,7 @@ func (b *Bot) HandleCame(args string) {
 	var method string
 	switch {
 	case methodRaw == "":
-		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/came nipples` — pezones\n`/came anal [juguete]` — anal\n`/came toys [juguete]` — juguetes\n`/came ruined` — arruinado\n`/came manual` — manual\n`/came other` — otro\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejemplo: `/came anal dildo`_")
+		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/corri nipples` — pezones\n`/corri anal [juguete]` — anal\n`/corri toys [juguete]` — juguetes\n`/corri ruined` — arruinado\n`/corri manual` — manual\n`/corri other` — otro\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejemplo: `/corri anal dildo`_")
 		return
 	case methodRaw == "pezones" || methodRaw == "nipples":
 		method = "nipples"
@@ -1442,9 +1442,9 @@ func (b *Bot) HandleCame(args string) {
 		b.state.GrantedCumPendingAt = nil
 	}
 
-	// Guardar en orgasm_events
+	// Guardar en orgasm_log
 	if b.db != nil {
-		b.db.SaveOrgasmEvent(&storage.OrgasmEvent{
+		b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
 			Method:            method,
 			ToyID:             toyID,
 			ToyName:           toyName,
@@ -1477,21 +1477,21 @@ func (b *Bot) HandleCame(args string) {
 	b.Send(fmt.Sprintf("%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", header, stripMarkdown(response)))
 }
 
-// HandleJolieStats muestra las estadísticas completas de Jolie
-func (b *Bot) HandleJolieStats() {
+// HandleStats muestra las estadísticas completas de Jolie
+func (b *Bot) HandleStats() {
 	if b.db == nil {
 		b.Send("❌ Base de datos no disponible.")
 		return
 	}
 
-	stats, err := b.db.GetOrgasmEventStats()
+	stats, err := b.db.GetOrgasmStats()
 	if err != nil {
 		b.Send("❌ Error obteniendo estadísticas.")
 		return
 	}
 
-	// Permiso stats (orgasm_log)
-	totalPerms, grantedCum, edged, denied, _ := b.db.GetOrgasmStats()
+	// Permiso stats (permission_log)
+	totalPerms, grantedCum, edged, denied, _ := b.db.GetPermissionStats()
 	// En el nuevo sistema, granted_toys es un permiso que no es cum ni edge ni denied
 	// lo contamos como "juguetes" si el outcome en orgasm_log es "granted_toys"
 	grantedToys := totalPerms - grantedCum - edged - denied
@@ -1579,19 +1579,19 @@ func methodLabel(method string) string {
 	}
 }
 
-func (b *Bot) HandleOrgasmHistory() {
+func (b *Bot) HandlePermisos() {
 	if b.db == nil {
 		b.Send("❌ Base de datos no disponible.")
 		return
 	}
 
-	total, granted, edged, denied, err := b.db.GetOrgasmStats()
+	total, granted, edged, denied, err := b.db.GetPermissionStats()
 	if err != nil || total == 0 {
-		b.Send("▪️ *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ningún registro todavía._")
+		b.Send("▪️ *HISTORIAL DE PERMISOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ningún registro todavía._")
 		return
 	}
 
-	entries, err := b.db.GetOrgasmHistory(10)
+	entries, err := b.db.GetPermissionHistory(10)
 	if err != nil {
 		b.Send("❌ Error obteniendo historial.")
 		return
@@ -1599,7 +1599,7 @@ func (b *Bot) HandleOrgasmHistory() {
 
 	loc, _ := time.LoadLocation("America/Bogota")
 	lines := []string{fmt.Sprintf(
-		"▪️ *HISTORIAL DE ORGASMOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n🌊 Edges — *%d*\n❌ Denegados — *%d*\n📊 Total — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
+		"▪️ *HISTORIAL DE PERMISOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n🌊 Edges — *%d*\n❌ Denegados — *%d*\n📊 Total — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
 		granted, edged, denied, total,
 	)}
 
@@ -1812,8 +1812,8 @@ func (b *Bot) HandleMood() {
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
-// HandleStats muestra estadísticas históricas desde la DB
-func (b *Bot) HandleStats() {
+// HandleLockStats muestra estadísticas históricas desde la DB
+func (b *Bot) HandleLockStats() {
 	if b.db == nil {
 		b.Send("❌ Base de datos no disponible.")
 		return
@@ -1881,11 +1881,11 @@ func (b *Bot) HandleHelp() {
 /wardrobe remove — Eliminar prenda
 
 📊 *HISTORIAL*
-/stats — Estadísticas
+/lockstats — Estadísticas de sesión
 /history — Últimas 10 tareas
-/orgasms — Historial de permisos
-/came — Reportar orgasmo real
-/jstats — Estadísticas de Jolie
+/permisos — Historial de permisos
+/corri — Reportar orgasmo real
+/stats — Estadísticas de Jolie
 /mood — Estado de ánimo de Papi
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
@@ -1935,10 +1935,10 @@ func (b *Bot) Start() {
 		{tgbotapi.NewKeyboardButton("/fail"), tgbotapi.NewKeyboardButton("/explain")},
 		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/chatask")},
 		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/wardrobe")},
-		{tgbotapi.NewKeyboardButton("/orgasms"), tgbotapi.NewKeyboardButton("/jstats")},
-		{tgbotapi.NewKeyboardButton("/came"), tgbotapi.NewKeyboardButton("/history")},
+		{tgbotapi.NewKeyboardButton("/permisos"), tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/corri"), tgbotapi.NewKeyboardButton("/history")},
 		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/contrato")},
-		{tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/lockstats")},
 		{tgbotapi.NewKeyboardButton("/help")},
 	}
 
@@ -2029,16 +2029,16 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleNewLock(strings.TrimPrefix(text, "/newlock "))
 	case text == "/help":
 		b.HandleHelp()
+	case text == "/lockstats":
+		b.HandleLockStats()
+	case text == "/permisos":
+		b.HandlePermisos()
+	case text == "/corri":
+		b.HandleCorri("")
+	case strings.HasPrefix(text, "/corri "):
+		b.HandleCorri(strings.TrimPrefix(text, "/corri "))
 	case text == "/stats":
 		b.HandleStats()
-	case text == "/orgasms":
-		b.HandleOrgasmHistory()
-	case text == "/came":
-		b.HandleCame("")
-	case strings.HasPrefix(text, "/came "):
-		b.HandleCame(strings.TrimPrefix(text, "/came "))
-	case text == "/jstats":
-		b.HandleJolieStats()
 	case text == "/history":
 		b.HandleHistory()
 	case text == "/mood":

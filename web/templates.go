@@ -456,7 +456,7 @@ a:hover { color: var(--purple); }
     <a href="/chatasks" class="nav-link {{if eq .Nav "chatasks"}}active{{end}}">
       <span class="nav-icon">🌐</span> Comunidad
     </a>
-    <a href="/orgasms" class="nav-link {{if eq .Nav "orgasms"}}active{{end}}">
+    <a href="/permisos" class="nav-link {{if eq .Nav "permisos"}}active{{end}}">
       <span class="nav-icon">🌸</span> Permisos
     </a>
     <a href="/toys" class="nav-link {{if eq .Nav "toys"}}active{{end}}">

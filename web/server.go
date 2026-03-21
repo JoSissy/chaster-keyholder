@@ -38,7 +38,7 @@ func New(db *storage.DB, statePath, botUsername, password string) http.Handler {
 	mux.HandleFunc("/", s.auth(s.handleDashboard))
 	mux.HandleFunc("/calendar", s.auth(s.handleCalendar))
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
-	mux.HandleFunc("/orgasms", s.auth(s.handleOrgasms))
+	mux.HandleFunc("/permisos", s.auth(s.handlePermisos))
 	mux.HandleFunc("/toys", s.auth(s.handleToys))
 	mux.HandleFunc("/wardrobe", s.auth(s.handleWardrobe))
 	mux.HandleFunc("/chatasks", s.auth(s.handleChatasks))

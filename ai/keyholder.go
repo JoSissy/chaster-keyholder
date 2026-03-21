@@ -646,7 +646,7 @@ Respond in JSON: {"outcome": "granted_cum", "message": "...", "condition": "..."
 - message: short dominant reaction, granting her (2-3 lines). Possessive and perverse.
 - condition: explicit degrading instructions on HOW she must cum — method, toy if available, must narrate herself during. Be specific about technique.
 - She can ONLY cum through her ass/nipples — never her caged dick.
-- End condition with: "Cuando termines, repórtate con /came [método]."
+- End condition with: "Cuando termines, repórtate con /corri [método]."
 - Use "maricona", "puta sissy", "agujero", "culo de puta".`
 	case "granted_toys":
 		outcomeInstruction = `THE DECISION IS: GRANTED TOYS — she may use her toys but NOT cum.

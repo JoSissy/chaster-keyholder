@@ -83,7 +83,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		completionRate = st.TasksCompleted * 100 / taskTotal
 	}
 
-	total, granted, edged, denied, _ := s.db.GetOrgasmStats()
+	total, granted, edged, denied, _ := s.db.GetPermissionStats()
 	grantRate := 0
 	if total > 0 {
 		grantRate = granted * 100 / total
@@ -154,7 +154,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		OrgasmEdged:        edged,
 		OrgasmDenied:       denied,
 		GrantRate:          grantRate,
-		DaysSinceOrgasm:    s.db.GetDaysSinceLastOrgasm(),
+		DaysSinceOrgasm:    s.db.GetDaysSinceLastPermission(),
 		HasActiveEvent:     hasActiveEvent,
 		ActiveEventType:    activeEventType,
 		ActiveEventExpires: activeEventExpires,
@@ -282,7 +282,7 @@ func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
 
 	locks, _ := s.db.GetLocks()
 	tasks, _ := s.db.GetAllTasks()
-	orgasms, _ := s.db.GetAllOrgasmEntries()
+	orgasms, _ := s.db.GetAllPermissionEntries()
 
 	weeks := buildCalendar(year, month, locks, tasks, orgasms, loc)
 
@@ -309,7 +309,7 @@ func monthName(m int) string {
 
 type orgasmDayCounts struct{ Granted, Edged, Denied int }
 
-func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task, orgasms []*storage.OrgasmEntry, loc *time.Location) [][]calDay {
+func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task, orgasms []*storage.PermissionEntry, loc *time.Location) [][]calDay {
 	firstDay := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
 	daysInMonth := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, loc).Day()
 	today := time.Now().In(loc)
@@ -444,11 +444,11 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	s.render(w, tasksHTML, d)
 }
 
-// ── Orgasms ───────────────────────────────────────────────────────────────
+// ── Permisos ──────────────────────────────────────────────────────────────
 
 type orgasmsData struct {
 	pageBase
-	Entries  []*storage.OrgasmEntry
+	Entries  []*storage.PermissionEntry
 	Total    int
 	Granted  int
 	Edged    int
@@ -456,15 +456,15 @@ type orgasmsData struct {
 	GrantPct int
 }
 
-func (s *Server) handleOrgasms(w http.ResponseWriter, r *http.Request) {
-	entries, _ := s.db.GetAllOrgasmEntries()
-	total, granted, edged, denied, _ := s.db.GetOrgasmStats()
+func (s *Server) handlePermisos(w http.ResponseWriter, r *http.Request) {
+	entries, _ := s.db.GetAllPermissionEntries()
+	total, granted, edged, denied, _ := s.db.GetPermissionStats()
 	grantPct := 0
 	if total > 0 {
 		grantPct = granted * 100 / total
 	}
 	s.render(w, orgasmsHTML, orgasmsData{
-		pageBase: s.base("orgasms"),
+		pageBase: s.base("permisos"),
 		Entries:  entries,
 		Total:    total,
 		Granted:  granted,

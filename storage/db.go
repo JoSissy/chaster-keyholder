@@ -32,7 +32,9 @@ func NewDB(path string) (*DB, error) {
 	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN result TEXT DEFAULT 'pending'`)
 	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN resolved_at DATETIME`)
 	db.conn.Exec(`ALTER TABLE toys ADD COLUMN photo_public_id TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN outcome TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE orgasm_log RENAME TO permission_log`)
+	db.conn.Exec(`ALTER TABLE orgasm_events RENAME TO orgasm_log`)
+	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN outcome TEXT DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN verification_code TEXT DEFAULT ''`)
 
 	log.Println("✅ Base de datos iniciada")
@@ -124,7 +126,7 @@ func (db *DB) migrate() error {
 		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS orgasm_log (
+	CREATE TABLE IF NOT EXISTS permission_log (
 		id               TEXT PRIMARY KEY,
 		granted          INTEGER NOT NULL DEFAULT 0,
 		user_message     TEXT NOT NULL,
@@ -193,7 +195,7 @@ func (db *DB) migrate() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS orgasm_events (
+	CREATE TABLE IF NOT EXISTS orgasm_log (
 		id                  TEXT PRIMARY KEY,
 		created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
 		method              TEXT NOT NULL,
@@ -430,15 +432,15 @@ func (db *DB) GetAllTasks() ([]*Task, error) {
 	return tasks, nil
 }
 
-func (db *DB) GetAllOrgasmEntries() ([]*OrgasmEntry, error) {
-	rows, err := db.conn.Query(`SELECT id, granted, COALESCE(outcome,''), user_message, senor_response, condition_text, streak_at_time, days_locked, created_at FROM orgasm_log ORDER BY created_at DESC`)
+func (db *DB) GetAllPermissionEntries() ([]*PermissionEntry, error) {
+	rows, err := db.conn.Query(`SELECT id, granted, COALESCE(outcome,''), user_message, senor_response, condition_text, streak_at_time, days_locked, created_at FROM permission_log ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var entries []*OrgasmEntry
+	var entries []*PermissionEntry
 	for rows.Next() {
-		e := &OrgasmEntry{}
+		e := &PermissionEntry{}
 		var granted int
 		if err := rows.Scan(&e.ID, &granted, &e.Outcome, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
 			return nil, err
@@ -473,9 +475,9 @@ func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 	return descs, nil
 }
 
-// ── Orgasm Log ────────────────────────────────────────────────────────────
+// ── Permission Log ────────────────────────────────────────────────────────
 
-type OrgasmEntry struct {
+type PermissionEntry struct {
 	ID            string
 	Outcome       string // "denied", "edge", "granted"
 	Granted       bool   // true only for "granted"
@@ -487,8 +489,8 @@ type OrgasmEntry struct {
 	CreatedAt     time.Time
 }
 
-func (db *DB) SaveOrgasmEntry(e *OrgasmEntry) error {
-	id := fmt.Sprintf("orgasm-%d", time.Now().UnixNano())
+func (db *DB) SavePermissionEntry(e *PermissionEntry) error {
+	id := fmt.Sprintf("perm-%d", time.Now().UnixNano())
 	granted := 0
 	if e.Outcome == "granted" {
 		granted = 1
@@ -502,24 +504,24 @@ func (db *DB) SaveOrgasmEntry(e *OrgasmEntry) error {
 		}
 	}
 	_, err := db.conn.Exec(`
-		INSERT INTO orgasm_log (id, granted, outcome, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
+		INSERT INTO permission_log (id, granted, outcome, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, granted, outcome, e.UserMessage, e.SenorResponse, e.Condition, e.StreakAtTime, e.DaysLocked, time.Now(),
 	)
 	return err
 }
 
-func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
+func (db *DB) GetPermissionHistory(limit int) ([]*PermissionEntry, error) {
 	rows, err := db.conn.Query(`
 		SELECT id, granted, COALESCE(outcome,''), user_message, senor_response, condition_text, streak_at_time, days_locked, created_at
-		FROM orgasm_log ORDER BY created_at DESC LIMIT ?`, limit)
+		FROM permission_log ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var entries []*OrgasmEntry
+	var entries []*PermissionEntry
 	for rows.Next() {
-		e := &OrgasmEntry{}
+		e := &PermissionEntry{}
 		var granted int
 		if err := rows.Scan(&e.ID, &granted, &e.Outcome, &e.UserMessage, &e.SenorResponse, &e.Condition, &e.StreakAtTime, &e.DaysLocked, &e.CreatedAt); err != nil {
 			return nil, err
@@ -537,20 +539,20 @@ func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
 	return entries, nil
 }
 
-func (db *DB) GetOrgasmStats() (total, granted, edged, denied int, err error) {
+func (db *DB) GetPermissionStats() (total, granted, edged, denied int, err error) {
 	err = db.conn.QueryRow(`
 		SELECT COUNT(*),
 		       SUM(CASE WHEN COALESCE(outcome,'') = 'granted' OR (COALESCE(outcome,'') = '' AND granted=1) THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN COALESCE(outcome,'') = 'edge' THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN COALESCE(outcome,'') IN ('denied','') AND granted=0 THEN 1 ELSE 0 END)
-		FROM orgasm_log`).Scan(&total, &granted, &edged, &denied)
+		FROM permission_log`).Scan(&total, &granted, &edged, &denied)
 	return
 }
 
-// ── Orgasm Events (real orgasms reported by Jolie) ─────────────────────────
+// ── Orgasm Log (real orgasms reported by Jolie) ────────────────────────────
 
-// OrgasmEvent un orgasmo real reportado por Jolie via /came
-type OrgasmEvent struct {
+// OrgasmEntry un orgasmo real reportado por Jolie via /corri
+type OrgasmEntry struct {
 	ID                string
 	CreatedAt         time.Time
 	Method            string    // "nipples", "toys", "anal", "ruined", "manual", "other"
@@ -562,8 +564,8 @@ type OrgasmEvent struct {
 	DaysLocked        int
 }
 
-// OrgasmEventStats estadísticas de orgasmos reales
-type OrgasmEventStats struct {
+// OrgasmStats estadísticas de orgasmos reales
+type OrgasmStats struct {
 	Total       int
 	WithToys    int
 	WithoutToys int
@@ -573,32 +575,32 @@ type OrgasmEventStats struct {
 	LastAt      *time.Time
 }
 
-func (db *DB) SaveOrgasmEvent(e *OrgasmEvent) error {
-	id := fmt.Sprintf("oevent-%d", time.Now().UnixNano())
+func (db *DB) SaveOrgasmEntry(e *OrgasmEntry) error {
+	id := fmt.Sprintf("orgasm-%d", time.Now().UnixNano())
 	permitted := 1
 	if !e.Permitted {
 		permitted = 0
 	}
 	_, err := db.conn.Exec(`
-		INSERT INTO orgasm_events (id, created_at, method, toy_id, toy_name, permitted, permission_outcome, streak_at_time, days_locked)
+		INSERT INTO orgasm_log (id, created_at, method, toy_id, toy_name, permitted, permission_outcome, streak_at_time, days_locked)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, time.Now(), e.Method, e.ToyID, e.ToyName, permitted, e.PermissionOutcome, e.StreakAtTime, e.DaysLocked,
 	)
 	return err
 }
 
-func (db *DB) GetOrgasmEvents(limit int) ([]*OrgasmEvent, error) {
+func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
 	rows, err := db.conn.Query(`
 		SELECT id, created_at, method, COALESCE(toy_id,''), COALESCE(toy_name,''), permitted,
 		       COALESCE(permission_outcome,'granted_cum'), streak_at_time, days_locked
-		FROM orgasm_events ORDER BY created_at DESC LIMIT ?`, limit)
+		FROM orgasm_log ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var events []*OrgasmEvent
+	var events []*OrgasmEntry
 	for rows.Next() {
-		e := &OrgasmEvent{}
+		e := &OrgasmEntry{}
 		var permitted int
 		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.Method, &e.ToyID, &e.ToyName, &permitted,
 			&e.PermissionOutcome, &e.StreakAtTime, &e.DaysLocked); err != nil {
@@ -610,12 +612,12 @@ func (db *DB) GetOrgasmEvents(limit int) ([]*OrgasmEvent, error) {
 	return events, nil
 }
 
-// GetDaysSinceLastRealOrgasm devuelve los días desde el último orgasmo real reportado.
+// GetDaysSinceLastOrgasm devuelve los días desde el último orgasmo real reportado.
 // Devuelve -1 si nunca hubo uno (no hay registros).
-func (db *DB) GetDaysSinceLastRealOrgasm() int {
+func (db *DB) GetDaysSinceLastOrgasm() int {
 	var createdAt time.Time
 	err := db.conn.QueryRow(
-		`SELECT created_at FROM orgasm_events ORDER BY created_at DESC LIMIT 1`,
+		`SELECT created_at FROM orgasm_log ORDER BY created_at DESC LIMIT 1`,
 	).Scan(&createdAt)
 	if err != nil {
 		return -1 // nunca
@@ -623,22 +625,22 @@ func (db *DB) GetDaysSinceLastRealOrgasm() int {
 	return int(time.Since(createdAt).Hours()) / 24
 }
 
-// GetOrgasmEventStats devuelve estadísticas completas de orgasmos reales.
-func (db *DB) GetOrgasmEventStats() (*OrgasmEventStats, error) {
-	stats := &OrgasmEventStats{Methods: make(map[string]int)}
+// GetOrgasmStats devuelve estadísticas completas de orgasmos reales.
+func (db *DB) GetOrgasmStats() (*OrgasmStats, error) {
+	stats := &OrgasmStats{Methods: make(map[string]int)}
 
 	err := db.conn.QueryRow(`
 		SELECT COUNT(*),
 		       SUM(CASE WHEN toy_id != '' THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN toy_id = '' THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN permitted = 0 THEN 1 ELSE 0 END)
-		FROM orgasm_events`).Scan(&stats.Total, &stats.WithToys, &stats.WithoutToys, &stats.Violations)
+		FROM orgasm_log`).Scan(&stats.Total, &stats.WithToys, &stats.WithoutToys, &stats.Violations)
 	if err != nil {
 		return stats, err
 	}
 
 	// Conteo por método
-	rows, err := db.conn.Query(`SELECT method, COUNT(*) FROM orgasm_events GROUP BY method ORDER BY COUNT(*) DESC`)
+	rows, err := db.conn.Query(`SELECT method, COUNT(*) FROM orgasm_log GROUP BY method ORDER BY COUNT(*) DESC`)
 	if err != nil {
 		return stats, nil
 	}
@@ -658,7 +660,7 @@ func (db *DB) GetOrgasmEventStats() (*OrgasmEventStats, error) {
 	// Último orgasmo
 	var lastAt time.Time
 	var lastMethod string
-	err2 := db.conn.QueryRow(`SELECT created_at, method FROM orgasm_events ORDER BY created_at DESC LIMIT 1`).Scan(&lastAt, &lastMethod)
+	err2 := db.conn.QueryRow(`SELECT created_at, method FROM orgasm_log ORDER BY created_at DESC LIMIT 1`).Scan(&lastAt, &lastMethod)
 	if err2 == nil {
 		stats.LastAt = &lastAt
 		stats.LastMethod = lastMethod
@@ -840,7 +842,7 @@ func (db *DB) DeleteClothingItem(id string) error {
 func (db *DB) ResetAllTables() error {
 	tables := []string{
 		"toys", "locks", "tasks", "chaster_tasks", "clothing", "outfit_log",
-		"events", "negotiations", "orgasm_log", "orgasm_events", "session_state", "checkins", "contracts",
+		"events", "negotiations", "permission_log", "orgasm_log", "session_state", "checkins", "contracts",
 	}
 	for _, t := range tables {
 		if _, err := db.conn.Exec("DELETE FROM " + t); err != nil {
@@ -977,12 +979,12 @@ func (db *DB) GetContractByLockID(lockID string) (*Contract, error) {
 	return c, nil
 }
 
-// SeedOrgasmGranted inserta un orgasmo concedido N días en el pasado.
-func (db *DB) SeedOrgasmGranted(daysAgo int) error {
-	id := fmt.Sprintf("seed-orgasm-%d", time.Now().UnixNano())
+// SeedPermissionGranted inserta un permiso concedido N días en el pasado.
+func (db *DB) SeedPermissionGranted(daysAgo int) error {
+	id := fmt.Sprintf("seed-perm-%d", time.Now().UnixNano())
 	createdAt := time.Now().AddDate(0, 0, -daysAgo)
 	_, err := db.conn.Exec(
-		`INSERT INTO orgasm_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
+		`INSERT INTO permission_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
 		 VALUES (?, 1, 'permiso', 'Concedido.', '', 0, 0, ?)`,
 		id, createdAt,
 	)
@@ -1049,12 +1051,12 @@ func (db *DB) GetCheckinStats() (total, approved, missed int, avgResponseMins in
 	return
 }
 
-// GetDaysSinceLastOrgasm devuelve los días desde el último orgasmo concedido.
+// GetDaysSinceLastPermission devuelve los días desde el último permiso concedido.
 // Devuelve -1 si nunca hubo uno.
-func (db *DB) GetDaysSinceLastOrgasm() int {
+func (db *DB) GetDaysSinceLastPermission() int {
 	var createdAt time.Time
 	err := db.conn.QueryRow(
-		`SELECT created_at FROM orgasm_log WHERE granted=1 ORDER BY created_at DESC LIMIT 1`,
+		`SELECT created_at FROM permission_log WHERE granted=1 ORDER BY created_at DESC LIMIT 1`,
 	).Scan(&createdAt)
 	if err != nil {
 		return -1
