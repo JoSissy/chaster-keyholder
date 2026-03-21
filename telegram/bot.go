@@ -1486,6 +1486,21 @@ func (b *Bot) handleInsistenceRoll(text string, hoursLeft float64) {
 
 	now := time.Now()
 
+	// Loguear la decisión en permission_log para que aparezca en /permissions y stats
+	if b.db != nil {
+		msg := ""
+		if decision != nil {
+			msg = decision.Message
+		}
+		b.db.SavePermissionEntry(&storage.PermissionEntry{
+			Outcome:       outcome,
+			UserMessage:   text,
+			SenorResponse: msg,
+			StreakAtTime:  b.state.TasksStreak,
+			DaysLocked:    b.daysLocked(),
+		})
+	}
+
 	switch outcome {
 	case "granted_cum":
 		b.state.LastOrgasmRequestAt = &now
@@ -1622,7 +1637,6 @@ func (b *Bot) handleToySessionConfirmation(text string) {
 	// Verificar timeout
 	if time.Now().After(b.state.GrantedToysPendingAt.Add(1 * time.Hour)) {
 		b.state.GrantedToysPendingAt = nil
-		b.state.GrantedCondition = ""
 		b.removePendingAction("toy_session_confirm")
 		b.mustSaveState()
 		b.addWeeklyDebt("sesión de juguetes no confirmada")
@@ -1647,7 +1661,6 @@ func (b *Bot) handleToySessionConfirmation(text string) {
 
 	now := time.Now()
 	b.state.GrantedToysPendingAt = nil
-	b.state.GrantedCondition = ""
 	b.state.LastToySessionAt = &now
 	b.removePendingAction("toy_session_confirm")
 	b.mustSaveState()
@@ -1689,8 +1702,8 @@ func (b *Bot) HandleStats() {
 	}
 
 	stats, err := b.db.GetOrgasmStats()
-	log.Printf("[HandleStats] GetOrgasmStats total=%d err=%v", stats.Total, err)
-	if err != nil {
+	if err != nil || stats == nil {
+		log.Printf("[HandleStats] GetOrgasmStats err=%v", err)
 		stats = &storage.OrgasmStats{Methods: make(map[string]int)}
 	}
 
@@ -3397,7 +3410,6 @@ func (b *Bot) CheckGrantedPermissionsExpiry() {
 
 	if b.state.GrantedToysPendingAt != nil && time.Now().After(b.state.GrantedToysPendingAt.Add(1*time.Hour)) {
 		b.state.GrantedToysPendingAt = nil
-		b.state.GrantedCondition = ""
 		b.removePendingAction("toy_session_confirm")
 		b.mustSaveState()
 		b.addWeeklyDebt("sesión de juguetes ignorada")
