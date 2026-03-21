@@ -617,7 +617,7 @@ type OrgasmDecision struct {
 func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, toys []models.Toy, daysLocked, streak, daysSinceLastOrgasm, consecutiveDenials int) (*OrgasmDecision, error) {
 	ctx := buildContext(toys, daysLocked)
 
-	lastOrgasmStr := "never"
+	lastOrgasmStr := "NEVER — she has never orgasmed as Papi's sissy. Do NOT invent a number of days."
 	if daysSinceLastOrgasm >= 0 && daysSinceLastOrgasm < 999 {
 		if daysSinceLastOrgasm == 0 {
 			lastOrgasmStr = "today"
@@ -663,10 +663,16 @@ Respond in JSON: {"outcome": "edge", "message": "...", "condition": "..."}
 - condition: insert the dildo/toy, masturbate until the very edge, stop right before cumming. Confirm when done with a message.
 - Use "maricona", "puta sissy", "agujero".`
 	default: // "denied"
+		var deniedOrgasmRef string
+		if daysSinceLastOrgasm >= 999 {
+			deniedOrgasmRef = `She has NEVER orgasmed — reference this: "nunca te has corrido" or "no sabes ni lo que es correrte".`
+		} else {
+			deniedOrgasmRef = fmt.Sprintf(`Reference her wait: "llevas %d días sin correrte" or "te lo di hace %d días".`, daysSinceLastOrgasm, daysSinceLastOrgasm)
+		}
 		outcomeInstruction = `THE DECISION IS: DENIED — nothing.
 Respond in JSON: {"outcome": "denied", "message": "...", "condition": ""}
 - message: cruel, humiliating denial (2-3 lines). Remind her she has no cock, only a hole.
-- Reference her orgasm history: "llevas X días sin correrte" or "ya lo tuviste hace X días".
+- ` + deniedOrgasmRef + `
 - Use "maricona", "puta sissy", "zorra encerrada", "culo de puta", "agujero".`
 	}
 
