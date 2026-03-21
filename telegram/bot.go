@@ -1486,6 +1486,7 @@ func (b *Bot) HandleStats() {
 
 	stats, err := b.db.GetOrgasmStats()
 	if err != nil {
+		log.Printf("[HandleStats] GetOrgasmStats error: %v", err)
 		b.Send("❌ Error obteniendo estadísticas.")
 		return
 	}

@@ -542,9 +542,9 @@ func (db *DB) GetPermissionHistory(limit int) ([]*PermissionEntry, error) {
 func (db *DB) GetPermissionStats() (total, granted, edged, denied int, err error) {
 	err = db.conn.QueryRow(`
 		SELECT COUNT(*),
-		       SUM(CASE WHEN COALESCE(outcome,'') = 'granted' OR (COALESCE(outcome,'') = '' AND granted=1) THEN 1 ELSE 0 END),
-		       SUM(CASE WHEN COALESCE(outcome,'') = 'edge' THEN 1 ELSE 0 END),
-		       SUM(CASE WHEN COALESCE(outcome,'') IN ('denied','') AND granted=0 THEN 1 ELSE 0 END)
+		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') = 'granted' OR (COALESCE(outcome,'') = '' AND granted=1) THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') = 'edge' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') IN ('denied','') AND granted=0 THEN 1 ELSE 0 END), 0)
 		FROM permission_log`).Scan(&total, &granted, &edged, &denied)
 	return
 }
