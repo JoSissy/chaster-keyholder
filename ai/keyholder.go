@@ -830,7 +830,7 @@ type OrgasmDecision struct {
 }
 
 // GenerateOrgasmMessage genera el texto de Papi para un outcome ya decidido.
-// outcome: "denied" | "edge" | "granted_cum" | "granted_toys"
+// outcome: "denied" | "granted_cum"
 func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, toys []models.Toy, daysLocked, streak, daysSinceLastOrgasm, consecutiveDenials int) (*OrgasmDecision, error) {
 	ctx := buildContext(toys, daysLocked)
 
@@ -913,15 +913,15 @@ Jolie begs: "%s"`, ctx, streak, lastOrgasmStr, consecutiveLine, userMessage)
 }
 
 // GenerateOrgasmCooldownMessage genera un mensaje en personaje cuando se pide permiso demasiado pronto.
-// lastOutcome: "denied" | "edge" | "granted" — para que Papi haga referencia a lo anterior.
+// lastOutcome: "denied" | "granted_cum" | "granted_toys" — para que Papi haga referencia a lo anterior.
 // hoursLeft: horas restantes del cooldown.
 func (c *Client) GenerateOrgasmCooldownMessage(lastOutcome string, hoursLeft float64) (string, error) {
 	var context string
 	switch lastOutcome {
-	case "granted":
+	case "granted_cum", "granted":
 		context = fmt.Sprintf("She already got permission and came recently. She needs to wait %.0f more hours before asking again.", hoursLeft)
-	case "edge":
-		context = fmt.Sprintf("She was just ordered to edge and already dares to ask for more. She needs to wait %.0f more hours.", hoursLeft)
+	case "granted_toys":
+		context = fmt.Sprintf("She was just given a toy session. She needs to wait %.0f more hours before asking for more.", hoursLeft)
 	default:
 		context = fmt.Sprintf("She was just denied and immediately asks again. She needs to wait %.0f more hours.", hoursLeft)
 	}

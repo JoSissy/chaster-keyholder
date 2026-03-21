@@ -554,10 +554,13 @@ func (db *DB) GetAllPermissionEntries() ([]*PermissionEntry, error) {
 		e.Granted = granted == 1
 		if e.Outcome == "" {
 			if e.Granted {
-				e.Outcome = "granted"
+				e.Outcome = "granted_cum"
 			} else {
 				e.Outcome = "denied"
 			}
+		}
+		if e.Outcome == "granted" {
+			e.Outcome = "granted_cum"
 		}
 		entries = append(entries, e)
 	}
@@ -585,8 +588,8 @@ func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
 
 type PermissionEntry struct {
 	ID            string
-	Outcome       string // "denied", "edge", "granted"
-	Granted       bool   // true only for "granted"
+	Outcome       string // "denied" | "granted_cum" | "granted_toys" | "punished"
+	Granted       bool   // true only for granted_cum
 	UserMessage   string
 	SenorResponse string
 	Condition     string
@@ -598,13 +601,13 @@ type PermissionEntry struct {
 func (db *DB) SavePermissionEntry(e *PermissionEntry) error {
 	id := fmt.Sprintf("perm-%d", time.Now().UnixNano())
 	granted := 0
-	if e.Outcome == "granted" {
+	if e.Outcome == "granted_cum" || e.Outcome == "granted" {
 		granted = 1
 	}
 	outcome := e.Outcome
 	if outcome == "" {
 		if granted == 1 {
-			outcome = "granted"
+			outcome = "granted_cum"
 		} else {
 			outcome = "denied"
 		}
@@ -635,23 +638,28 @@ func (db *DB) GetPermissionHistory(limit int) ([]*PermissionEntry, error) {
 		e.Granted = granted == 1
 		if e.Outcome == "" {
 			if e.Granted {
-				e.Outcome = "granted"
+				e.Outcome = "granted_cum"
 			} else {
 				e.Outcome = "denied"
 			}
+		}
+		if e.Outcome == "granted" {
+			e.Outcome = "granted_cum"
 		}
 		entries = append(entries, e)
 	}
 	return entries, nil
 }
 
-func (db *DB) GetPermissionStats() (total, granted, edged, denied int, err error) {
+// GetPermissionStats devuelve (total, granted_cum, granted_toys, denied).
+// granted_cum incluye registros históricos con outcome='granted' para compatibilidad.
+func (db *DB) GetPermissionStats() (total, grantedCum, grantedToys, denied int, err error) {
 	err = db.conn.QueryRow(`
 		SELECT COUNT(*),
-		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') = 'granted' OR (COALESCE(outcome,'') = '' AND granted=1) THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') = 'edge' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') IN ('denied','') AND granted=0 THEN 1 ELSE 0 END), 0)
-		FROM permission_log`).Scan(&total, &granted, &edged, &denied)
+		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') IN ('granted_cum','granted') OR (COALESCE(outcome,'') = '' AND granted=1) THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') = 'granted_toys' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN COALESCE(outcome,'') IN ('denied','punished','') AND granted=0 THEN 1 ELSE 0 END), 0)
+		FROM permission_log`).Scan(&total, &grantedCum, &grantedToys, &denied)
 	return
 }
 

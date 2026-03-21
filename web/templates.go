@@ -659,8 +659,8 @@ var dashboardHTML = `{{define "content"}}
     <div class="stat-sub">{{.GrantRate}}% aprobación</div>
   </div>
   <div class="stat-card">
-    <div class="stat-lbl">Edges</div>
-    <div class="stat-val c-yellow">{{.OrgasmEdged}}</div>
+    <div class="stat-lbl">Sesiones juguetes</div>
+    <div class="stat-val c-yellow">{{.OrgasmToys}}</div>
     <div class="stat-sub">de {{.OrgasmTotal}} solicitados</div>
   </div>
   <div class="stat-card">
@@ -779,10 +779,10 @@ var dashboardHTML = `{{define "content"}}
         <div style="font-size:26px;font-weight:700;color:var(--success);font-family:'Playfair Display',serif;">{{.OrgasmGranted}}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">concedidos</div>
       </div>
-      {{if .OrgasmEdged}}
+      {{if .OrgasmToys}}
       <div style="flex:1;text-align:center;padding:12px 8px;background:rgba(251,191,36,0.05);border-radius:8px;border:1px solid rgba(251,191,36,0.14);">
-        <div style="font-size:26px;font-weight:700;color:var(--warning);font-family:'Playfair Display',serif;">{{.OrgasmEdged}}</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">edges</div>
+        <div style="font-size:26px;font-weight:700;color:var(--warning);font-family:'Playfair Display',serif;">{{.OrgasmToys}}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">sesiones</div>
       </div>
       {{end}}
       <div style="flex:1;text-align:center;padding:12px 8px;background:rgba(248,113,113,0.05);border-radius:8px;border:1px solid rgba(248,113,113,0.14);">
@@ -1188,9 +1188,9 @@ var orgasmsHTML = `{{define "content"}}
     <div class="stat-sub">{{.GrantPct}}% aprobación</div>
   </div>
   <div class="stat-card">
-    <div class="stat-lbl">Edges</div>
-    <div class="stat-val c-yellow">{{.Edged}}</div>
-    <div class="stat-sub">{{if .Total}}{{percent .Edged .Total}}% del total{{end}}</div>
+    <div class="stat-lbl">Juguetes</div>
+    <div class="stat-val c-yellow">{{.GrantedToys}}</div>
+    <div class="stat-sub">{{if .Total}}{{percent .GrantedToys .Total}}% del total{{end}}</div>
   </div>
   <div class="stat-card">
     <div class="stat-lbl">Negados</div>
@@ -1214,12 +1214,12 @@ var orgasmsHTML = `{{define "content"}}
 {{if .Entries}}
 <div class="timeline">
   {{range .Entries}}
-  <div class="tl-item {{if eq .Outcome "granted"}}tl-granted{{else if eq .Outcome "edge"}}{{else}}tl-denied{{end}}" {{if eq .Outcome "edge"}}style="border-color:rgba(251,191,36,0.2);background:rgba(251,191,36,0.03);"{{end}}>
-    <div class="tl-icon">{{if eq .Outcome "granted"}}✅{{else if eq .Outcome "edge"}}🔥{{else}}❌{{end}}</div>
+  <div class="tl-item {{if eq .Outcome "granted_cum"}}tl-granted{{else if eq .Outcome "granted_toys"}}{{else}}tl-denied{{end}}" {{if eq .Outcome "granted_toys"}}style="border-color:rgba(251,191,36,0.2);background:rgba(251,191,36,0.03);"{{end}}>
+    <div class="tl-icon">{{if eq .Outcome "granted_cum"}}✅{{else if eq .Outcome "granted_toys"}}🧸{{else if eq .Outcome "punished"}}⚠️{{else}}❌{{end}}</div>
     <div class="tl-body">
       <div class="tl-hd">
-        <span class="tl-title">{{if eq .Outcome "granted"}}Concedido{{else if eq .Outcome "edge"}}Edge{{else}}Negado{{end}}</span>
-        {{if eq .Outcome "granted"}}<span class="badge badge-success">sí</span>{{else if eq .Outcome "edge"}}<span class="badge badge-warning">edge</span>{{else}}<span class="badge badge-danger">no</span>{{end}}
+        <span class="tl-title">{{if eq .Outcome "granted_cum"}}Concedido{{else if eq .Outcome "granted_toys"}}Juguetes{{else if eq .Outcome "punished"}}Castigada{{else}}Negado{{end}}</span>
+        {{if eq .Outcome "granted_cum"}}<span class="badge badge-success">sí</span>{{else if eq .Outcome "granted_toys"}}<span class="badge badge-warning">juguetes</span>{{else if eq .Outcome "punished"}}<span class="badge badge-danger">castigo</span>{{else}}<span class="badge badge-danger">no</span>{{end}}
         <span class="tl-date">{{formatDateTime .CreatedAt}}</span>
       </div>
       {{if .UserMessage}}

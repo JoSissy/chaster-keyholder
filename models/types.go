@@ -163,7 +163,7 @@ type AppState struct {
 	// Sube: +1 por tarea completada (o +2 si lleva 8+ días encerrada),
 	//       +3 bonus cada 7 días consecutivos de tareas,
 	//       +1 cada 2 confirmaciones de plug (vía PlugBonusAccum).
-	// Baja: -3 al fallar una tarea, -1 al no confirmar un edge a tiempo.
+	// Baja: -3 al fallar una tarea, -1 por insistencia penalizada.
 	// Nunca resetea a 0 completamente — es un total histórico que determina
 	// el título de obediencia (ObedienceTitle) y la probabilidad de orgasmo (rollOrgasmOutcome).
 	TasksStreak int `json:"tasks_streak"`
@@ -257,7 +257,7 @@ type AppState struct {
 	// WeeklyDebtDetails guarda una descripción de cada infracción (para el prompt del juicio).
 	// Se resetean a 0 después del juicio semanal (SendWeeklyJudgment).
 	// Infracciones que suman: tarea fallida, check-in ignorado, plug no confirmado,
-	// ritual ignorado, edge no confirmado, orgasmo sin permiso, tarea comunitaria rechazada.
+	// ritual ignorado, orgasmo sin permiso, tarea comunitaria rechazada, insistencia castigada.
 	WeeklyDebt        int      `json:"weekly_debt"`
 	WeeklyDebtDetails []string `json:"weekly_debt_details,omitempty"`
 	LastJudgmentDate  string   `json:"last_judgment_date"` // "2006-01-02" COT

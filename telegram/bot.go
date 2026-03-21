@@ -1793,7 +1793,7 @@ func (b *Bot) HandlePermissions() {
 		return
 	}
 
-	total, granted, edged, denied, err := b.db.GetPermissionStats()
+	total, grantedCum, grantedToys, denied, err := b.db.GetPermissionStats()
 	if err != nil || total == 0 {
 		b.Send("▪️ *HISTORIAL DE PERMISOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ningún registro todavía._")
 		return
@@ -1805,21 +1805,28 @@ func (b *Bot) HandlePermissions() {
 		return
 	}
 
+	toysLine := ""
+	if grantedToys > 0 {
+		toysLine = fmt.Sprintf("\n🧸 Juguetes — *%d*", grantedToys)
+	}
 	lines := []string{fmt.Sprintf(
-		"▪️ *HISTORIAL DE PERMISOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n🌊 Edges — *%d*\n❌ Denegados — *%d*\n📊 Total — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
-		granted, edged, denied, total,
+		"▪️ *HISTORIAL DE PERMISOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*%s\n❌ Denegados — *%d*\n📊 Total — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
+		grantedCum, toysLine, denied, total,
 	)}
 
 	for _, e := range entries {
 		icon := "❌"
 		status := "DENEGADO"
 		switch e.Outcome {
-		case "granted":
+		case "granted_cum":
 			icon = "✅"
 			status = "CONCEDIDO"
-		case "edge":
-			icon = "🌊"
-			status = "EDGE"
+		case "granted_toys":
+			icon = "🧸"
+			status = "JUGUETES"
+		case "punished":
+			icon = "⚠️"
+			status = "CASTIGADA"
 		}
 		date := e.CreatedAt.In(cotLocation).Format("02 Jan 15:04")
 		lines = append(lines, fmt.Sprintf(

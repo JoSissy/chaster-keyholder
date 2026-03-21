@@ -42,10 +42,10 @@ type dashData struct {
 	CurrentTaskDesc string
 	CurrentTaskDue  time.Time
 	RecentTasks     []*storage.Task
-	OrgasmTotal     int
-	OrgasmGranted   int
-	OrgasmEdged     int
-	OrgasmDenied    int
+	OrgasmTotal    int
+	OrgasmGranted  int
+	OrgasmToys     int
+	OrgasmDenied   int
 	GrantRate       int
 	DaysSinceOrgasm int // -1 = nunca
 	// Active event (freeze / hidetime)
@@ -83,7 +83,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		completionRate = st.TasksCompleted * 100 / taskTotal
 	}
 
-	total, granted, edged, denied, _ := s.db.GetPermissionStats()
+	total, granted, grantedToys, denied, _ := s.db.GetPermissionStats()
 	grantRate := 0
 	if total > 0 {
 		grantRate = granted * 100 / total
@@ -149,10 +149,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		TimeAdded:          st.TotalTimeAddedHours,
 		TimeRemoved:        st.TotalTimeRemovedHours,
 		PendingCheckin:     st.PendingCheckin,
-		OrgasmTotal:        total,
-		OrgasmGranted:      granted,
-		OrgasmEdged:        edged,
-		OrgasmDenied:       denied,
+		OrgasmTotal:   total,
+		OrgasmGranted: granted,
+		OrgasmToys:    grantedToys,
+		OrgasmDenied:  denied,
 		GrantRate:          grantRate,
 		DaysSinceOrgasm:    s.db.GetDaysSinceLastOrgasm(),
 		HasActiveEvent:     hasActiveEvent,
@@ -307,7 +307,7 @@ func monthName(m int) string {
 	return names[m]
 }
 
-type orgasmDayCounts struct{ Granted, Edged, Denied int }
+type orgasmDayCounts struct{ Granted, Denied int }
 
 func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task, orgasms []*storage.PermissionEntry, loc *time.Location) [][]calDay {
 	firstDay := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, loc)
@@ -335,10 +335,8 @@ func buildCalendar(year, month int, locks []*storage.Lock, tasks []*storage.Task
 			orgasmMap[key] = &orgasmDayCounts{}
 		}
 		switch e.Outcome {
-		case "granted":
+		case "granted_cum", "granted":
 			orgasmMap[key].Granted++
-		case "edge":
-			orgasmMap[key].Edged++
 		default:
 			orgasmMap[key].Denied++
 		}
@@ -448,29 +446,29 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 type orgasmsData struct {
 	pageBase
-	Entries  []*storage.PermissionEntry
-	Total    int
-	Granted  int
-	Edged    int
-	Denied   int
-	GrantPct int
+	Entries     []*storage.PermissionEntry
+	Total       int
+	Granted     int
+	GrantedToys int
+	Denied      int
+	GrantPct    int
 }
 
 func (s *Server) handlePermissions(w http.ResponseWriter, r *http.Request) {
 	entries, _ := s.db.GetAllPermissionEntries()
-	total, granted, edged, denied, _ := s.db.GetPermissionStats()
+	total, granted, grantedToys2, denied, _ := s.db.GetPermissionStats()
 	grantPct := 0
 	if total > 0 {
 		grantPct = granted * 100 / total
 	}
 	s.render(w, orgasmsHTML, orgasmsData{
-		pageBase: s.base("permissions"),
-		Entries:  entries,
-		Total:    total,
-		Granted:  granted,
-		Edged:    edged,
-		Denied:   denied,
-		GrantPct: grantPct,
+		pageBase:    s.base("permissions"),
+		Entries:     entries,
+		Total:       total,
+		Granted:     granted,
+		GrantedToys: grantedToys2,
+		Denied:      denied,
+		GrantPct:    grantPct,
 	})
 }
 
