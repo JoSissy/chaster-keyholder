@@ -787,7 +787,9 @@ Respond with a SHORT dismissive/mocking message in Spanish (1-2 lines max).
 
 // GenerateCameResponse genera la reacción de Papi cuando Jolie reporta que se vino.
 // permitted=true si había permiso activo, false si fue una violación.
-func (c *Client) GenerateCameResponse(method, toyName string, permitted bool, daysLocked int, toys []models.Toy) (string, error) {
+// daysSinceLastOrgasm: días desde el orgasmo anterior (-1 si nunca).
+// grantedCondition: instrucciones específicas que Papi dio al conceder el permiso (puede ser "").
+func (c *Client) GenerateCameResponse(method, toyName string, permitted bool, daysLocked, daysSinceLastOrgasm int, grantedCondition string, toys []models.Toy) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 
 	methodDesc := method
@@ -795,15 +797,30 @@ func (c *Client) GenerateCameResponse(method, toyName string, permitted bool, da
 		methodDesc = fmt.Sprintf("%s (%s)", method, toyName)
 	}
 
+	waitLine := ""
+	switch {
+	case daysSinceLastOrgasm < 0:
+		waitLine = "This is her FIRST orgasm ever as Papi's sissy — reference this: never came before."
+	case daysSinceLastOrgasm == 0:
+		waitLine = "She came earlier today."
+	default:
+		waitLine = fmt.Sprintf("She waited %d days since her last orgasm.", daysSinceLastOrgasm)
+	}
+
 	var situation string
 	if permitted {
+		conditionRef := ""
+		if strings.TrimSpace(grantedCondition) != "" {
+			conditionRef = fmt.Sprintf("\nPapi's original order was: \"%s\" — reference that she followed it specifically.", grantedCondition)
+		}
 		situation = fmt.Sprintf(`Jolie followed Papi's orders and came as permitted. Method: %s.
-React as Papi — possessive satisfaction that she obeyed. Acknowledge her submission. 2-3 lines. Spanish. No JSON.
-Use "mi puta sissy", "mi maricona obediente", possessive tone.`, methodDesc)
+%s%s
+React as Papi — possessive satisfaction. Acknowledge the wait and her obedience. 2-3 lines. Spanish. No JSON.
+Use "mi puta sissy", "mi maricona obediente", possessive tone.`, methodDesc, waitLine, conditionRef)
 	} else {
-		situation = fmt.Sprintf(`Jolie came WITHOUT permission. Method: %s. This is a serious violation.
+		situation = fmt.Sprintf(`Jolie came WITHOUT permission. Method: %s. %s This is a serious violation.
 React as Papi — cold fury, controlled. She broke the rules. She will be punished. 2-3 lines. Spanish. No JSON.
-Make clear this will have consequences. Use "desobediente", "sin permiso", "vas a pagar".`, methodDesc)
+Make clear this will have consequences. Use "desobediente", "sin permiso", "vas a pagar".`, methodDesc, waitLine)
 	}
 
 	system := baseSystemLocked + "\n" + situation

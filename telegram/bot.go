@@ -189,6 +189,12 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 	if b.state.PendingChasterTask != "" {
 		b.enqueuePendingAction("chaster_task_photo")
 	}
+	if b.state.EdgePendingAt != nil && time.Now().Before(b.state.EdgePendingAt.Add(1*time.Hour)) {
+		b.enqueuePendingAction("edge_confirm")
+	}
+	if b.state.GrantedToysPendingAt != nil && time.Now().Before(b.state.GrantedToysPendingAt.Add(1*time.Hour)) {
+		b.enqueuePendingAction("toy_session_confirm")
+	}
 	return b, nil
 }
 
@@ -1038,9 +1044,8 @@ func (b *Bot) HandleChat(text string) {
 	b.chatMu.Unlock()
 
 	// Verificar expiración de edge pendiente
-	if b.state.EdgePendingAt != nil && time.Now().After(b.state.EdgePendingAt.Add(2*time.Hour)) {
+	if b.state.EdgePendingAt != nil && time.Now().After(b.state.EdgePendingAt.Add(1*time.Hour)) {
 		b.state.EdgePendingAt = nil
-		b.state.EdgeCount = 0
 		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
 		b.removePendingAction("edge_confirm")
 		b.mustSaveState()
@@ -1072,6 +1077,12 @@ func (b *Bot) HandleChat(text string) {
 	// Confirmación de edge pendiente
 	if b.currentPendingAction() == "edge_confirm" {
 		b.handleEdgeConfirmation(text)
+		return
+	}
+
+	// Confirmación de sesión de juguetes
+	if b.currentPendingAction() == "toy_session_confirm" {
+		b.handleToySessionConfirmation(text)
 		return
 	}
 
@@ -1349,21 +1360,32 @@ func countConsecutiveDenials(db interface {
 func (b *Bot) handleOrgasmRequest(text string) {
 	// Si hay edge pendiente, no procesar
 	if b.state.EdgePendingAt != nil {
-		if time.Now().Before(b.state.EdgePendingAt.Add(2 * time.Hour)) {
+		if time.Now().Before(b.state.EdgePendingAt.Add(1 * time.Hour)) {
 			b.Send("▪️ *EDGE PENDIENTE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todavía tienes una orden pendiente. Complétala primero._")
 			return
 		}
 		b.state.EdgePendingAt = nil
-		b.state.EdgeCount = 0
+	}
+
+	// Si hay sesión de juguetes activa, recordarlo
+	if b.state.GrantedToysPendingAt != nil {
+		if time.Now().Before(b.state.GrantedToysPendingAt.Add(1 * time.Hour)) {
+			b.Send("▪️ *SESIÓN EN CURSO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te ordenó una sesión con tus juguetes. Confírmala cuando termines._")
+			return
+		}
+		b.state.GrantedToysPendingAt = nil
+		b.state.GrantedCondition = ""
+		b.mustSaveState()
 	}
 
 	// Si ya tiene permiso de cum activo, recordarlo
 	if b.state.GrantedCumPendingAt != nil {
-		if time.Now().Before(b.state.GrantedCumPendingAt.Add(3 * time.Hour)) {
+		if time.Now().Before(b.state.GrantedCumPendingAt.Add(1 * time.Hour)) {
 			b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso para venirte. Cuando termines, usa `/came [método]`._")
 			return
 		}
 		b.state.GrantedCumPendingAt = nil
+		b.state.GrantedCondition = ""
 		b.mustSaveState()
 	}
 
@@ -1427,6 +1449,9 @@ func (b *Bot) handleOrgasmRequest(text string) {
 	switch outcome {
 	case "granted_cum":
 		b.state.GrantedCumPendingAt = &now
+		if strings.TrimSpace(decision.Condition) != "" {
+			b.state.GrantedCondition = decision.Condition
+		}
 		b.mustSaveState()
 		msg := "▪️ *PERMISO CONCEDIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
 		if strings.TrimSpace(decision.Condition) != "" {
@@ -1435,11 +1460,14 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		b.Send(msg)
 
 	case "granted_toys":
+		b.state.GrantedToysPendingAt = &now
+		b.enqueuePendingAction("toy_session_confirm")
 		b.mustSaveState()
 		msg := "▪️ *JUGUETES PERMITIDOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
 		if strings.TrimSpace(decision.Condition) != "" {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
+		msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Confirma cuando termines la sesión. Tienes 1 hora._"
 		b.Send(msg)
 
 	case "edge":
@@ -1467,9 +1495,8 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 	}
 
 	// Verificar timeout
-	if time.Now().After(b.state.EdgePendingAt.Add(2 * time.Hour)) {
+	if time.Now().After(b.state.EdgePendingAt.Add(1 * time.Hour)) {
 		b.state.EdgePendingAt = nil
-		b.state.EdgeCount = 0
 		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
 		b.removePendingAction("edge_confirm")
 		b.mustSaveState()
@@ -1494,11 +1521,51 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 	}
 
 	b.state.EdgePendingAt = nil
-	b.state.EdgeCount = 0
 	b.removePendingAction("edge_confirm")
 	b.mustSaveState()
 
 	b.Send("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Al borde y sin correrte. Como debe ser._")
+}
+
+// handleToySessionConfirmation procesa la confirmación de una sesión de juguetes completada.
+func (b *Bot) handleToySessionConfirmation(text string) {
+	if b.state.GrantedToysPendingAt == nil {
+		b.removePendingAction("toy_session_confirm")
+		return
+	}
+
+	// Verificar timeout
+	if time.Now().After(b.state.GrantedToysPendingAt.Add(1 * time.Hour)) {
+		b.state.GrantedToysPendingAt = nil
+		b.state.GrantedCondition = ""
+		b.removePendingAction("toy_session_confirm")
+		b.mustSaveState()
+		b.addWeeklyDebt("sesión de juguetes no confirmada")
+		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Te ordené usar tus juguetes y no lo confirmaste. Desobediente._")
+		return
+	}
+
+	confirmKeywords := []string{"listo", "hecho", "confirmado", "hice", "cumplido", "terminé", "termine", "completo", "completé"}
+	textLower := strings.ToLower(text)
+	confirmed := false
+	for _, kw := range confirmKeywords {
+		if strings.Contains(textLower, kw) {
+			confirmed = true
+			break
+		}
+	}
+
+	if !confirmed {
+		b.Send("_¿Ya terminaste? Confirma cuando hayas acabado la sesión._")
+		return
+	}
+
+	b.state.GrantedToysPendingAt = nil
+	b.state.GrantedCondition = ""
+	b.removePendingAction("toy_session_confirm")
+	b.mustSaveState()
+
+	b.Send("▪️ *SESIÓN CONFIRMADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Bien. Mis juguetes usados como ordené. Recuerda quién decide cuándo y cómo._")
 }
 
 // HandleCame procesa el reporte de orgasmo real de Jolie — /came [método]
@@ -1561,13 +1628,21 @@ func (b *Bot) HandleCame(args string) {
 		}
 	}
 
+	// Días desde el último orgasmo — leer ANTES de guardar para capturar la espera real
+	daysSinceLastOrgasm := -1
+	if b.db != nil {
+		daysSinceLastOrgasm = b.db.GetDaysSinceLastOrgasm()
+	}
+
 	// Determinar si había permiso válido
 	permitted := false
 	permissionOutcome := "none"
-	if b.state.GrantedCumPendingAt != nil && time.Now().Before(b.state.GrantedCumPendingAt.Add(3*time.Hour)) {
+	grantedCondition := b.state.GrantedCondition
+	if b.state.GrantedCumPendingAt != nil && time.Now().Before(b.state.GrantedCumPendingAt.Add(1*time.Hour)) {
 		permitted = true
 		permissionOutcome = "granted_cum"
 		b.state.GrantedCumPendingAt = nil
+		b.state.GrantedCondition = ""
 	}
 
 	// Guardar en orgasm_log
@@ -1587,7 +1662,7 @@ func (b *Bot) HandleCame(args string) {
 	b.mustSaveState()
 
 	// Reacción de Papi
-	response, err := b.ai.GenerateCameResponse(method, toyName, permitted, b.daysLocked(), b.state.Toys)
+	response, err := b.ai.GenerateCameResponse(method, toyName, permitted, b.daysLocked(), daysSinceLastOrgasm, grantedCondition, b.state.Toys)
 	if err != nil || strings.TrimSpace(response) == "" {
 		if permitted {
 			response = "Bien hecha, mi puta sissy. Así me gusta."
@@ -3296,6 +3371,27 @@ func (b *Bot) CheckCheckinExpiry() {
 	b.Send("⏰ *CHECK-IN IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No respondiste a tiempo. Consecuencias._")
 	b.addWeeklyDebt("check-in ignorado — no respondió a tiempo")
 	b.autoPillory("no respondió al check-in a tiempo")
+}
+
+// CheckGrantedPermissionsExpiry detecta permisos vencidos sin usar (Opción B).
+// Llamado cada 5 minutos. Si el permiso expiró sin /came o sin confirmación, Papi reacciona.
+func (b *Bot) CheckGrantedPermissionsExpiry() {
+	if b.state.GrantedCumPendingAt != nil && time.Now().After(b.state.GrantedCumPendingAt.Add(1*time.Hour)) {
+		b.state.GrantedCumPendingAt = nil
+		b.state.GrantedCondition = ""
+		b.mustSaveState()
+		b.addWeeklyDebt("permiso de orgasmo vencido sin usar")
+		b.Send("▪️ *PERMISO VENCIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Te di permiso para correrte y dejaste que se venciera. Qué desperdicio — y qué desobediente. Anotado._")
+	}
+
+	if b.state.GrantedToysPendingAt != nil && time.Now().After(b.state.GrantedToysPendingAt.Add(1*time.Hour)) {
+		b.state.GrantedToysPendingAt = nil
+		b.state.GrantedCondition = ""
+		b.removePendingAction("toy_session_confirm")
+		b.mustSaveState()
+		b.addWeeklyDebt("sesión de juguetes ignorada")
+		b.Send("▪️ *ORDEN IGNORADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Te ordené usar tus juguetes y no lo hiciste. Desobediente._")
+	}
 }
 
 // CheckRitualExpiry penaliza si el ritual matutino fue ignorado (llamado a las 11am)

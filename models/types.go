@@ -212,10 +212,8 @@ type AppState struct {
 	LastRuletaDate string `json:"last_ruleta_date"` // "2006-01-02" COT
 
 	// ── Edge pendiente ───────────────────────────────────────────────────────
-	// Cuando rollOrgasmOutcome devuelve "edge", Jolie tiene 30 minutos para
-	// confirmar que lo hizo. EdgeCount acumula edges sin confirmar.
+	// Cuando rollOrgasmOutcome devuelve "edge", Jolie tiene 1 hora para confirmar.
 	EdgePendingAt *time.Time `json:"edge_pending_at,omitempty"`
-	EdgeCount     int        `json:"edge_count,omitempty"`
 
 	// ── Cooldown de orgasmo ──────────────────────────────────────────────────
 	// Evita que Jolie pida permiso repetidamente. El cooldown depende del resultado:
@@ -224,8 +222,16 @@ type AppState struct {
 	LastOrgasmOutcome   string     `json:"last_orgasm_outcome,omitempty"` // "denied" | "edge" | "granted_cum" | "granted_toys"
 
 	// Cuando Papi concede un orgasmo real (granted_cum) pero Jolie aún no lo ha
-	// reportado con /came. Se limpia al recibir el reporte.
+	// reportado con /came. Ventana de 1 hora. Se limpia al recibir el reporte o al expirar.
 	GrantedCumPendingAt *time.Time `json:"granted_cum_pending_at,omitempty"`
+
+	// Cuando Papi ordena una sesión con juguetes (granted_toys). Ventana de 1 hora.
+	// Se limpia al confirmar o al expirar.
+	GrantedToysPendingAt *time.Time `json:"granted_toys_pending_at,omitempty"`
+
+	// Instrucciones específicas que Papi dio al conceder el permiso (granted_cum).
+	// Se pasa a GenerateCameResponse para que Papi las referencie al reaccionar.
+	GrantedCondition string `json:"granted_condition,omitempty"`
 
 	// ── Obediencia avanzada ──────────────────────────────────────────────────
 

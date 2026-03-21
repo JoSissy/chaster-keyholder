@@ -95,6 +95,7 @@ func Start(bot *telegram.Bot) {
 				bot.CheckActiveEventExpiry()
 				bot.CheckCheckinExpiry()
 				bot.CheckPlugReminder()
+				bot.CheckGrantedPermissionsExpiry()
 			})
 		}),
 	)
