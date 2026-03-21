@@ -3,10 +3,10 @@ package main
 import (
 	"chaster-keyholder/ai"
 	"chaster-keyholder/chaster"
-	"chaster-keyholder/elevenlabs"
 	"chaster-keyholder/scheduler"
 	"chaster-keyholder/storage"
 	"chaster-keyholder/telegram"
+	"chaster-keyholder/tts"
 	"chaster-keyholder/web"
 	"log"
 	"net/http"
@@ -67,14 +67,14 @@ func main() {
 		log.Fatal("Error iniciando bot de Telegram:", err)
 	}
 
-	// ElevenLabs TTS (opcional)
-	elKey := os.Getenv("ELEVENLABS_API_KEY")
-	elVoice := os.Getenv("ELEVENLABS_VOICE_ID")
-	if elKey != "" && elVoice != "" {
-		bot.SetElevenLabs(elevenlabs.New(elKey, elVoice))
-		log.Println("✅ ElevenLabs TTS configurado")
+	// Google Cloud TTS (opcional)
+	ttsKey := os.Getenv("GOOGLE_TTS_API_KEY")
+	ttsVoice := os.Getenv("GOOGLE_TTS_VOICE") // ej. "es-US-Neural2-B"
+	if ttsKey != "" {
+		bot.SetTTS(tts.New(ttsKey, ttsVoice))
+		log.Println("✅ Google Cloud TTS configurado")
 	} else {
-		log.Println("⚠️  ElevenLabs no configurado — sin notas de voz")
+		log.Println("⚠️  Google Cloud TTS no configurado — sin notas de voz")
 	}
 
 	log.Println("🔒 Chaster Keyholder Bot iniciado")
