@@ -642,7 +642,7 @@ func (db *DB) GetOrgasmStats() (*OrgasmStats, error) {
 	// Conteo por método
 	rows, err := db.conn.Query(`SELECT method, COUNT(*) FROM orgasm_log GROUP BY method ORDER BY COUNT(*) DESC`)
 	if err != nil {
-		return stats, nil
+		return stats, err
 	}
 	defer rows.Close()
 	first := true

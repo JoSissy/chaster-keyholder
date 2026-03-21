@@ -154,7 +154,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		OrgasmEdged:        edged,
 		OrgasmDenied:       denied,
 		GrantRate:          grantRate,
-		DaysSinceOrgasm:    s.db.GetDaysSinceLastPermission(),
+		DaysSinceOrgasm:    s.db.GetDaysSinceLastOrgasm(),
 		HasActiveEvent:     hasActiveEvent,
 		ActiveEventType:    activeEventType,
 		ActiveEventExpires: activeEventExpires,
