@@ -1376,38 +1376,58 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 // HandleCame procesa el reporte de orgasmo real de Jolie — /came [método]
 // Métodos válidos: nipples/pezones, toys/juguetes, anal, ruined/arruinado, manual, other
 func (b *Bot) HandleCame(args string) {
-	method := strings.ToLower(strings.TrimSpace(args))
+	// Separar método y juguete opcional: "/came anal dildo" → method="anal", toyHint="dildo"
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	methodRaw := strings.ToLower(parts[0])
+	toyHint := ""
+	if len(parts) > 1 {
+		toyHint = strings.ToLower(strings.TrimSpace(parts[1]))
+	}
 
 	// Normalizar método
+	var method string
 	switch {
-	case method == "":
-		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/came nipples` — pezones\n`/came anal` — anal (juguete)\n`/came toys` — juguetes\n`/came ruined` — arruinado\n`/came manual` — manual\n`/came other` — otro")
+	case methodRaw == "":
+		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/came nipples` — pezones\n`/came anal [juguete]` — anal\n`/came toys [juguete]` — juguetes\n`/came ruined` — arruinado\n`/came manual` — manual\n`/came other` — otro\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejemplo: `/came anal dildo`_")
 		return
-	case method == "pezones" || method == "nipples":
+	case methodRaw == "pezones" || methodRaw == "nipples":
 		method = "nipples"
-	case method == "juguetes" || method == "toys":
+	case methodRaw == "juguetes" || methodRaw == "toys":
 		method = "toys"
-	case method == "anal":
+	case methodRaw == "anal":
 		method = "anal"
-	case method == "arruinado" || method == "ruined":
+	case methodRaw == "arruinado" || methodRaw == "ruined":
 		method = "ruined"
-	case method == "manual":
+	case methodRaw == "manual":
 		method = "manual"
 	default:
 		method = "other"
 	}
 
-	// Buscar nombre de juguete si aplica
+	// Buscar juguete: primero por hint en args, luego plug asignado del día
 	toyID := ""
 	toyName := ""
 	if method == "anal" || method == "toys" {
-		plugName := b.getAssignedPlugName()
-		if plugName != "" {
-			toyName = plugName
+		if toyHint != "" {
+			// Buscar en inventario por nombre (contiene el hint)
 			for _, t := range b.state.Toys {
-				if t.Name == plugName {
+				if strings.Contains(strings.ToLower(t.Name), toyHint) {
 					toyID = t.ID
+					toyName = t.Name
 					break
+				}
+			}
+		}
+		// Fallback: plug asignado del día
+		if toyName == "" {
+			plugName := b.getAssignedPlugName()
+			if plugName != "" {
+				toyName = plugName
+				for _, t := range b.state.Toys {
+					if t.Name == plugName {
+						toyID = t.ID
+						break
+					}
 				}
 			}
 		}
