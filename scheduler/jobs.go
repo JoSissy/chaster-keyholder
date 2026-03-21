@@ -21,7 +21,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 8 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Enviando status matutino...")
-			bot.SendMorningStatus()
+			bot.WithLock(bot.SendMorningStatus)
 		}),
 	)
 
@@ -30,7 +30,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 22 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Enviando status nocturno...")
-			bot.SendNightStatus()
+			bot.WithLock(bot.SendNightStatus)
 		}),
 	)
 
@@ -39,7 +39,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 9 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Asignando tarea diaria...")
-			bot.HandleTask()
+			bot.WithLock(bot.HandleTask)
 		}),
 	)
 
@@ -47,7 +47,7 @@ func Start(bot *telegram.Bot) {
 	s.NewJob(
 		gocron.CronJob("* * * * *", false),
 		gocron.NewTask(func() {
-			bot.CheckLockFinished()
+			bot.WithLock(bot.CheckLockFinished)
 		}),
 	)
 
@@ -56,15 +56,18 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("*/30 8-22 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Evaluando evento random...")
-			bot.HandleRandomEvent()
+			bot.WithLock(bot.HandleRandomEvent)
 		}),
 	)
 
-	// Verificar expiración de eventos activos — cada 5 minutos
+	// Verificar expiración de eventos activos y check-ins — cada 5 minutos
 	s.NewJob(
 		gocron.CronJob("*/5 * * * *", false),
 		gocron.NewTask(func() {
-			bot.CheckActiveEventExpiry()
+			bot.WithLock(func() {
+				bot.CheckActiveEventExpiry()
+				bot.CheckCheckinExpiry()
+			})
 		}),
 	)
 
@@ -73,7 +76,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 8,12,16,20 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Enviando mensaje random...")
-			bot.SendRandomMessage()
+			bot.WithLock(bot.SendRandomMessage)
 		}),
 	)
 
@@ -82,7 +85,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("30 8 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Iniciando ritual matutino...")
-			bot.StartMorningRitual()
+			bot.WithLock(bot.StartMorningRitual)
 		}),
 	)
 
@@ -91,7 +94,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("45 8 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Asignando plug del día...")
-			bot.SendPlugAssignment()
+			bot.WithLock(bot.SendPlugAssignment)
 		}),
 	)
 
@@ -100,7 +103,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 10 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Asignando outfit del día...")
-			bot.SendDailyOutfit()
+			bot.WithLock(bot.SendDailyOutfit)
 		}),
 	)
 
@@ -109,7 +112,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 10,14 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Enviando mensaje de condicionamiento...")
-			bot.SendConditioningMessage()
+			bot.WithLock(bot.SendConditioningMessage)
 		}),
 	)
 
@@ -118,15 +121,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 18 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Girando ruleta diaria...")
-			bot.HandleRuleta()
-		}),
-	)
-
-	// Verificar expiración de check-ins — cada 5 minutos
-	s.NewJob(
-		gocron.CronJob("*/5 * * * *", false),
-		gocron.NewTask(func() {
-			bot.CheckCheckinExpiry()
+			bot.WithLock(bot.HandleRuleta)
 		}),
 	)
 
@@ -135,7 +130,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 11 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Verificando expiración de ritual matutino...")
-			bot.CheckRitualExpiry()
+			bot.WithLock(bot.CheckRitualExpiry)
 		}),
 	)
 
@@ -144,7 +139,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 21 * * 0", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Ejecutando juicio dominical...")
-			bot.HandleWeeklyJudgment()
+			bot.WithLock(bot.HandleWeeklyJudgment)
 		}),
 	)
 
@@ -152,7 +147,7 @@ func Start(bot *telegram.Bot) {
 	s.NewJob(
 		gocron.CronJob("*/15 * * * *", false),
 		gocron.NewTask(func() {
-			bot.CheckChasterTaskVote()
+			bot.WithLock(bot.CheckChasterTaskVote)
 		}),
 	)
 
@@ -161,7 +156,7 @@ func Start(bot *telegram.Bot) {
 		gocron.CronJob("0 23 * * *", false),
 		gocron.NewTask(func() {
 			log.Println("[scheduler] Verificando decay de obediencia...")
-			bot.CheckObedienceDecay()
+			bot.WithLock(bot.CheckObedienceDecay)
 		}),
 	)
 
@@ -186,7 +181,7 @@ func runCheckinLoop(bot *telegram.Bot) {
 
 		if hour >= 8 && hour < 23 {
 			log.Println("[checkin-loop] Evaluando check-in...")
-			bot.TriggerCheckin()
+			bot.WithLock(bot.TriggerCheckin)
 		}
 
 		// Intervalo aleatorio: 45 minutos a 3 horas

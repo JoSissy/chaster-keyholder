@@ -39,6 +39,10 @@ type Bot struct {
 	// Protección de escrituras concurrentes al estado
 	stateMu sync.Mutex
 
+	// Serializa el handler de mensajes con las goroutines del scheduler.
+	// Se adquiere antes de procesar cualquier update o ejecutar cualquier job.
+	handlerMu sync.Mutex
+
 	// Caché de días encerrada (evita llamadas repetidas a la API)
 	cachedDaysLocked   int
 	cachedDaysLockedAt time.Time
@@ -251,6 +255,15 @@ func (b *Bot) SendWithKeyboard(text string, buttons [][]tgbotapi.KeyboardButton)
 	b.api.Send(msg)
 }
 
+// WithLock adquiere handlerMu, ejecuta fn y lo libera.
+// Los jobs del scheduler deben llamar a este método para serializar su ejecución
+// con el loop de mensajes de Telegram y evitar condiciones de carrera sobre b.state.
+func (b *Bot) WithLock(fn func()) {
+	b.handlerMu.Lock()
+	defer b.handlerMu.Unlock()
+	fn()
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 func (b *Bot) daysLocked() int {
@@ -265,7 +278,10 @@ func (b *Bot) daysLocked() int {
 
 	lock, err := b.chaster.GetActiveLock()
 	if err != nil {
-		return b.state.DaysLocked
+		b.stateMu.Lock()
+		days := b.state.DaysLocked
+		b.stateMu.Unlock()
+		return days
 	}
 	days := int(time.Since(lock.StartDate).Hours()) / 24
 
@@ -1163,13 +1179,6 @@ func rollOrgasmOutcome(streak, daysSinceLastGrant, consecutiveDenials int) strin
 	return "granted"
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // orgasmCooldownHours devuelve las horas de cooldown según el último resultado.
 func orgasmCooldownHours(lastOutcome string) time.Duration {
 	switch lastOutcome {
@@ -1712,112 +1721,116 @@ func (b *Bot) Start() {
 		if update.Message.Chat.ID != b.chatID {
 			continue
 		}
+		// Serializar el procesamiento de mensajes con las goroutines del scheduler.
+		b.handlerMu.Lock()
+		b.handleUpdate(update.Message, keyboard)
+		b.handlerMu.Unlock()
+	}
+}
 
-		// ── Foto recibida ──────────────────────────────────────────────
-		if update.Message.Photo != nil && len(update.Message.Photo) > 0 {
-			largest := update.Message.Photo[len(update.Message.Photo)-1]
-			imgBytes, mime, err := b.downloadFile(largest.FileID)
-			if err != nil {
-				b.Send("❌ Error descargando la foto.")
-				continue
-			}
-
-			msgID := update.Message.MessageID
-
-			if b.state.AwaitingLockPhoto {
-				b.HandleLockPhoto(imgBytes, mime, msgID)
-			} else if b.pendingAction == "new_toy" {
-				b.deleteMessage(msgID)
-				b.HandleToyPhoto(imgBytes, mime)
-			} else if b.pendingAction == "ritual_photo" {
-				b.deleteMessage(msgID)
-				b.HandleRitualPhoto(imgBytes, mime)
-			} else if b.pendingAction == "plug_photo" {
-				b.deleteMessage(msgID)
-				b.HandlePlugPhoto(imgBytes, mime)
-			} else if b.pendingAction == "checkin_photo" ||
-				(b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt)) {
-				b.pendingAction = "checkin_photo"
-				b.deleteMessage(msgID)
-				b.HandleCheckinPhoto(imgBytes, mime)
-			} else if b.pendingAction == "chaster_task_photo" {
-				b.deleteMessage(msgID)
-				b.HandleChasterTaskPhoto(imgBytes, mime)
-			} else if b.pendingAction == "new_clothing" {
-				b.deleteMessage(msgID)
-				b.HandleWardrobePhoto(imgBytes, mime)
-			} else if b.pendingAction == "outfit_photo" {
-				b.deleteMessage(msgID)
-				b.HandleOutfitPhoto(imgBytes, mime)
-			} else if b.state.AwaitingLockPhoto {
-				// pendingAction limpio pero AwaitingLockPhoto sigue activo — restablecer ruta
-				b.HandleLockPhoto(imgBytes, mime, msgID)
-			} else if b.state.PendingChasterTask != "" {
-				// pendingAction limpio pero hay tarea comunitaria pendiente — restablecer ruta
-				b.pendingAction = "chaster_task_photo"
-				b.deleteMessage(msgID)
-				b.HandleChasterTaskPhoto(imgBytes, mime)
-			} else {
-				b.deleteMessage(msgID)
-				b.HandlePhoto(imgBytes, mime)
-			}
-			continue
+// handleUpdate procesa un mensaje de Telegram. Debe llamarse siempre con handlerMu adquirido.
+func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.KeyboardButton) {
+	// ── Foto recibida ──────────────────────────────────────────────
+	if msg.Photo != nil && len(msg.Photo) > 0 {
+		largest := msg.Photo[len(msg.Photo)-1]
+		imgBytes, mime, err := b.downloadFile(largest.FileID)
+		if err != nil {
+			b.Send("❌ Error descargando la foto.")
+			return
 		}
 
-		// ── Comandos de texto ──────────────────────────────────────────
-		text := update.Message.Text
-		switch {
-		case text == "/start":
-			b.SendWithKeyboard("▪️ *KEYHOLDER ACTIVO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Estás bajo control._", keyboard)
-		case text == "/status":
-			b.HandleStatus()
-		case text == "/task":
-			b.HandleTask()
-		case text == "/order":
-			b.HandleTaskWithLevel("")
-		case strings.HasPrefix(text, "/order "):
-			b.HandleTaskWithLevel(strings.TrimPrefix(text, "/order "))
-		case text == "/fail":
-			b.HandleFail()
-		case text == "/explain":
-			b.HandleExplain()
-		case text == "/newlock":
-			b.HandleNewLock("")
-		case strings.HasPrefix(text, "/newlock "):
-			b.HandleNewLock(strings.TrimPrefix(text, "/newlock "))
-		case text == "/help":
-			b.HandleHelp()
-		case text == "/stats":
-			b.HandleStats()
-		case text == "/orgasms":
-			b.HandleOrgasmHistory()
-		case text == "/history":
-			b.HandleHistory()
-		case text == "/mood":
-			b.HandleMood()
-		case text == "/toys":
-			b.HandleToys("")
-		case strings.HasPrefix(text, "/toys "):
-			b.HandleToys(strings.TrimPrefix(text, "/toys "))
-		case text == "/roulette":
-			b.HandleRuleta()
-		case text == "/chatask":
-			b.HandleChasterTaskCommand()
-		case text == "/wardrobe":
-			b.HandleWardrobe("")
-		case strings.HasPrefix(text, "/wardrobe "):
-			b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
-		case text == "/contrato":
-			b.HandleContrato()
-		case text == "/quitar":
-			b.HandleRemoveTime("")
-		case strings.HasPrefix(text, "/quitar "):
-			b.HandleRemoveTime(strings.TrimPrefix(text, "/quitar "))
-		case text == "/dbwipe":
-			b.HandleDBWipe()
-		case text != "" && !strings.HasPrefix(text, "/"):
-			b.HandleChat(text)
+		msgID := msg.MessageID
+
+		if b.state.AwaitingLockPhoto {
+			b.HandleLockPhoto(imgBytes, mime, msgID)
+		} else if b.pendingAction == "new_toy" {
+			b.deleteMessage(msgID)
+			b.HandleToyPhoto(imgBytes, mime)
+		} else if b.pendingAction == "ritual_photo" {
+			b.deleteMessage(msgID)
+			b.HandleRitualPhoto(imgBytes, mime)
+		} else if b.pendingAction == "plug_photo" {
+			b.deleteMessage(msgID)
+			b.HandlePlugPhoto(imgBytes, mime)
+		} else if b.pendingAction == "checkin_photo" ||
+			(b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt)) {
+			b.pendingAction = "checkin_photo"
+			b.deleteMessage(msgID)
+			b.HandleCheckinPhoto(imgBytes, mime)
+		} else if b.pendingAction == "chaster_task_photo" {
+			b.deleteMessage(msgID)
+			b.HandleChasterTaskPhoto(imgBytes, mime)
+		} else if b.pendingAction == "new_clothing" {
+			b.deleteMessage(msgID)
+			b.HandleWardrobePhoto(imgBytes, mime)
+		} else if b.pendingAction == "outfit_photo" {
+			b.deleteMessage(msgID)
+			b.HandleOutfitPhoto(imgBytes, mime)
+		} else if b.state.PendingChasterTask != "" {
+			// pendingAction limpio pero hay tarea comunitaria pendiente — restablecer ruta
+			b.pendingAction = "chaster_task_photo"
+			b.deleteMessage(msgID)
+			b.HandleChasterTaskPhoto(imgBytes, mime)
+		} else {
+			b.deleteMessage(msgID)
+			b.HandlePhoto(imgBytes, mime)
 		}
+		return
+	}
+
+	// ── Comandos de texto ──────────────────────────────────────────
+	text := msg.Text
+	switch {
+	case text == "/start":
+		b.SendWithKeyboard("▪️ *KEYHOLDER ACTIVO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Estás bajo control._", keyboard)
+	case text == "/status":
+		b.HandleStatus()
+	case text == "/task":
+		b.HandleTask()
+	case text == "/order":
+		b.HandleTaskWithLevel("")
+	case strings.HasPrefix(text, "/order "):
+		b.HandleTaskWithLevel(strings.TrimPrefix(text, "/order "))
+	case text == "/fail":
+		b.HandleFail()
+	case text == "/explain":
+		b.HandleExplain()
+	case text == "/newlock":
+		b.HandleNewLock("")
+	case strings.HasPrefix(text, "/newlock "):
+		b.HandleNewLock(strings.TrimPrefix(text, "/newlock "))
+	case text == "/help":
+		b.HandleHelp()
+	case text == "/stats":
+		b.HandleStats()
+	case text == "/orgasms":
+		b.HandleOrgasmHistory()
+	case text == "/history":
+		b.HandleHistory()
+	case text == "/mood":
+		b.HandleMood()
+	case text == "/toys":
+		b.HandleToys("")
+	case strings.HasPrefix(text, "/toys "):
+		b.HandleToys(strings.TrimPrefix(text, "/toys "))
+	case text == "/roulette":
+		b.HandleRuleta()
+	case text == "/chatask":
+		b.HandleChasterTaskCommand()
+	case text == "/wardrobe":
+		b.HandleWardrobe("")
+	case strings.HasPrefix(text, "/wardrobe "):
+		b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
+	case text == "/contrato":
+		b.HandleContrato()
+	case text == "/quitar":
+		b.HandleRemoveTime("")
+	case strings.HasPrefix(text, "/quitar "):
+		b.HandleRemoveTime(strings.TrimPrefix(text, "/quitar "))
+	case text == "/dbwipe":
+		b.HandleDBWipe()
+	case text != "" && !strings.HasPrefix(text, "/"):
+		b.HandleChat(text)
 	}
 }
 
@@ -2554,12 +2567,16 @@ func (b *Bot) addWeeklyDebt(detail string) {
 	b.mustSaveState()
 }
 
-func todayStr() string {
+var cotLocation = func() *time.Location {
 	loc, err := time.LoadLocation("America/Bogota")
 	if err != nil {
-		loc = time.FixedZone("COT", -5*60*60)
+		return time.FixedZone("COT", -5*60*60)
 	}
-	return time.Now().In(loc).Format("2006-01-02")
+	return loc
+}()
+
+func todayStr() string {
+	return time.Now().In(cotLocation).Format("2006-01-02")
 }
 
 func (b *Bot) getAssignedPlugName() string {
@@ -2735,16 +2752,34 @@ func (b *Bot) TriggerCheckin() {
 		return
 	}
 
-	// Solicitar verificación a Chaster
-	if err := b.chaster.RequestVerificationPicture(lock.ID); err != nil {
-		log.Printf("[checkin] error solicitando verificación a Chaster: %v", err)
+	// Verificar si ya hay una request pendiente en Chaster antes de crear una nueva
+	vpState, err := b.chaster.GetVerificationPictureState(lock.ID)
+	if err != nil {
+		log.Printf("[checkin] error consultando estado de verification-picture: %v", err)
 		return
 	}
 
-	// Obtener código de verificación actual
-	code, err := b.chaster.GetVerificationPictureCode(lock.ID)
-	if err != nil {
-		log.Printf("[checkin] error obteniendo código de verificación: %v", err)
+	code := vpState.Code
+
+	if vpState.HasPending {
+		log.Printf("[checkin] request pendiente ya existe en Chaster — reutilizando código %s", code)
+	} else {
+		// No hay request activa — crear una nueva
+		if err := b.chaster.RequestVerificationPicture(lock.ID); err != nil {
+			log.Printf("[checkin] error solicitando verificación a Chaster: %v", err)
+			return
+		}
+		// Releer el código generado por la nueva request
+		vpState2, err := b.chaster.GetVerificationPictureState(lock.ID)
+		if err != nil {
+			log.Printf("[checkin] error obteniendo código tras nueva request: %v", err)
+			return
+		}
+		code = vpState2.Code
+	}
+
+	if code == "" {
+		log.Printf("[checkin] código de verificación vacío — abortando")
 		return
 	}
 

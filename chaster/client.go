@@ -610,11 +610,18 @@ func (c *Client) DownloadCombinationImage(imageURL string) ([]byte, error) {
 
 // ── Verification Picture ──────────────────────────────────────────────────
 
-// GetVerificationPictureCode obtiene el currentVerificationCode de la extensión verification-picture del lock.
-func (c *Client) GetVerificationPictureCode(lockID string) (string, error) {
+// VerificationPictureState estado de la extensión verification-picture del lock.
+type VerificationPictureState struct {
+	Code       string // currentVerificationCode
+	HasPending bool   // true si hay una request activa esperando foto
+}
+
+// GetVerificationPictureState devuelve el estado actual de la extensión verification-picture.
+// HasPending=true significa que ya hay una request activa — no se debe crear una nueva.
+func (c *Client) GetVerificationPictureState(lockID string) (VerificationPictureState, error) {
 	data, err := c.doRequest("GET", fmt.Sprintf("/locks/%s", lockID), nil)
 	if err != nil {
-		return "", err
+		return VerificationPictureState{}, err
 	}
 
 	var lock struct {
@@ -622,18 +629,34 @@ func (c *Client) GetVerificationPictureCode(lockID string) (string, error) {
 			Slug     string `json:"slug"`
 			UserData struct {
 				CurrentVerificationCode string `json:"currentVerificationCode"`
+				Verifications           []struct {
+					Status string `json:"status"`
+				} `json:"verifications"`
 			} `json:"userData"`
 		} `json:"extensions"`
 	}
 	if err := json.Unmarshal(data, &lock); err != nil {
-		return "", fmt.Errorf("error parseando lock: %w", err)
+		return VerificationPictureState{}, fmt.Errorf("error parseando lock: %w", err)
 	}
+
 	for _, ext := range lock.Extensions {
-		if ext.Slug == "verification-picture" {
-			return ext.UserData.CurrentVerificationCode, nil
+		if ext.Slug != "verification-picture" {
+			continue
 		}
+		ud := ext.UserData
+		hasPending := false
+		for _, v := range ud.Verifications {
+			if v.Status == "pending" {
+				hasPending = true
+				break
+			}
+		}
+		return VerificationPictureState{
+			Code:       ud.CurrentVerificationCode,
+			HasPending: hasPending,
+		}, nil
 	}
-	return "", fmt.Errorf("extensión verification-picture no encontrada en el lock")
+	return VerificationPictureState{}, fmt.Errorf("extensión verification-picture no encontrada en el lock")
 }
 
 // RequestVerificationPicture solicita una nueva verificación de foto al portador.
