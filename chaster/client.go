@@ -759,7 +759,9 @@ func (c *Client) UploadVerificationPhoto(imageBytes []byte, mimeType string) (st
 	if _, err := part.Write(imageBytes); err != nil {
 		return "", err
 	}
-	writer.WriteField("type", "peer_verification")
+	if err := writer.WriteField("type", "peer_verification"); err != nil {
+		return "", err
+	}
 	writer.Close()
 
 	req, err := http.NewRequest("POST", baseURL+"/files/upload", &buf)

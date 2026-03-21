@@ -34,7 +34,11 @@ import (
 //   domingos 21:00 — juicio semanal (WeeklyDebt → consecuencias)
 //   intervalo aleatorio (45min-3h, 8-23h) — check-ins espontáneos (goroutine separada)
 func Start(bot *telegram.Bot) {
-	s, err := gocron.NewScheduler()
+	cotLoc, err := time.LoadLocation("America/Bogota")
+	if err != nil {
+		cotLoc = time.FixedZone("COT", -5*60*60)
+	}
+	s, err := gocron.NewScheduler(gocron.WithLocation(cotLoc))
 	if err != nil {
 		log.Fatal("error creando scheduler:", err)
 	}
@@ -188,20 +192,19 @@ func Start(bot *telegram.Bot) {
 	log.Println("✅ Scheduler iniciado")
 
 	// Loop de check-in con intervalo aleatorio (45min - 3h) en horario 8am-11pm COT
-	go runCheckinLoop(bot)
+	go runCheckinLoop(bot, cotLoc)
 }
 
 // runCheckinLoop ejecuta check-ins en intervalos aleatorios entre 45 minutos y 3 horas,
 // solo en horario activo (8am-11pm COT).
-func runCheckinLoop(bot *telegram.Bot) {
+func runCheckinLoop(bot *telegram.Bot, cotLoc *time.Location) {
 	// Espera inicial aleatoria para no disparar al arrancar
 	initialWait := time.Duration(45+rand.Intn(75)) * time.Minute
 	log.Printf("[checkin-loop] primera espera: %v", initialWait)
 	time.Sleep(initialWait)
 
 	for {
-		loc, _ := time.LoadLocation("America/Bogota")
-		hour := time.Now().In(loc).Hour()
+		hour := time.Now().In(cotLoc).Hour()
 
 		if hour >= 8 && hour < 23 {
 			log.Println("[checkin-loop] Evaluando check-in...")

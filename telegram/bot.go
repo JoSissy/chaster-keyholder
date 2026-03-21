@@ -311,7 +311,9 @@ func (b *Bot) Send(text string) {
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("error enviando mensaje con Markdown: %v — reintentando sin formato", err)
 		plain := tgbotapi.NewMessage(b.chatID, stripMarkdown(text))
-		b.api.Send(plain)
+		if _, err := b.api.Send(plain); err != nil {
+			log.Printf("error enviando mensaje sin formato: %v", err)
+		}
 	}
 }
 
@@ -406,7 +408,9 @@ func (b *Bot) downloadFile(fileID string) ([]byte, string, error) {
 
 func (b *Bot) deleteMessage(messageID int) {
 	del := tgbotapi.NewDeleteMessage(b.chatID, messageID)
-	b.api.Request(del)
+	if _, err := b.api.Request(del); err != nil {
+		log.Printf("error borrando mensaje %d: %v", messageID, err)
+	}
 }
 
 // ── Comandos ───────────────────────────────────────────────────────────────
@@ -641,11 +645,7 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 		return
 	}
 
-	loc, err := time.LoadLocation("America/Bogota")
-	if err != nil {
-		loc = time.FixedZone("COT", -5*60*60)
-	}
-	now := time.Now().In(loc)
+	now := time.Now().In(cotLocation)
 
 	penaltyHours := 1 + int(intensity)
 
@@ -1726,7 +1726,6 @@ func (b *Bot) HandlePermissions() {
 		return
 	}
 
-	loc, _ := time.LoadLocation("America/Bogota")
 	lines := []string{fmt.Sprintf(
 		"▪️ *HISTORIAL DE PERMISOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n✅ Concedidos — *%d*\n🌊 Edges — *%d*\n❌ Denegados — *%d*\n📊 Total — *%d*\n▬▬▬▬▬▬▬▬▬▬▬▬",
 		granted, edged, denied, total,
@@ -1743,7 +1742,7 @@ func (b *Bot) HandlePermissions() {
 			icon = "🌊"
 			status = "EDGE"
 		}
-		date := e.CreatedAt.In(loc).Format("02 Jan 15:04")
+		date := e.CreatedAt.In(cotLocation).Format("02 Jan 15:04")
 		lines = append(lines, fmt.Sprintf(
 			"%s *%s* — %s\n_Racha: %d | Día %d_\n_%s_",
 			icon, status, date,
@@ -1896,7 +1895,6 @@ func (b *Bot) HandleHistory() {
 		b.Send("▪️ *HISTORIAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Sin tareas registradas todavía._")
 		return
 	}
-	loc, _ := time.LoadLocation("America/Bogota")
 	lines := []string{"▪️ *HISTORIAL — ÚLTIMAS TAREAS*\n▬▬▬▬▬▬▬▬▬▬▬▬"}
 	for _, t := range tasks {
 		icon := "⏳"
@@ -1906,7 +1904,7 @@ func (b *Bot) HandleHistory() {
 		case "failed":
 			icon = "💀"
 		}
-		date := t.AssignedAt.In(loc).Format("02 Jan")
+		date := t.AssignedAt.In(cotLocation).Format("02 Jan")
 		desc := t.Description
 		if len(desc) > 60 {
 			desc = desc[:57] + "..."
@@ -2358,7 +2356,7 @@ func (b *Bot) HandleNewLock(args string) {
 func storageToyToModel(t *storage.Toy) models.Toy {
 	return models.Toy{
 		ID: t.ID, Name: t.Name, Description: t.Description,
-		PhotoURL: t.PhotoURL, Type: t.Type, InUse: t.InUse,
+		PhotoURL: t.PhotoURL, PhotoPublicID: t.PhotoPublicID, Type: t.Type, InUse: t.InUse,
 		AddedAt: t.CreatedAt,
 	}
 }
@@ -2648,8 +2646,7 @@ func probabilidadEvento(hour, daysLocked int) int {
 // HandleRandomEvent evalúa si lanzar un evento random y lo ejecuta si procede.
 // Llamado por el scheduler cada 30 minutos en horario activo.
 func (b *Bot) HandleRandomEvent() {
-	loc, _ := time.LoadLocation("America/Bogota")
-	hour := time.Now().In(loc).Hour()
+	hour := time.Now().In(cotLocation).Hour()
 
 	lock, err := b.chaster.GetActiveLock()
 	if err != nil {
@@ -2692,8 +2689,7 @@ func (b *Bot) HandleRandomEventTest() {
 		return
 	}
 
-	loc, _ := time.LoadLocation("America/Bogota")
-	hour := time.Now().In(loc).Hour()
+	hour := time.Now().In(cotLocation).Hour()
 	hasActive := b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt)
 
 	b.Send("_Generando evento de prueba..._")
@@ -3253,8 +3249,7 @@ func (b *Bot) CheckObedienceDecay() {
 	if b.state.TasksStreak == 0 || b.state.LastTaskCompletedDate == "" {
 		return
 	}
-	loc, _ := time.LoadLocation("America/Bogota")
-	now := time.Now().In(loc)
+	now := time.Now().In(cotLocation)
 	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
 	today := now.Format("2006-01-02")
 	last := b.state.LastTaskCompletedDate
@@ -3311,8 +3306,7 @@ func (b *Bot) CheckRitualExpiry() {
 	if _, err := b.chaster.GetActiveLock(); err != nil {
 		return
 	}
-	loc, _ := time.LoadLocation("America/Bogota")
-	if time.Now().In(loc).Hour() < 11 {
+	if time.Now().In(cotLocation).Hour() < 11 {
 		return
 	}
 	// Ritual iniciado pero no completado y ya pasaron las 11am — penalizar
@@ -3337,8 +3331,7 @@ func (b *Bot) CheckPlugReminder() {
 	if b.state.PlugReminderDate == todayStr() {
 		return // ya se envió recordatorio hoy
 	}
-	loc, _ := time.LoadLocation("America/Bogota")
-	if time.Now().In(loc).Hour() < 12 {
+	if time.Now().In(cotLocation).Hour() < 12 {
 		return // esperar al mediodía
 	}
 	plugName := b.getAssignedPlugName()
@@ -3370,8 +3363,7 @@ func (b *Bot) SendConditioningMessage() {
 	if _, err := b.chaster.GetActiveLock(); err != nil {
 		return
 	}
-	loc, _ := time.LoadLocation("America/Bogota")
-	hour := time.Now().In(loc).Hour()
+	hour := time.Now().In(cotLocation).Hour()
 	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
 	daysSinceOrgasm := -1
 	if b.db != nil {
@@ -3447,8 +3439,7 @@ func (b *Bot) HandleWeeklyJudgment() {
 
 	if strings.TrimSpace(verdict.SpecialTask) != "" {
 		b.Send(fmt.Sprintf("📋 *TAREA ESPECIAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.SpecialTask))
-		loc, _ := time.LoadLocation("America/Bogota")
-		now := time.Now().In(loc)
+		now := time.Now().In(cotLocation)
 		b.state.CurrentTask = &models.Task{
 			ID:            fmt.Sprintf("judgment-%d", now.Unix()),
 			Description:   verdict.SpecialTask,
@@ -4127,10 +4118,9 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 
 	// Guardar en historial DB
 	if b.db != nil {
-		loc, _ := time.LoadLocation("America/Bogota")
 		b.db.SaveOutfitEntry(&storage.OutfitEntry{
 			ID:         fmt.Sprintf("outfit-%d", time.Now().UnixNano()),
-			Date:       time.Now().In(loc).Format("2006-01-02"),
+			Date:       time.Now().In(cotLocation).Format("2006-01-02"),
 			OutfitDesc: b.state.DailyOutfitDesc,
 			PoseDesc:   b.state.DailyPoseDesc,
 			PhotoURL:   outfitPhotoURL,
