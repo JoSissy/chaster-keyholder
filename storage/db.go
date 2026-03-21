@@ -631,9 +631,9 @@ func (db *DB) GetOrgasmStats() (*OrgasmStats, error) {
 
 	err := db.conn.QueryRow(`
 		SELECT COUNT(*),
-		       SUM(CASE WHEN toy_id != '' THEN 1 ELSE 0 END),
-		       SUM(CASE WHEN toy_id = '' THEN 1 ELSE 0 END),
-		       SUM(CASE WHEN permitted = 0 THEN 1 ELSE 0 END)
+		       COALESCE(SUM(CASE WHEN toy_id != '' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN toy_id = '' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN permitted = 0 THEN 1 ELSE 0 END), 0)
 		FROM orgasm_log`).Scan(&stats.Total, &stats.WithToys, &stats.WithoutToys, &stats.Violations)
 	if err != nil {
 		return stats, err
