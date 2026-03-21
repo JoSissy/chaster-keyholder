@@ -1825,6 +1825,13 @@ func (b *Bot) HandleLockStats() {
 		return
 	}
 
+	// Los locks activos tienen time_added/removed = 0 en DB hasta que terminan.
+	// Sumamos el estado actual de la sesión para que el total sea correcto.
+	if b.state.CurrentLockID != "" {
+		stats.TotalTimeAddedHours += b.state.TotalTimeAddedHours
+		stats.TotalTimeRemovedHours += b.state.TotalTimeRemovedHours
+	}
+
 	taskTotal := stats.TotalTasksCompleted + stats.TotalTasksFailed
 	rateStr := "—"
 	if taskTotal > 0 {
