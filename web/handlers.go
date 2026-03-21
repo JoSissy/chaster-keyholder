@@ -456,7 +456,7 @@ type orgasmsData struct {
 	GrantPct int
 }
 
-func (s *Server) handlePermisos(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePermissions(w http.ResponseWriter, r *http.Request) {
 	entries, _ := s.db.GetAllPermissionEntries()
 	total, granted, edged, denied, _ := s.db.GetPermissionStats()
 	grantPct := 0
@@ -464,7 +464,7 @@ func (s *Server) handlePermisos(w http.ResponseWriter, r *http.Request) {
 		grantPct = granted * 100 / total
 	}
 	s.render(w, orgasmsHTML, orgasmsData{
-		pageBase: s.base("permisos"),
+		pageBase: s.base("permissions"),
 		Entries:  entries,
 		Total:    total,
 		Granted:  granted,
@@ -530,16 +530,16 @@ func (s *Server) handleWardrobe(w http.ResponseWriter, r *http.Request) {
 
 // ── Gallery ───────────────────────────────────────────────────────────────
 
-type galeriaData struct {
+type galleryData struct {
 	pageBase
 	Photos []*storage.GalleryPhoto
 	Total  int
 }
 
-func (s *Server) handleGaleria(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 	photos, _ := s.db.GetGalleryPhotos()
-	s.render(w, galeriaHTML, galeriaData{
-		pageBase: s.base("galeria"),
+	s.render(w, galleryHTML, galleryData{
+		pageBase: s.base("gallery"),
 		Photos:   photos,
 		Total:    len(photos),
 	})
@@ -577,18 +577,18 @@ func (s *Server) handleCheckins(w http.ResponseWriter, r *http.Request) {
 
 // ── Contract ──────────────────────────────────────────────────────────────
 
-type contratoData struct {
+type contractData struct {
 	pageBase
 	HasContract bool
 	Contract    *storage.Contract
 }
 
-func (s *Server) handleContrato(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleContract(w http.ResponseWriter, r *http.Request) {
 	c, err := s.db.GetLatestContract()
-	d := contratoData{pageBase: s.base("contrato")}
+	d := contractData{pageBase: s.base("contract")}
 	if err == nil && c != nil {
 		d.HasContract = true
 		d.Contract = c
 	}
-	s.render(w, contratoHTML, d)
+	s.render(w, contractHTML, d)
 }

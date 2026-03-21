@@ -1579,7 +1579,7 @@ func methodLabel(method string) string {
 	}
 }
 
-func (b *Bot) HandlePermisos() {
+func (b *Bot) HandlePermissions() {
 	if b.db == nil {
 		b.Send("❌ Base de datos no disponible.")
 		return
@@ -1868,7 +1868,7 @@ func (b *Bot) HandleHelp() {
 /roulette — Girar la ruleta diaria 🎰
 /chatask — Tarea comunitaria de Chaster
 /newlock — Iniciar nueva sesión
-/contrato — Ver el contrato de sesión actual
+/contract — Ver el contrato de sesión actual
 
 🧸 *INVENTARIO*
 /toys — Ver tus juguetes
@@ -1883,7 +1883,7 @@ func (b *Bot) HandleHelp() {
 📊 *HISTORIAL*
 /lockstats — Estadísticas de sesión
 /history — Últimas 10 tareas
-/permisos — Historial de permisos
+/permissions — Historial de permisos
 /came — Reportar orgasmo real
 /stats — Estadísticas de Jolie
 /mood — Estado de ánimo de Papi
@@ -1935,9 +1935,9 @@ func (b *Bot) Start() {
 		{tgbotapi.NewKeyboardButton("/fail"), tgbotapi.NewKeyboardButton("/explain")},
 		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/chatask")},
 		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/wardrobe")},
-		{tgbotapi.NewKeyboardButton("/permisos"), tgbotapi.NewKeyboardButton("/stats")},
+		{tgbotapi.NewKeyboardButton("/permissions"), tgbotapi.NewKeyboardButton("/stats")},
 		{tgbotapi.NewKeyboardButton("/came"), tgbotapi.NewKeyboardButton("/history")},
-		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/contrato")},
+		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/contract")},
 		{tgbotapi.NewKeyboardButton("/lockstats")},
 		{tgbotapi.NewKeyboardButton("/help")},
 	}
@@ -2031,8 +2031,8 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleHelp()
 	case text == "/lockstats":
 		b.HandleLockStats()
-	case text == "/permisos":
-		b.HandlePermisos()
+	case text == "/permissions":
+		b.HandlePermissions()
 	case text == "/came":
 		b.HandleCame("")
 	case strings.HasPrefix(text, "/came "):
@@ -2055,12 +2055,12 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleWardrobe("")
 	case strings.HasPrefix(text, "/wardrobe "):
 		b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
-	case text == "/contrato":
+	case text == "/contract":
 		b.HandleContrato()
-	case text == "/quitar":
+	case text == "/removetime":
 		b.HandleRemoveTime("")
-	case strings.HasPrefix(text, "/quitar "):
-		b.HandleRemoveTime(strings.TrimPrefix(text, "/quitar "))
+	case strings.HasPrefix(text, "/removetime "):
+		b.HandleRemoveTime(strings.TrimPrefix(text, "/removetime "))
 	case text == "/dbwipe":
 		b.HandleDBWipe()
 	case text != "" && !strings.HasPrefix(text, "/"):
@@ -2716,7 +2716,7 @@ func (b *Bot) SendRandomMessage() {
 	b.sendRandomMessageInternal()
 }
 
-// HandleRemoveTime quita N horas de la condena — /quitar [horas]
+// HandleRemoveTime quita N horas de la condena — /removetime [horas]
 func (b *Bot) HandleRemoveTime(args string) {
 	hours := 1
 	if args != "" {

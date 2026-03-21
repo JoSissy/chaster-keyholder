@@ -456,7 +456,7 @@ a:hover { color: var(--purple); }
     <a href="/chatasks" class="nav-link {{if eq .Nav "chatasks"}}active{{end}}">
       <span class="nav-icon">🌐</span> Comunidad
     </a>
-    <a href="/permisos" class="nav-link {{if eq .Nav "permisos"}}active{{end}}">
+    <a href="/permissions" class="nav-link {{if eq .Nav "permissions"}}active{{end}}">
       <span class="nav-icon">🌸</span> Permisos
     </a>
     <a href="/toys" class="nav-link {{if eq .Nav "toys"}}active{{end}}">
@@ -465,10 +465,10 @@ a:hover { color: var(--purple); }
     <a href="/wardrobe" class="nav-link {{if eq .Nav "wardrobe"}}active{{end}}">
       <span class="nav-icon">👗</span> Guardarropa
     </a>
-    <a href="/galeria" class="nav-link {{if eq .Nav "galeria"}}active{{end}}">
+    <a href="/gallery" class="nav-link {{if eq .Nav "gallery"}}active{{end}}">
       <span class="nav-icon">🖼️</span> Galería
     </a>
-    <a href="/contrato" class="nav-link {{if eq .Nav "contrato"}}active{{end}}">
+    <a href="/contract" class="nav-link {{if eq .Nav "contract"}}active{{end}}">
       <span class="nav-icon">📜</span> Contrato
     </a>
     <a href="/checkins" class="nav-link {{if eq .Nav "checkins"}}active{{end}}">
@@ -1434,7 +1434,7 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
 </script>
 {{end}}`
 
-var galeriaHTML = `{{define "content"}}
+var galleryHTML = `{{define "content"}}
 <div class="page-hd">
   <h1 class="page-title">Galería</h1>
   <p class="page-sub">{{.Total}} fotos en total</p>
@@ -1518,7 +1518,7 @@ document.querySelectorAll('.gal-btn').forEach(btn => {
 </script>
 {{end}}`
 
-var contratoHTML = `{{define "content"}}
+var contractHTML = `{{define "content"}}
 <div class="page-hd">
   <h1 class="page-title">Contrato</h1>
   <p class="page-sub">Las reglas que Papi impuso para esta sesión</p>

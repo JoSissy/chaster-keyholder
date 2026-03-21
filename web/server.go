@@ -38,12 +38,12 @@ func New(db *storage.DB, statePath, botUsername, password string) http.Handler {
 	mux.HandleFunc("/", s.auth(s.handleDashboard))
 	mux.HandleFunc("/calendar", s.auth(s.handleCalendar))
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
-	mux.HandleFunc("/permisos", s.auth(s.handlePermisos))
+	mux.HandleFunc("/permissions", s.auth(s.handlePermissions))
 	mux.HandleFunc("/toys", s.auth(s.handleToys))
 	mux.HandleFunc("/wardrobe", s.auth(s.handleWardrobe))
 	mux.HandleFunc("/chatasks", s.auth(s.handleChatasks))
-	mux.HandleFunc("/galeria", s.auth(s.handleGaleria))
-	mux.HandleFunc("/contrato", s.auth(s.handleContrato))
+	mux.HandleFunc("/gallery", s.auth(s.handleGallery))
+	mux.HandleFunc("/contract", s.auth(s.handleContract))
 	mux.HandleFunc("/checkins", s.auth(s.handleCheckins))
 	return mux
 }
