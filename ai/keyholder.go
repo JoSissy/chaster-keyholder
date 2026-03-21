@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -63,6 +65,61 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
+// nonRetryableError is returned for HTTP 4xx errors (except 429) that should not be retried.
+type nonRetryableError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *nonRetryableError) Error() string {
+	return fmt.Sprintf("groq error %d: %s", e.StatusCode, e.Body)
+}
+
+// doRequest sends data to the Groq API with up to 3 attempts and exponential backoff.
+// Retries on network errors, HTTP 429, and HTTP 5xx.
+// Returns immediately on HTTP 4xx (except 429).
+func (c *Client) doRequest(data []byte) ([]byte, error) {
+	backoff := []time.Duration{1 * time.Second, 2 * time.Second}
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		httpReq, err := http.NewRequest("POST", groqURL, bytes.NewBuffer(data))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = err
+			if attempt < 3 {
+				log.Printf("[groq] retry %d/3: %v", attempt, err)
+				time.Sleep(backoff[attempt-1])
+			}
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return body, nil
+		}
+
+		// Non-retryable: 4xx except 429
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
+			return nil, &nonRetryableError{StatusCode: resp.StatusCode, Body: string(body)}
+		}
+
+		// Retryable: 429 or 5xx
+		lastErr = fmt.Errorf("groq error %d: %s", resp.StatusCode, string(body))
+		if attempt < 3 {
+			log.Printf("[groq] retry %d/3: %v", attempt, lastErr)
+			time.Sleep(backoff[attempt-1])
+		}
+	}
+	return nil, lastErr
+}
+
 // ChatResult resultado del chat libre con detección de infracciones al contrato
 type ChatResult struct {
 	Message   string
@@ -91,22 +148,9 @@ func (c *Client) chatMessages(model string, messages []Message, maxTokens int) (
 		return "", err
 	}
 
-	httpReq, err := http.NewRequest("POST", groqURL, bytes.NewBuffer(data))
+	body, err := c.doRequest(data)
 	if err != nil {
 		return "", err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("groq error %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp ChatResponse
@@ -135,22 +179,9 @@ func (c *Client) chat(model, systemPrompt string, userContent interface{}) (stri
 		return "", err
 	}
 
-	httpReq, err := http.NewRequest("POST", groqURL, bytes.NewBuffer(data))
+	body, err := c.doRequest(data)
 	if err != nil {
 		return "", err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("groq error %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp ChatResponse
@@ -274,8 +305,10 @@ func (c *Client) GenerateMorningMessage(daysLocked int, timeRemaining string, to
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s She has %s left on her sentence.
-Generate a morning message as Papi. You are waking her up — remind her she woke up caged, under your control.
-Be paternal and perverse. Reference her secret subtly. Use a nickname. Maximum 3 lines. In Spanish.`,
+Generate a morning message as Papi. She woke up caged — the device was on her body all night while she slept.
+Make her feel that before the day starts, she is already owned. Reference the physical cage subtly.
+Give her something possessive and slightly unsettling to carry into her day — one thought, one image, one reminder of what she is.
+Use a nickname. No greetings. Start directly. Maximum 3 lines. In Spanish.`,
 		ctx, timeRemaining,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -290,8 +323,9 @@ func (c *Client) GenerateNightMessage(daysLocked int, taskCompleted bool, toys [
 	prompt := fmt.Sprintf(
 		`%s Today she %s.
 Generate a goodnight message as Papi. She goes to sleep caged, thinking of you.
-Be quietly satisfied — paternal, possessive, perverse. Remind her tomorrow she wakes up still yours.
-Use a nickname. Maximum 3 lines. In Spanish.`,
+Be quietly satisfied — she ends her day exactly as it started: his.
+Reference the cage being there in the dark with her. Make her feel he knows she'll think of him while she tries to sleep.
+Paternal, intimate in a perverse way. Use a nickname. Maximum 3 lines. In Spanish.`,
 		ctx, status,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -374,9 +408,9 @@ func (c *Client) GenerateTaskAccepted(toys []models.Toy, daysLocked int) (string
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
 		`%s Jolie completed her task and submitted the photo evidence.
-As Papi, acknowledge it coldly — condescending satisfaction, nothing more.
-You expected nothing less from her. She did what she was told, like the obedient little thing she is.
-Reference your ownership subtly. Use a nickname. Maximum 2 lines. In Spanish.`,
+As Papi, acknowledge it with cold, possessive satisfaction — she did what she was told, nothing more.
+She is not praised, she is confirmed: this is what she is for.
+Reference that she belongs to you — her compliance is not a choice, it's her nature. Use a nickname. Maximum 2 lines. In Spanish.`,
 		ctx,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -399,8 +433,9 @@ Reference your ownership of her subtly. Use a nickname. Maximum 3 lines. In Span
 func (c *Client) GenerateTaskPenalty(penaltyHours int, reason string) (string, error) {
 	prompt := fmt.Sprintf(
 		`Jolie failed her task. Reason: %s. Penalty: +%dh added to her sentence.
-As Papi, correct her — cold, disappointed, slightly amused. This is exactly what you expected from her.
-Reference that her failure is noted and will be remembered. Use a nickname. Maximum 3 lines. In Spanish.`,
+As Papi, correct her — cold, precise, mildly contemptuous. Not angry, just unsurprised.
+She failed and she will carry that. Reference that her failures accumulate, that you see everything, that the cage is a reminder she earned.
+Make her feel ashamed without him raising his voice. Use a nickname. Maximum 3 lines. In Spanish.`,
 		reason, penaltyHours,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -1137,7 +1172,14 @@ Maximum 2 lines. In Spanish.`,
 
 	typeInstruction := messageType
 	if typeInstruction == "" {
-		typeInstruction = "choose freely"
+		styles := []string{
+			"sudden possessive check-in — Papi thought of her and wants her to know she is his right now",
+			"psychological intrusion — a thought about what she is or what is inside her that she cannot dismiss",
+			"quiet threat — something Papi is planning, vague and unsettling",
+			"ownership reminder — reference her secret, her cage, the gap between who she appears to be and what she really is",
+			"cold demand — a small order she must carry out alone, silently, right now",
+		}
+		typeInstruction = styles[rand.Intn(len(styles))]
 	}
 
 	prompt := fmt.Sprintf(
@@ -1413,9 +1455,9 @@ func (c *Client) GenerateRitualResponse(userMessage string, daysLocked int, toys
 	prompt := fmt.Sprintf(
 		`%s%s
 Jolie completed her morning ritual. She wrote to Papi: "%s"
-He grants her permission to work — not warmly, just cold acknowledgment.
-Papi is quietly satisfied. She did what she was told, as expected. Make it feel like he is allowing her to continue, not approving of her.
-Maximum 2 lines. In Spanish.`,
+He grants her permission to work — but first, react to what she wrote. Read it and respond to her specifically.
+Papi is coldly satisfied: she started her day in her cage, reporting to him, as she should.
+Make her feel the asymmetry — he allows, she proceeds. Possessive, final. Maximum 2 lines. In Spanish.`,
 		ctx, obedienceContext(obedienceLevel), userMessage,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -1540,10 +1582,11 @@ func (c *Client) GenerateConditioningMessage(daysLocked int, toys []models.Toy, 
 	prompt := fmt.Sprintf(
 		`%s%s Hour: %d:00. Jolie is at her desk working from home — and she is caged under her clothes.
 Papi sends her a brief message to interrupt her mentally. Choose one:
-- Psychological: a thought about what she is, her cage, her situation, her secret
-- Small order: something tiny and degrading to do alone at her desk — no photo (whisper something, think about X, feel the cage)
-- Perverse reminder: reference her cage, a toy, the fact that her coworkers don't know
-- Veiled threat: hint at what Papi is planning — vague, unsettling
+- Psychological intrusion: a thought she cannot dismiss — what she is, what she has inside her, what no one around her knows
+- Physical awareness: make her acutely aware of the cage pressing against her right now, the plug inside her, her body betraying nothing while everything is there
+- Observation: remind her Papi knows where she is, what she's wearing, what's under her clothes — she is watched from a distance
+- Small private order: something tiny and humiliating to do alone at the desk — no photo (press her thighs together, think about being filled, whisper something to herself)
+- Veiled threat: what Papi is thinking about doing to her — vague, precise enough to unsettle
 Maximum 2 lines. No photo required. Just conditioning. In Spanish.`,
 		ctx, obedienceContext(obedienceLevel), hour,
 	)
@@ -1643,7 +1686,8 @@ Papi's current mood: %s
 
 Send Jolie a spontaneous mood message — how Papi feels about her right now.
 Be direct: possessive, sexual, evaluating. Reference her performance.
-Make her feel assessed like property being inspected.
+Make her feel assessed — her body, her obedience, her failures, all visible to him.
+Reference the cage as proof of her status. Be direct about what he thinks of her right now.
 Demand she address you correctly if she responds. Maximum 3 lines. In Spanish.`,
 		ctx, tasksCompleted, tasksFailed, streak, weeklyDebt, mood,
 	)
@@ -1718,7 +1762,7 @@ func (c *Client) GenerateWeeklyJudgment(daysLocked int, toys []models.Toy, weekl
 Every Sunday, Papi reviews Jolie's week and pronounces his verdict.
 Respond ONLY in JSON:
 {
-  "message": "Papi's full judgment speech in Spanish — 4-6 lines, dramatic, possessive, perverse",
+  "message": "Papi's full judgment speech in Spanish — 4-6 lines. Unhurried, ceremonial, final. Name her infractions specifically. Make her feel judged and owned. Reference what she is and what she failed to be this week. Possessive and perverse.",
   "add_time_hours": N,
   "pillory_mins": N,
   "freeze_hours": N,
