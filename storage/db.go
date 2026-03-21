@@ -193,6 +193,18 @@ func (db *DB) migrate() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS orgasm_events (
+		id                  TEXT PRIMARY KEY,
+		created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+		method              TEXT NOT NULL,
+		toy_id              TEXT DEFAULT '',
+		toy_name            TEXT DEFAULT '',
+		permitted           INTEGER DEFAULT 1,
+		permission_outcome  TEXT DEFAULT 'granted_cum',
+		streak_at_time      INTEGER DEFAULT 0,
+		days_locked         INTEGER DEFAULT 0
+	);
+
 	`)
 	return err
 }
@@ -535,6 +547,126 @@ func (db *DB) GetOrgasmStats() (total, granted, edged, denied int, err error) {
 	return
 }
 
+// ── Orgasm Events (real orgasms reported by Jolie) ─────────────────────────
+
+// OrgasmEvent un orgasmo real reportado por Jolie via /came
+type OrgasmEvent struct {
+	ID                string
+	CreatedAt         time.Time
+	Method            string    // "nipples", "toys", "anal", "ruined", "manual", "other"
+	ToyID             string
+	ToyName           string
+	Permitted         bool      // false = sin permiso de Papi
+	PermissionOutcome string    // "granted_cum", "granted_toys", etc.
+	StreakAtTime      int
+	DaysLocked        int
+}
+
+// OrgasmEventStats estadísticas de orgasmos reales
+type OrgasmEventStats struct {
+	Total       int
+	WithToys    int
+	WithoutToys int
+	Violations  int
+	Methods     map[string]int // método → cantidad
+	LastMethod  string
+	LastAt      *time.Time
+}
+
+func (db *DB) SaveOrgasmEvent(e *OrgasmEvent) error {
+	id := fmt.Sprintf("oevent-%d", time.Now().UnixNano())
+	permitted := 1
+	if !e.Permitted {
+		permitted = 0
+	}
+	_, err := db.conn.Exec(`
+		INSERT INTO orgasm_events (id, created_at, method, toy_id, toy_name, permitted, permission_outcome, streak_at_time, days_locked)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, time.Now(), e.Method, e.ToyID, e.ToyName, permitted, e.PermissionOutcome, e.StreakAtTime, e.DaysLocked,
+	)
+	return err
+}
+
+func (db *DB) GetOrgasmEvents(limit int) ([]*OrgasmEvent, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, created_at, method, COALESCE(toy_id,''), COALESCE(toy_name,''), permitted,
+		       COALESCE(permission_outcome,'granted_cum'), streak_at_time, days_locked
+		FROM orgasm_events ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []*OrgasmEvent
+	for rows.Next() {
+		e := &OrgasmEvent{}
+		var permitted int
+		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.Method, &e.ToyID, &e.ToyName, &permitted,
+			&e.PermissionOutcome, &e.StreakAtTime, &e.DaysLocked); err != nil {
+			return nil, err
+		}
+		e.Permitted = permitted == 1
+		events = append(events, e)
+	}
+	return events, nil
+}
+
+// GetDaysSinceLastRealOrgasm devuelve los días desde el último orgasmo real reportado.
+// Devuelve -1 si nunca hubo uno (no hay registros).
+func (db *DB) GetDaysSinceLastRealOrgasm() int {
+	var createdAt time.Time
+	err := db.conn.QueryRow(
+		`SELECT created_at FROM orgasm_events ORDER BY created_at DESC LIMIT 1`,
+	).Scan(&createdAt)
+	if err != nil {
+		return -1 // nunca
+	}
+	return int(time.Since(createdAt).Hours()) / 24
+}
+
+// GetOrgasmEventStats devuelve estadísticas completas de orgasmos reales.
+func (db *DB) GetOrgasmEventStats() (*OrgasmEventStats, error) {
+	stats := &OrgasmEventStats{Methods: make(map[string]int)}
+
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*),
+		       SUM(CASE WHEN toy_id != '' THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN toy_id = '' THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN permitted = 0 THEN 1 ELSE 0 END)
+		FROM orgasm_events`).Scan(&stats.Total, &stats.WithToys, &stats.WithoutToys, &stats.Violations)
+	if err != nil {
+		return stats, err
+	}
+
+	// Conteo por método
+	rows, err := db.conn.Query(`SELECT method, COUNT(*) FROM orgasm_events GROUP BY method ORDER BY COUNT(*) DESC`)
+	if err != nil {
+		return stats, nil
+	}
+	defer rows.Close()
+	first := true
+	for rows.Next() {
+		var method string
+		var count int
+		rows.Scan(&method, &count)
+		stats.Methods[method] = count
+		if first {
+			stats.LastMethod = method // el más frecuente
+			first = false
+		}
+	}
+
+	// Último orgasmo
+	var lastAt time.Time
+	var lastMethod string
+	err2 := db.conn.QueryRow(`SELECT created_at, method FROM orgasm_events ORDER BY created_at DESC LIMIT 1`).Scan(&lastAt, &lastMethod)
+	if err2 == nil {
+		stats.LastAt = &lastAt
+		stats.LastMethod = lastMethod
+	}
+
+	return stats, nil
+}
+
 // ── Session State ─────────────────────────────────────────────────────────
 
 type SessionState struct {
@@ -708,7 +840,7 @@ func (db *DB) DeleteClothingItem(id string) error {
 func (db *DB) ResetAllTables() error {
 	tables := []string{
 		"toys", "locks", "tasks", "chaster_tasks", "clothing", "outfit_log",
-		"events", "negotiations", "orgasm_log", "session_state", "checkins", "contracts",
+		"events", "negotiations", "orgasm_log", "orgasm_events", "session_state", "checkins", "contracts",
 	}
 	for _, t := range tables {
 		if _, err := db.conn.Exec("DELETE FROM " + t); err != nil {

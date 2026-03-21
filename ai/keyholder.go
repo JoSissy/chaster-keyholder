@@ -607,44 +607,66 @@ Be GENEROUS in your evaluation:
 
 // OrgasmDecision resultado de una solicitud de permiso de orgasmo
 type OrgasmDecision struct {
-	Outcome   string `json:"outcome"`             // "denied", "edge", "granted"
+	Outcome   string `json:"outcome"`             // "denied", "edge", "granted_cum", "granted_toys"
 	Message   string `json:"message"`
 	Condition string `json:"condition,omitempty"` // instrucciones si granted o edge
 }
 
 // GenerateOrgasmMessage genera el texto de Papi para un outcome ya decidido.
-// outcome: "denied" | "edge" | "granted"
-func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, toys []models.Toy, daysLocked, streak, daysSinceLastGrant, consecutiveDenials int) (*OrgasmDecision, error) {
+// outcome: "denied" | "edge" | "granted_cum" | "granted_toys"
+func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, toys []models.Toy, daysLocked, streak, daysSinceLastOrgasm, consecutiveDenials int) (*OrgasmDecision, error) {
 	ctx := buildContext(toys, daysLocked)
 
-	lastGrantStr := "never"
-	if daysSinceLastGrant >= 0 && daysSinceLastGrant < 999 {
-		if daysSinceLastGrant == 0 {
-			lastGrantStr = "today"
+	lastOrgasmStr := "never"
+	if daysSinceLastOrgasm >= 0 && daysSinceLastOrgasm < 999 {
+		if daysSinceLastOrgasm == 0 {
+			lastOrgasmStr = "today"
 		} else {
-			lastGrantStr = fmt.Sprintf("%d days ago", daysSinceLastGrant)
+			lastOrgasmStr = fmt.Sprintf("%d days ago", daysSinceLastOrgasm)
 		}
+	}
+
+	// Construir lista de juguetes disponibles para el prompt
+	var toyNames []string
+	for _, t := range toys {
+		if t.Type != "cage" {
+			toyNames = append(toyNames, t.Name)
+		}
+	}
+	toyList := "none"
+	if len(toyNames) > 0 {
+		toyList = strings.Join(toyNames, ", ")
 	}
 
 	var outcomeInstruction string
 	switch outcome {
-	case "granted":
-		outcomeInstruction = `THE DECISION IS: GRANTED.
-Papi grants permission. Respond in JSON: {"outcome": "granted", "message": "...", "condition": "..."}
-- message: short dominant reaction acknowledging her (2-3 lines max). Humiliating but granting.
-- condition: explicit degrading instructions — she uses the dildo in her ass, must narrate herself, must beg during. Be specific.
+	case "granted_cum":
+		outcomeInstruction = `THE DECISION IS: GRANTED — she may cum.
+Respond in JSON: {"outcome": "granted_cum", "message": "...", "condition": "..."}
+- message: short dominant reaction, granting her (2-3 lines). Possessive and perverse.
+- condition: explicit degrading instructions on HOW she must cum — method, toy if available, must narrate herself during. Be specific about technique.
+- She can ONLY cum through her ass/nipples — never her caged dick.
+- End condition with: "Cuando termines, repórtate con /came [método]."
 - Use "maricona", "puta sissy", "agujero", "culo de puta".`
+	case "granted_toys":
+		outcomeInstruction = `THE DECISION IS: GRANTED TOYS — she may use her toys but NOT cum.
+Respond in JSON: {"outcome": "granted_toys", "message": "...", "condition": "..."}
+- message: Papi allows her to use her toys — tease herself, feel owned — but cumming is absolutely forbidden (2-3 lines).
+- condition: which toy to use, how, for how long, specific degrading details. She must stop before the edge if she gets close.
+- Available toys: ` + toyList + `
+- If no toys available: she can touch her nipples but not cum.
+- Use "maricona", "puta sissy".`
 	case "edge":
-		outcomeInstruction = `THE DECISION IS: EDGE.
-Papi does NOT grant orgasm — he orders her to masturbate with the dildo but stop before cumming. Respond in JSON: {"outcome": "edge", "message": "...", "condition": "..."}
-- message: cold dominant order. She gets to touch herself but NOT cum. Make her feel the cruelty — so close yet not allowed (2-3 lines).
-- condition: insert the dildo, masturbate until the very edge, stop right before cumming. Confirm when done. Reference the cage. Be explicit.
+		outcomeInstruction = `THE DECISION IS: EDGE — masturbate but do NOT cum.
+Respond in JSON: {"outcome": "edge", "message": "...", "condition": "..."}
+- message: cold dominant order. She gets to touch herself but NOT cum. Make her feel the cruelty (2-3 lines).
+- condition: insert the dildo/toy, masturbate until the very edge, stop right before cumming. Confirm when done with a message.
 - Use "maricona", "puta sissy", "agujero".`
 	default: // "denied"
-		outcomeInstruction = `THE DECISION IS: DENIED.
-Papi denies her completely. Respond in JSON: {"outcome": "denied", "message": "...", "condition": ""}
-- message: cruel, humiliating denial (2-3 lines). Call her a faggot, remind her she has no cock, only a hole.
-- Reference the history: "llevas X días sin correrte" or "ya te lo di hace X días".
+		outcomeInstruction = `THE DECISION IS: DENIED — nothing.
+Respond in JSON: {"outcome": "denied", "message": "...", "condition": ""}
+- message: cruel, humiliating denial (2-3 lines). Remind her she has no cock, only a hole.
+- Reference her orgasm history: "llevas X días sin correrte" or "ya lo tuviste hace X días".
 - Use "maricona", "puta sissy", "zorra encerrada", "culo de puta", "agujero".`
 	}
 
@@ -654,18 +676,18 @@ Papi denies her completely. Respond in JSON: {"outcome": "denied", "message": ".
 	}
 
 	system := baseSystemLocked + `
-Jolie is begging Papi for permission to orgasm (anal only — never through the cage).
+Jolie is begging Papi for permission to orgasm or use her toys.
 ` + outcomeInstruction + `
 
 Rules:
-- A sissy like her can ONLY cum through her ass — the cage exists so she never uses her dick
+- A sissy like her can ONLY cum through her ass or nipples — the cage exists so she never uses her dick
 - Always respond ONLY in JSON. No extra text outside JSON.
 - Always respond in Spanish.`
 
 	prompt := fmt.Sprintf(`%s
-Current streak: %d | Last orgasm granted: %s%s
+Current streak: %d | Last real orgasm: %s%s
 
-Jolie begs: "%s"`, ctx, streak, lastGrantStr, consecutiveLine, userMessage)
+Jolie begs: "%s"`, ctx, streak, lastOrgasmStr, consecutiveLine, userMessage)
 
 	raw, err := c.chat("llama-3.3-70b-versatile", system, prompt)
 	if err != nil {
@@ -705,6 +727,31 @@ Respond with a SHORT dismissive/mocking message in Spanish (1-2 lines max).
 - No JSON needed — just the plain message text. No emojis.`
 
 	return c.chat("llama-3.3-70b-versatile", system, fmt.Sprintf("Jolie asks: permission please"))
+}
+
+// GenerateCameResponse genera la reacción de Papi cuando Jolie reporta que se vino.
+// permitted=true si había permiso activo, false si fue una violación.
+func (c *Client) GenerateCameResponse(method, toyName string, permitted bool, daysLocked int, toys []models.Toy) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	methodDesc := method
+	if toyName != "" {
+		methodDesc = fmt.Sprintf("%s (%s)", method, toyName)
+	}
+
+	var situation string
+	if permitted {
+		situation = fmt.Sprintf(`Jolie followed Papi's orders and came as permitted. Method: %s.
+React as Papi — possessive satisfaction that she obeyed. Acknowledge her submission. 2-3 lines. Spanish. No JSON.
+Use "mi puta sissy", "mi maricona obediente", possessive tone.`, methodDesc)
+	} else {
+		situation = fmt.Sprintf(`Jolie came WITHOUT permission. Method: %s. This is a serious violation.
+React as Papi — cold fury, controlled. She broke the rules. She will be punished. 2-3 lines. Spanish. No JSON.
+Make clear this will have consequences. Use "desobediente", "sin permiso", "vas a pagar".`, methodDesc)
+	}
+
+	system := baseSystemLocked + "\n" + situation
+	return c.chat("llama-3.3-70b-versatile", system, ctx)
 }
 
 // ── Free chat ──────────────────────────────────────────────────────────────

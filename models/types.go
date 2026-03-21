@@ -170,7 +170,10 @@ type AppState struct {
 
 	// Control de cooldown de orgasmo
 	LastOrgasmRequestAt *time.Time `json:"last_orgasm_request_at,omitempty"`
-	LastOrgasmOutcome   string     `json:"last_orgasm_outcome,omitempty"` // "denied", "edge", "granted"
+	LastOrgasmOutcome   string     `json:"last_orgasm_outcome,omitempty"` // "denied", "edge", "granted_cum", "granted_toys"
+
+	// Permiso de cum pendiente (Papi dijo granted_cum, Jolie no ha reportado aún)
+	GrantedCumPendingAt *time.Time `json:"granted_cum_pending_at,omitempty"`
 
 	// Obediencia avanzada
 	ConsecutiveDays      int    `json:"consecutive_days"`        // días seguidos con tarea completada
