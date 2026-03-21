@@ -217,21 +217,36 @@ func (b *Bot) SetElevenLabs(client *elevenlabs.Client) {
 // Si el cliente no está configurado o falla, no hace nada (el caller decide el fallback).
 func (b *Bot) SendVoice(text string) {
 	if b.elevenlabs == nil {
+		log.Println("[ElevenLabs] cliente no configurado — ELEVENLABS_API_KEY faltante?")
 		return
 	}
 	clean := stripMarkdown(text)
+	log.Printf("[ElevenLabs] generando audio (%d chars)...", len(clean))
 	audio, err := b.elevenlabs.TextToSpeech(clean)
 	if err != nil {
 		log.Printf("[ElevenLabs] TTS error: %v", err)
 		return
 	}
+	log.Printf("[ElevenLabs] audio generado (%d bytes), enviando...", len(audio))
 	voice := tgbotapi.NewVoice(b.chatID, tgbotapi.FileBytes{
 		Name:  "papi.mp3",
 		Bytes: audio,
 	})
 	if _, err := b.api.Send(voice); err != nil {
 		log.Printf("[ElevenLabs] error enviando nota de voz: %v", err)
+	} else {
+		log.Println("[ElevenLabs] nota de voz enviada ✓")
 	}
+}
+
+// HandleTestVoice envía una nota de voz de prueba — /testvoice
+func (b *Bot) HandleTestVoice() {
+	if b.elevenlabs == nil {
+		b.Send("❌ ElevenLabs no configurado. Verifica ELEVENLABS_API_KEY en las variables de entorno.")
+		return
+	}
+	b.Send("🎙 Generando nota de voz de prueba...")
+	b.SendVoice("Hola mi puta sissy. Este es un mensaje de prueba de tu Papi. El audio está funcionando correctamente.")
 }
 
 func stripMarkdown(s string) string {
@@ -2071,6 +2086,8 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleRemoveTime(strings.TrimPrefix(text, "/removetime "))
 	case text == "/dbwipe":
 		b.HandleDBWipe()
+	case text == "/testvoice":
+		b.HandleTestVoice()
 	case text != "" && !strings.HasPrefix(text, "/"):
 		b.HandleChat(text)
 	}
