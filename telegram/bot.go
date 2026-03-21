@@ -47,9 +47,87 @@ type Bot struct {
 	cachedDaysLockedAt time.Time
 
 	// Estado de UI transitorio — no se persiste entre reinicios
-	pendingAction  string
+	pendingActions []string // cola priorizada; [0] es la acción activa
 	pendingToyHint string
 
+}
+
+// pendingActionPriority define el orden de prioridad de las acciones persistentes de foto.
+// Las acciones efímeras (new_toy, selecting_cage, etc.) se insertan siempre al frente.
+var pendingActionPriority = map[string]int{
+	"ritual_photo":       0,
+	"ritual_message":     1,
+	"plug_photo":         2,
+	"checkin_photo":      3,
+	"outfit_photo":       4,
+	"chaster_task_photo": 5,
+}
+
+// currentPendingAction devuelve la acción activa (cabeza de la cola) o "".
+func (b *Bot) currentPendingAction() string {
+	if len(b.pendingActions) == 0 {
+		return ""
+	}
+	return b.pendingActions[0]
+}
+
+// enqueuePendingAction añade una acción a la cola respetando la prioridad.
+// Las acciones efímeras (no en el mapa) se insertan al frente.
+// No añade duplicados.
+func (b *Bot) enqueuePendingAction(action string) {
+	for _, a := range b.pendingActions {
+		if a == action {
+			return
+		}
+	}
+	priority, isPersistent := pendingActionPriority[action]
+	if !isPersistent {
+		// Efímera: va al frente
+		b.pendingActions = append([]string{action}, b.pendingActions...)
+		return
+	}
+	// Persistente: insertar en posición según prioridad
+	insertAt := len(b.pendingActions)
+	for i, a := range b.pendingActions {
+		if p, ok := pendingActionPriority[a]; ok && p > priority {
+			insertAt = i
+			break
+		}
+	}
+	b.pendingActions = append(b.pendingActions[:insertAt:insertAt], append([]string{action}, b.pendingActions[insertAt:]...)...)
+}
+
+// removePendingAction elimina una acción específica de la cola.
+func (b *Bot) removePendingAction(action string) {
+	for i, a := range b.pendingActions {
+		if a == action {
+			b.pendingActions = append(b.pendingActions[:i], b.pendingActions[i+1:]...)
+			return
+		}
+	}
+}
+
+// clearPendingActions vacía la cola por completo.
+func (b *Bot) clearPendingActions() {
+	b.pendingActions = nil
+}
+
+// promptNextPendingAction envía un recordatorio de la siguiente acción pendiente en la cola.
+func (b *Bot) promptNextPendingAction() {
+	switch b.currentPendingAction() {
+	case "ritual_photo":
+		b.Send("_Siguiente: manda la foto de tu jaula puesta._")
+	case "ritual_message":
+		b.Send("_Siguiente: cuéntame cómo empiezas el día con la jaula._")
+	case "plug_photo":
+		b.Send("_Siguiente: manda la foto con el plug puesto._")
+	case "checkin_photo":
+		b.Send(fmt.Sprintf("_Siguiente: manda la foto de check-in. Código: `%s`_", b.state.CheckinVerificationCode))
+	case "outfit_photo":
+		b.Send("_Siguiente: manda la foto con el outfit asignado._")
+	case "chaster_task_photo":
+		b.Send("_Siguiente: manda la foto de la tarea comunitaria._")
+	}
 }
 
 func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient *ai.Client, db *storage.DB, cloudinary *storage.CloudinaryClient) (*Bot, error) {
@@ -74,20 +152,25 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 			b.state.Toys = append(b.state.Toys, storageToyToModel(t))
 		}
 	}
-	// Restaurar pendingAction desde el estado para recuperación tras reinicio
-	switch {
-	case b.state.RitualStep == 1:
-		b.pendingAction = "ritual_photo"
-	case b.state.RitualStep == 2:
-		b.pendingAction = "ritual_message"
-	case b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt):
-		b.pendingAction = "checkin_photo"
-	case b.state.AssignedPlugID != "" && !b.state.PlugConfirmed && b.state.AssignedPlugDate == todayStr():
-		b.pendingAction = "plug_photo"
-	case b.state.PendingChasterTask != "":
-		b.pendingAction = "chaster_task_photo"
-	case b.state.DailyOutfitDesc != "" && !b.state.OutfitConfirmed && b.state.DailyOutfitDate == todayStr():
-		b.pendingAction = "outfit_photo"
+	// Restaurar pendingActions desde el estado — se encolan todas las pendientes
+	// (en lugar del switch anterior que solo restauraba una)
+	if b.state.RitualStep == 1 {
+		b.enqueuePendingAction("ritual_photo")
+	}
+	if b.state.RitualStep == 2 {
+		b.enqueuePendingAction("ritual_message")
+	}
+	if b.state.AssignedPlugID != "" && !b.state.PlugConfirmed && b.state.AssignedPlugDate == todayStr() {
+		b.enqueuePendingAction("plug_photo")
+	}
+	if b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt) {
+		b.enqueuePendingAction("checkin_photo")
+	}
+	if b.state.DailyOutfitDesc != "" && !b.state.OutfitConfirmed && b.state.DailyOutfitDate == todayStr() {
+		b.enqueuePendingAction("outfit_photo")
+	}
+	if b.state.PendingChasterTask != "" {
+		b.enqueuePendingAction("chaster_task_photo")
 	}
 	return b, nil
 }
@@ -757,7 +840,7 @@ func (b *Bot) handleToyRemoveSelection(text string) {
 		}
 	}
 	b.state.Toys = newToys
-	b.pendingAction = ""
+	b.removePendingAction("removing_toy")
 	b.mustSaveState()
 
 	b.Send(fmt.Sprintf("🗑 *%s* eliminado.", selected.Name))
@@ -766,14 +849,14 @@ func (b *Bot) handleToyRemoveSelection(text string) {
 // handleCageSelection procesa la selección de jaula durante el flujo de newlock
 func (b *Bot) handleCageSelection(text string) {
 	if b.db == nil {
-		b.pendingAction = ""
+		b.removePendingAction("selecting_cage")
 		b.startNewLockFlow()
 		return
 	}
 
 	cages, err := b.db.GetCages()
 	if err != nil || len(cages) == 0 {
-		b.pendingAction = ""
+		b.removePendingAction("selecting_cage")
 		b.startNewLockFlow()
 		return
 	}
@@ -792,7 +875,7 @@ func (b *Bot) handleCageSelection(text string) {
 	selected := cages[num-1]
 	b.db.SetToyInUse(selected.ID, true)
 	b.reloadToysFromDB()
-	b.pendingAction = ""
+	b.removePendingAction("selecting_cage")
 	b.mustSaveState()
 
 	b.Send(fmt.Sprintf("_Jaula seleccionada: *%s*_", selected.Name))
@@ -828,7 +911,7 @@ func (b *Bot) HandleExplain() {
 // HandleToyPhoto procesa la foto de un juguete nuevo, llama a la IA para nombre/descripción
 // y lo guarda en DB + Cloudinary
 func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
-	b.pendingAction = ""
+	b.removePendingAction("new_toy")
 
 	b.Send("_Analizando el juguete..._")
 
@@ -903,7 +986,7 @@ func (b *Bot) HandleChat(text string) {
 		b.state.EdgePendingAt = nil
 		b.state.EdgeCount = 0
 		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
-		b.pendingAction = ""
+		b.removePendingAction("edge_confirm")
 		b.mustSaveState()
 		b.addWeeklyDebt("edge no confirmado a tiempo")
 		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge. -1 obediencia. Anotado._")
@@ -913,31 +996,31 @@ func (b *Bot) HandleChat(text string) {
 	textLower := strings.ToLower(text)
 
 	// Ritual matutino — respuesta de texto
-	if b.pendingAction == "ritual_message" {
+	if b.currentPendingAction() == "ritual_message" {
 		b.HandleRitualMessage(text)
 		return
 	}
 
 	// Detectar selección de jaula durante flujo de newlock
-	if b.pendingAction == "selecting_cage" {
+	if b.currentPendingAction() == "selecting_cage" {
 		b.handleCageSelection(text)
 		return
 	}
 
 	// Detectar selección de juguete a eliminar
-	if b.pendingAction == "removing_toy" {
+	if b.currentPendingAction() == "removing_toy" {
 		b.handleToyRemoveSelection(text)
 		return
 	}
 
 	// Confirmación de edge pendiente
-	if b.pendingAction == "edge_confirm" {
+	if b.currentPendingAction() == "edge_confirm" {
 		b.handleEdgeConfirmation(text)
 		return
 	}
 
 	// Detectar selección de prenda a eliminar
-	if b.pendingAction == "removing_clothing" {
+	if b.currentPendingAction() == "removing_clothing" {
 		b.handleClothingRemoveSelection(text)
 		return
 	}
@@ -1284,7 +1367,7 @@ func (b *Bot) handleOrgasmRequest(text string) {
 
 	case "edge":
 		b.state.EdgePendingAt = &now
-		b.pendingAction = "edge_confirm"
+		b.enqueuePendingAction("edge_confirm")
 		b.mustSaveState()
 		msg := "▪️ *ORDEN DE EDGE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
 		if strings.TrimSpace(decision.Condition) != "" {
@@ -1302,7 +1385,7 @@ func (b *Bot) handleOrgasmRequest(text string) {
 // handleEdgeConfirmation procesa la confirmación de un edge completado
 func (b *Bot) handleEdgeConfirmation(text string) {
 	if b.state.EdgePendingAt == nil {
-		b.pendingAction = ""
+		b.removePendingAction("edge_confirm")
 		return
 	}
 
@@ -1311,7 +1394,7 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 		b.state.EdgePendingAt = nil
 		b.state.EdgeCount = 0
 		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
-		b.pendingAction = ""
+		b.removePendingAction("edge_confirm")
 		b.mustSaveState()
 		b.addWeeklyDebt("edge no confirmado a tiempo")
 		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge a tiempo. -1 obediencia. Anotado._")
@@ -1335,7 +1418,7 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 
 	b.state.EdgePendingAt = nil
 	b.state.EdgeCount = 0
-	b.pendingAction = ""
+	b.removePendingAction("edge_confirm")
 	b.mustSaveState()
 
 	b.Send("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Al borde y sin correrte. Como debe ser._")
@@ -1672,7 +1755,7 @@ func (b *Bot) HandleToys(args string) {
 			hint = strings.TrimSpace(parts[1])
 		}
 		b.pendingToyHint = hint
-		b.pendingAction = "new_toy"
+		b.enqueuePendingAction("new_toy")
 		b.Send("▪️ *NUEVO JUGUETE*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda la foto del juguete.\n_La IA generará nombre, descripción y tipo automáticamente._")
 
 	case "remove", "quitar":
@@ -1687,7 +1770,7 @@ func (b *Bot) HandleToys(args string) {
 		}
 		lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
 		b.Send(strings.Join(lines, "\n"))
-		b.pendingAction = "removing_toy"
+		b.enqueuePendingAction("removing_toy")
 
 	default:
 		if len(b.state.Toys) == 0 {
@@ -1945,36 +2028,39 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 
 		msgID := msg.MessageID
 
+		// Garantizar consistencia: encolar acciones persistentes si el estado las indica
+		// pero no están en la cola (p. ej. si fueron disparadas antes de arrancar la cola)
+		if b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt) {
+			b.enqueuePendingAction("checkin_photo")
+		}
+		if b.state.PendingChasterTask != "" {
+			b.enqueuePendingAction("chaster_task_photo")
+		}
+
+		current := b.currentPendingAction()
 		if b.state.AwaitingLockPhoto {
 			b.HandleLockPhoto(imgBytes, mime, msgID)
-		} else if b.pendingAction == "new_toy" {
+		} else if current == "new_toy" {
 			b.deleteMessage(msgID)
 			b.HandleToyPhoto(imgBytes, mime)
-		} else if b.pendingAction == "ritual_photo" {
+		} else if current == "ritual_photo" {
 			b.deleteMessage(msgID)
 			b.HandleRitualPhoto(imgBytes, mime)
-		} else if b.pendingAction == "plug_photo" {
+		} else if current == "plug_photo" {
 			b.deleteMessage(msgID)
 			b.HandlePlugPhoto(imgBytes, mime)
-		} else if b.pendingAction == "checkin_photo" ||
-			(b.state.PendingCheckin && b.state.CheckinExpiresAt != nil && time.Now().Before(*b.state.CheckinExpiresAt)) {
-			b.pendingAction = "checkin_photo"
+		} else if current == "checkin_photo" {
 			b.deleteMessage(msgID)
 			b.HandleCheckinPhoto(imgBytes, mime)
-		} else if b.pendingAction == "chaster_task_photo" {
+		} else if current == "chaster_task_photo" {
 			b.deleteMessage(msgID)
 			b.HandleChasterTaskPhoto(imgBytes, mime)
-		} else if b.pendingAction == "new_clothing" {
+		} else if current == "new_clothing" {
 			b.deleteMessage(msgID)
 			b.HandleWardrobePhoto(imgBytes, mime)
-		} else if b.pendingAction == "outfit_photo" {
+		} else if current == "outfit_photo" {
 			b.deleteMessage(msgID)
 			b.HandleOutfitPhoto(imgBytes, mime)
-		} else if b.state.PendingChasterTask != "" {
-			// pendingAction limpio pero hay tarea comunitaria pendiente — restablecer ruta
-			b.pendingAction = "chaster_task_photo"
-			b.deleteMessage(msgID)
-			b.HandleChasterTaskPhoto(imgBytes, mime)
 		} else {
 			b.deleteMessage(msgID)
 			b.HandlePhoto(imgBytes, mime)
@@ -2178,7 +2264,7 @@ func (b *Bot) HandleNewLock(args string) {
 				}
 				lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
 				b.Send(strings.Join(lines, "\n"))
-				b.pendingAction = "selecting_cage"
+				b.enqueuePendingAction("selecting_cage")
 				b.mustSaveState() // persiste ManualDurationSeconds
 				return
 			}
@@ -2834,7 +2920,7 @@ func (b *Bot) StartMorningRitual() {
 	}
 	b.state.RitualStep = 1
 	b.mustSaveState()
-	b.pendingAction = "ritual_photo"
+	b.enqueuePendingAction("ritual_photo")
 	b.Send("🌅 *RITUAL MATUTINO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(msg) + "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Manda la foto de tu jaula puesta._")
 }
 
@@ -2849,7 +2935,8 @@ func (b *Bot) HandleRitualPhoto(imgBytes []byte, mime string) {
 	case "approved":
 		b.state.RitualStep = 2
 		b.mustSaveState()
-		b.pendingAction = "ritual_message"
+		b.removePendingAction("ritual_photo")
+		b.enqueuePendingAction("ritual_message")
 		b.Send("✅ _Foto verificada._\n\nAhora escríbeme cómo empiezas el día. ¿Cómo te sientes con la jaula puesta?")
 	case "retry", "rejected":
 		b.Send(fmt.Sprintf("❌ *Foto rechazada*\n\n_%s_\n\nInténtalo de nuevo.", verdict.Reason))
@@ -2857,7 +2944,7 @@ func (b *Bot) HandleRitualPhoto(imgBytes []byte, mime string) {
 }
 
 func (b *Bot) HandleRitualMessage(text string) {
-	b.pendingAction = ""
+	b.removePendingAction("ritual_message")
 	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
 	response, err := b.ai.GenerateRitualResponse(text, b.daysLocked(), b.state.Toys, obedienceLevel)
 	if err != nil {
@@ -2867,6 +2954,7 @@ func (b *Bot) HandleRitualMessage(text string) {
 	b.state.LastRitualDate = todayStr()
 	b.mustSaveState()
 	b.Send(stripMarkdown(response))
+	b.promptNextPendingAction()
 }
 
 // ── Plug del día ───────────────────────────────────────────────────────────
@@ -2897,7 +2985,7 @@ func (b *Bot) SendPlugAssignment() {
 	b.state.AssignedPlugDate = todayStr()
 	b.state.PlugConfirmed = false
 	b.mustSaveState()
-	b.pendingAction = "plug_photo"
+	b.enqueuePendingAction("plug_photo")
 	b.Send(fmt.Sprintf(
 		"🔌 *PLUG DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\nPlug asignado: *%s*\n\n_Cuando lo tengas puesto, manda la foto._",
 		stripMarkdown(msg), selected.Name,
@@ -2908,7 +2996,7 @@ func (b *Bot) HandlePlugPhoto(imgBytes []byte, mime string) {
 	b.Send("_Verificando..._")
 	plugName := b.getAssignedPlugName()
 	if plugName == "" {
-		b.pendingAction = ""
+		b.removePendingAction("plug_photo")
 		return
 	}
 	verdict, err := b.ai.VerifyPlugPhoto(imgBytes, mime, plugName)
@@ -2918,7 +3006,7 @@ func (b *Bot) HandlePlugPhoto(imgBytes []byte, mime string) {
 	}
 	switch verdict.Status {
 	case "approved":
-		b.pendingAction = ""
+		b.removePendingAction("plug_photo")
 		b.state.PlugConfirmed = true
 		b.state.PlugBonusAccum++
 		plugMsg := fmt.Sprintf("✅ *PLUG CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s puesto, como debe ser. Que dure todo el día._", plugName)
@@ -2929,13 +3017,15 @@ func (b *Bot) HandlePlugPhoto(imgBytes []byte, mime string) {
 		}
 		b.mustSaveState()
 		b.Send(plugMsg)
+		b.promptNextPendingAction()
 	case "retry":
 		b.Send(fmt.Sprintf("⚠️ *Intenta de nuevo*\n\n_%s_", verdict.Reason))
 	case "rejected":
-		b.pendingAction = ""
+		b.removePendingAction("plug_photo")
 		b.Send(fmt.Sprintf("❌ *Plug no detectado*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_", verdict.Reason))
 		b.addWeeklyDebt(fmt.Sprintf("plug %s no confirmado", plugName))
 		b.autoPillory(fmt.Sprintf("no llevó el %s asignado", plugName))
+		b.promptNextPendingAction()
 	}
 }
 
@@ -3007,7 +3097,7 @@ func (b *Bot) TriggerCheckin() {
 	}
 
 	b.mustSaveState()
-	b.pendingAction = "checkin_photo"
+	b.enqueuePendingAction("checkin_photo")
 	b.Send(fmt.Sprintf(
 		"📸 *CHECK-IN REQUERIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n🔢 *Código de verificación: `%s`*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Tienes 30 minutos para responder._",
 		stripMarkdown(msg), code,
@@ -3016,7 +3106,7 @@ func (b *Bot) TriggerCheckin() {
 
 func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 	if !b.state.PendingCheckin {
-		b.pendingAction = ""
+		b.removePendingAction("checkin_photo")
 		return
 	}
 	b.Send("_Enviando a Chaster..._")
@@ -3034,7 +3124,7 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 		return
 	}
 
-	b.pendingAction = ""
+	b.removePendingAction("checkin_photo")
 	respondedAt := time.Now()
 	responseTimeMins := 0
 	if b.state.CheckinExpiresAt != nil {
@@ -3062,6 +3152,7 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 	b.state.TasksStreak++
 	b.mustSaveState()
 	b.Send("✅ *CHECK-IN ENVIADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Foto enviada a la comunidad de Chaster. +1 obediencia._")
+	b.promptNextPendingAction()
 }
 
 // CheckObedienceDecay resta 1 punto si llevan 2+ días sin completar tarea.
@@ -3112,7 +3203,7 @@ func (b *Bot) CheckCheckinExpiry() {
 	b.state.CheckinReminderSent = false
 	b.state.CurrentCheckinID = ""
 	b.state.CheckinVerificationCode = ""
-	b.pendingAction = ""
+	b.removePendingAction("checkin_photo")
 	b.mustSaveState()
 	b.Send("⏰ *CHECK-IN IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No respondiste a tiempo. Consecuencias._")
 	b.addWeeklyDebt("check-in ignorado — no respondió a tiempo")
@@ -3134,7 +3225,8 @@ func (b *Bot) CheckRitualExpiry() {
 	// Ritual iniciado pero no completado y ya pasaron las 11am — penalizar
 	b.state.RitualStep = 0
 	b.state.LastRitualDate = todayStr()
-	b.pendingAction = ""
+	b.removePendingAction("ritual_photo")
+	b.removePendingAction("ritual_message")
 	b.mustSaveState()
 	b.Send("💀 *RITUAL IGNORADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No completaste el ritual de Papi. Hay consecuencias._")
 	b.addWeeklyDebt("ritual matutino ignorado")
@@ -3379,7 +3471,7 @@ func (b *Bot) HandleChasterTaskCommand() {
 	b.state.ChasterTaskLockID = lock.ID
 	b.state.ChasterTaskAssignedAt = &now
 	b.mustSaveState()
-	b.pendingAction = "chaster_task_photo"
+	b.enqueuePendingAction("chaster_task_photo")
 
 	b.Send(fmt.Sprintf(
 		"📋 *TAREA COMUNITARIA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_La comunidad de Chaster la está viendo. Complétala y manda la foto._",
@@ -3391,7 +3483,7 @@ func (b *Bot) HandleChasterTaskCommand() {
 // Marca la tarea como completada en Chaster y espera votación de la comunidad.
 func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
 	if b.state.PendingChasterTask == "" {
-		b.pendingAction = ""
+		b.removePendingAction("chaster_task_photo")
 		return
 	}
 
@@ -3430,7 +3522,7 @@ func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
 	// Limpiar el estado de "pendiente de foto" pero mantener lockID/assignedAt para polling
 	b.state.PendingChasterTask = ""
 	b.state.ChasterTaskSessionID = ""
-	b.pendingAction = ""
+	b.removePendingAction("chaster_task_photo")
 	b.mustSaveState()
 
 	b.Send(
@@ -3439,6 +3531,7 @@ func (b *Bot) HandleChasterTaskPhoto(imgBytes []byte, mime string) {
 			"▬▬▬▬▬▬▬▬▬▬▬▬\n" +
 			"_Te aviso cuando salga el resultado._",
 	)
+	b.promptNextPendingAction()
 }
 
 // CheckChasterTaskVote verifica si hay un voto comunitario pendiente y reporta el resultado.
@@ -3640,7 +3733,7 @@ func (b *Bot) HandleDBWipe() {
 	b.mustSaveState()
 
 	// Resetear estado transitorio
-	b.pendingAction = ""
+	b.clearPendingActions()
 	b.cachedDaysLocked = 0
 	b.cachedDaysLockedAt = time.Time{}
 
@@ -3662,7 +3755,7 @@ func (b *Bot) HandleWardrobe(args string) {
 
 	switch subCmd {
 	case "add", "agregar":
-		b.pendingAction = "new_clothing"
+		b.enqueuePendingAction("new_clothing")
 		b.Send("👗 *NUEVA PRENDA*\n▬▬▬▬▬▬▬▬▬▬▬▬\nManda la foto de la prenda.\n_La IA generará nombre, descripción y tipo automáticamente._")
 
 	case "remove", "quitar":
@@ -3677,7 +3770,7 @@ func (b *Bot) HandleWardrobe(args string) {
 		}
 		lines = append(lines, "▬▬▬▬▬▬▬▬▬▬▬▬\n_Responde con el número._")
 		b.Send(strings.Join(lines, "\n"))
-		b.pendingAction = "removing_clothing"
+		b.enqueuePendingAction("removing_clothing")
 
 	default:
 		items, err := b.db.GetClothingItems()
@@ -3744,7 +3837,7 @@ func clothingTypeIcon(t string) string {
 func (b *Bot) handleClothingRemoveSelection(text string) {
 	items, err := b.db.GetClothingItems()
 	if err != nil {
-		b.pendingAction = ""
+		b.removePendingAction("removing_clothing")
 		b.Send("❌ Error obteniendo el guardarropa.")
 		return
 	}
@@ -3760,13 +3853,13 @@ func (b *Bot) handleClothingRemoveSelection(text string) {
 	}
 	selected := items[num-1]
 	b.db.DeleteClothingItem(selected.ID)
-	b.pendingAction = ""
+	b.removePendingAction("removing_clothing")
 	b.Send(fmt.Sprintf("🗑 *%s* eliminada del guardarropa.", selected.Name))
 }
 
 // HandleWardrobePhoto procesa la foto de una prenda nueva: IA analiza, sube a Cloudinary y guarda en DB
 func (b *Bot) HandleWardrobePhoto(imgBytes []byte, mimeType string) {
-	b.pendingAction = ""
+	b.removePendingAction("new_clothing")
 
 	b.Send("_Analizando la prenda..._")
 
@@ -3841,7 +3934,7 @@ func (b *Bot) SendDailyOutfit() {
 	b.state.OutfitConfirmed = false
 	b.state.DailyOutfitComment = ""
 	b.mustSaveState()
-	b.pendingAction = "outfit_photo"
+	b.enqueuePendingAction("outfit_photo")
 
 	b.Send(fmt.Sprintf(
 		"👗 *OUTFIT DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Cuando estés lista, manda la foto._",
@@ -3852,7 +3945,7 @@ func (b *Bot) SendDailyOutfit() {
 // HandleOutfitPhoto acepta la foto del outfit y genera el comentario de Papi
 func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 	if b.state.DailyOutfitDesc == "" || b.state.OutfitConfirmed {
-		b.pendingAction = ""
+		b.removePendingAction("outfit_photo")
 		return
 	}
 
@@ -3867,7 +3960,7 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 		}
 	}
 
-	b.pendingAction = ""
+	b.removePendingAction("outfit_photo")
 	b.state.OutfitConfirmed = true
 	b.state.DailyOutfitPhotoURL = outfitPhotoURL
 
@@ -3897,4 +3990,5 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 		"✅ *OUTFIT DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
 		stripMarkdown(b.state.DailyOutfitComment),
 	))
+	b.promptNextPendingAction()
 }
