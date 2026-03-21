@@ -27,55 +27,54 @@ func NewDB(path string) (*DB, error) {
 		return nil, fmt.Errorf("error en migración: %w", err)
 	}
 
-	// Columnas añadidas en migraciones posteriores (ignora error si ya existen)
-	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN photo_url TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN result TEXT DEFAULT 'pending'`)
-	db.conn.Exec(`ALTER TABLE chaster_tasks ADD COLUMN resolved_at DATETIME`)
-	db.conn.Exec(`ALTER TABLE toys ADD COLUMN photo_public_id TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE orgasm_log RENAME TO permission_log`)
-	db.conn.Exec(`ALTER TABLE orgasm_events RENAME TO orgasm_log`)
-	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN outcome TEXT DEFAULT ''`)
-	// Si orgasm_log tiene schema viejo (user_message NOT NULL), recrear con schema correcto
-	var hasUserMessage int
-	db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orgasm_log') WHERE name='user_message'`).Scan(&hasUserMessage)
-	if hasUserMessage > 0 {
-		log.Println("[migrate] recreando orgasm_log con schema correcto...")
-		db.conn.Exec(`CREATE TABLE IF NOT EXISTS orgasm_log_v2 (
-			id                  TEXT PRIMARY KEY,
-			created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
-			method              TEXT DEFAULT '',
-			toy_id              TEXT DEFAULT '',
-			toy_name            TEXT DEFAULT '',
-			permitted           INTEGER DEFAULT 1,
-			permission_outcome  TEXT DEFAULT 'granted_cum',
-			streak_at_time      INTEGER DEFAULT 0,
-			days_locked         INTEGER DEFAULT 0
-		)`)
-		db.conn.Exec(`INSERT OR IGNORE INTO orgasm_log_v2
-			SELECT id, created_at, COALESCE(method,''), COALESCE(toy_id,''), COALESCE(toy_name,''),
-			       COALESCE(permitted,1), COALESCE(permission_outcome,'granted_cum'),
-			       COALESCE(streak_at_time,0), COALESCE(days_locked,0)
-			FROM orgasm_log`)
-		db.conn.Exec(`DROP TABLE orgasm_log`)
-		db.conn.Exec(`ALTER TABLE orgasm_log_v2 RENAME TO orgasm_log`)
-		log.Println("[migrate] orgasm_log recreada correctamente")
-	}
-	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN verification_code TEXT DEFAULT ''`)
-
 	log.Println("✅ Base de datos iniciada")
 	return db, nil
 }
 
+// migrate aplica todas las migraciones pendientes en orden.
+// Cada migración se ejecuta exactamente una vez y se registra en schema_version.
 func (db *DB) migrate() error {
+	db.conn.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)`)
+
+	var version int
+	db.conn.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&version)
+
+	migrations := []struct {
+		version int
+		label   string
+		fn      func() error
+	}{
+		{1, "schema base", db.migrateV1},
+		{2, "fix orgasm_log + columnas faltantes", db.migrateV2},
+	}
+
+	for _, m := range migrations {
+		if version >= m.version {
+			continue
+		}
+		log.Printf("[migrate] aplicando v%d: %s", m.version, m.label)
+		if err := m.fn(); err != nil {
+			return fmt.Errorf("migration v%d (%s): %w", m.version, m.label, err)
+		}
+		db.conn.Exec(`INSERT INTO schema_version (version) VALUES (?)`, m.version)
+		version = m.version
+		log.Printf("[migrate] v%d aplicada ✓", m.version)
+	}
+	return nil
+}
+
+// migrateV1 crea todas las tablas base con el schema limpio y definitivo.
+func (db *DB) migrateV1() error {
 	_, err := db.conn.Exec(`
 	CREATE TABLE IF NOT EXISTS toys (
-		id          TEXT PRIMARY KEY,
-		name        TEXT NOT NULL,
-		description TEXT,
-		photo_url   TEXT,
-		type        TEXT DEFAULT 'other',
-		in_use      INTEGER DEFAULT 0,
-		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		description    TEXT DEFAULT '',
+		photo_url      TEXT DEFAULT '',
+		photo_public_id TEXT DEFAULT '',
+		type           TEXT DEFAULT 'other',
+		in_use         INTEGER DEFAULT 0,
+		created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS locks (
@@ -95,7 +94,7 @@ func (db *DB) migrate() error {
 		id            TEXT PRIMARY KEY,
 		lock_id       TEXT REFERENCES locks(id),
 		description   TEXT NOT NULL,
-		photo_url     TEXT,
+		photo_url     TEXT DEFAULT '',
 		assigned_at   DATETIME NOT NULL,
 		due_at        DATETIME NOT NULL,
 		completed_at  DATETIME,
@@ -114,66 +113,80 @@ func (db *DB) migrate() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS clothing (
-		id          TEXT PRIMARY KEY,
-		name        TEXT NOT NULL,
-		description TEXT,
-		photo_url   TEXT,
-		type        TEXT DEFAULT 'other',
-		added_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+		id              TEXT PRIMARY KEY,
+		name            TEXT NOT NULL,
+		description     TEXT DEFAULT '',
+		photo_url       TEXT DEFAULT '',
+		photo_public_id TEXT DEFAULT '',
+		type            TEXT DEFAULT 'other',
+		added_at        DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS outfit_log (
-		id           TEXT PRIMARY KEY,
-		date         TEXT NOT NULL,
-		outfit_desc  TEXT NOT NULL,
-		pose_desc    TEXT DEFAULT '',
-		photo_url    TEXT DEFAULT '',
-		comment      TEXT DEFAULT '',
-		created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+		id          TEXT PRIMARY KEY,
+		date        TEXT NOT NULL,
+		outfit_desc TEXT NOT NULL,
+		pose_desc   TEXT DEFAULT '',
+		photo_url   TEXT DEFAULT '',
+		comment     TEXT DEFAULT '',
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS events (
-		id              TEXT PRIMARY KEY,
-		lock_id         TEXT REFERENCES locks(id),
-		type            TEXT NOT NULL,
+		id               TEXT PRIMARY KEY,
+		lock_id          TEXT REFERENCES locks(id),
+		type             TEXT NOT NULL,
 		duration_minutes INTEGER DEFAULT 0,
-		triggered_at    DATETIME NOT NULL,
-		resolved_at     DATETIME,
-		negotiated      INTEGER DEFAULT 0
+		triggered_at     DATETIME NOT NULL,
+		resolved_at      DATETIME,
+		negotiated       INTEGER DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS negotiations (
-		id              TEXT PRIMARY KEY,
-		lock_id         TEXT REFERENCES locks(id),
-		request         TEXT NOT NULL,
-		decision        TEXT NOT NULL,
-		time_delta_hours INTEGER DEFAULT 0,
-		created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE IF NOT EXISTS permission_log (
 		id               TEXT PRIMARY KEY,
-		granted          INTEGER NOT NULL DEFAULT 0,
-		user_message     TEXT NOT NULL,
-		senor_response   TEXT NOT NULL,
-		condition_text   TEXT DEFAULT '',
-		streak_at_time   INTEGER DEFAULT 0,
-		days_locked      INTEGER DEFAULT 0,
+		lock_id          TEXT REFERENCES locks(id),
+		request          TEXT NOT NULL,
+		decision         TEXT NOT NULL,
+		time_delta_hours INTEGER DEFAULT 0,
 		created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS permission_log (
+		id             TEXT PRIMARY KEY,
+		granted        INTEGER NOT NULL DEFAULT 0,
+		outcome        TEXT DEFAULT '',
+		user_message   TEXT DEFAULT '',
+		senor_response TEXT DEFAULT '',
+		condition_text TEXT DEFAULT '',
+		streak_at_time INTEGER DEFAULT 0,
+		days_locked    INTEGER DEFAULT 0,
+		created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS orgasm_log (
+		id                 TEXT PRIMARY KEY,
+		created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+		method             TEXT DEFAULT '',
+		toy_id             TEXT DEFAULT '',
+		toy_name           TEXT DEFAULT '',
+		permitted          INTEGER DEFAULT 1,
+		permission_outcome TEXT DEFAULT 'granted_cum',
+		streak_at_time     INTEGER DEFAULT 0,
+		days_locked        INTEGER DEFAULT 0
+	);
+
 	CREATE TABLE IF NOT EXISTS session_state (
-		id                      TEXT PRIMARY KEY DEFAULT 'current',
-		tasks_streak            INTEGER DEFAULT 0,
-		tasks_completed         INTEGER DEFAULT 0,
-		tasks_failed            INTEGER DEFAULT 0,
-		total_time_added_hours  INTEGER DEFAULT 0,
+		id                       TEXT PRIMARY KEY DEFAULT 'current',
+		tasks_streak             INTEGER DEFAULT 0,
+		tasks_completed          INTEGER DEFAULT 0,
+		tasks_failed             INTEGER DEFAULT 0,
+		total_time_added_hours   INTEGER DEFAULT 0,
 		total_time_removed_hours INTEGER DEFAULT 0,
-		weekly_debt             INTEGER DEFAULT 0,
-		weekly_debt_details     TEXT DEFAULT '[]',
-		last_judgment_date      TEXT DEFAULT '',
-		current_lock_id         TEXT DEFAULT '',
-		updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
+		weekly_debt              INTEGER DEFAULT 0,
+		weekly_debt_details      TEXT DEFAULT '[]',
+		last_judgment_date       TEXT DEFAULT '',
+		current_lock_id          TEXT DEFAULT '',
+		updated_at               DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS contracts (
@@ -184,12 +197,13 @@ func (db *DB) migrate() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS checkins (
-		id               TEXT PRIMARY KEY,
-		lock_id          TEXT DEFAULT '',
-		requested_at     DATETIME NOT NULL,
-		responded_at     DATETIME,
-		photo_url        TEXT DEFAULT '',
-		status           TEXT DEFAULT 'pending',
+		id                 TEXT PRIMARY KEY,
+		lock_id            TEXT DEFAULT '',
+		requested_at       DATETIME NOT NULL,
+		responded_at       DATETIME,
+		photo_url          TEXT DEFAULT '',
+		verification_code  TEXT DEFAULT '',
+		status             TEXT DEFAULT 'pending',
 		response_time_mins INTEGER DEFAULT 0
 	);
 
@@ -220,20 +234,58 @@ func (db *DB) migrate() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS orgasm_log (
-		id                  TEXT PRIMARY KEY,
-		created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
-		method              TEXT NOT NULL,
-		toy_id              TEXT DEFAULT '',
-		toy_name            TEXT DEFAULT '',
-		permitted           INTEGER DEFAULT 1,
-		permission_outcome  TEXT DEFAULT 'granted_cum',
-		streak_at_time      INTEGER DEFAULT 0,
-		days_locked         INTEGER DEFAULT 0
-	);
-
+	CREATE INDEX IF NOT EXISTS idx_tasks_assigned_at       ON tasks(assigned_at);
+	CREATE INDEX IF NOT EXISTS idx_permission_log_created  ON permission_log(created_at);
+	CREATE INDEX IF NOT EXISTS idx_orgasm_log_created      ON orgasm_log(created_at);
+	CREATE INDEX IF NOT EXISTS idx_checkins_requested_at   ON checkins(requested_at);
+	CREATE INDEX IF NOT EXISTS idx_chat_history_created    ON chat_history(created_at);
+	CREATE INDEX IF NOT EXISTS idx_violations_log_created  ON violations_log(created_at);
 	`)
 	return err
+}
+
+// migrateV2 corrige el schema de producción — tablas renombradas y columnas faltantes.
+func (db *DB) migrateV2() error {
+	// Renombrar tablas legacy si aún existen con nombres viejos
+	db.conn.Exec(`ALTER TABLE orgasm_log RENAME TO permission_log`)
+	db.conn.Exec(`ALTER TABLE orgasm_events RENAME TO orgasm_log`)
+
+	// Columnas faltantes en tablas existentes (falla silencioso si ya existen)
+	db.conn.Exec(`ALTER TABLE toys ADD COLUMN photo_public_id TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE clothing ADD COLUMN photo_public_id TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN outcome TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE permission_log ALTER COLUMN user_message SET DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE permission_log ALTER COLUMN senor_response SET DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN verification_code TEXT DEFAULT ''`)
+
+	// Si orgasm_log tiene schema viejo de permisos (user_message NOT NULL), recrear
+	var hasUserMessage int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orgasm_log') WHERE name='user_message'`).Scan(&hasUserMessage)
+	if hasUserMessage > 0 {
+		log.Println("[migrateV2] recreando orgasm_log con schema correcto...")
+		db.conn.Exec(`CREATE TABLE IF NOT EXISTS orgasm_log_new (
+			id                 TEXT PRIMARY KEY,
+			created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+			method             TEXT DEFAULT '',
+			toy_id             TEXT DEFAULT '',
+			toy_name           TEXT DEFAULT '',
+			permitted          INTEGER DEFAULT 1,
+			permission_outcome TEXT DEFAULT 'granted_cum',
+			streak_at_time     INTEGER DEFAULT 0,
+			days_locked        INTEGER DEFAULT 0
+		)`)
+		db.conn.Exec(`INSERT OR IGNORE INTO orgasm_log_new
+			SELECT id, created_at,
+			       COALESCE(method,''), COALESCE(toy_id,''), COALESCE(toy_name,''),
+			       COALESCE(permitted,1), COALESCE(permission_outcome,'granted_cum'),
+			       COALESCE(streak_at_time,0), COALESCE(days_locked,0)
+			FROM orgasm_log`)
+		db.conn.Exec(`DROP TABLE orgasm_log`)
+		db.conn.Exec(`ALTER TABLE orgasm_log_new RENAME TO orgasm_log`)
+		db.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_orgasm_log_created ON orgasm_log(created_at)`)
+	}
+
+	return nil
 }
 
 // ── Toys ──────────────────────────────────────────────────────────────────
