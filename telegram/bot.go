@@ -21,6 +21,13 @@ import (
 	"chaster-keyholder/storage"
 )
 
+// Bot es el controlador principal. Contiene toda la lógica de Telegram,
+// el estado en memoria, y los clientes de servicios externos.
+//
+// Concurrencia: el scheduler corre jobs en goroutines separadas. Para evitar
+// condiciones de carrera sobre b.state, todos los accesos deben ir bajo handlerMu
+// (los jobs via WithLock, el loop de mensajes lo adquiere en handleUpdate).
+// stateMu protege solo las escrituras atómicas de saveState y el caché de días.
 type Bot struct {
 	api        *tgbotapi.BotAPI
 	chatID     int64
@@ -31,25 +38,35 @@ type Bot struct {
 	db         *storage.DB
 	cloudinary *storage.CloudinaryClient
 
-	// Rate limiting
+	// Rate limiting del chat libre — evita spam de requests a la IA
 	lastChatTime time.Time
 	chatMu       sync.Mutex
 
-	// Protección de escrituras concurrentes al estado
+	// Protege las escrituras atómicas a saveState() y el caché de días.
+	// NO protege lecturas/escrituras generales de b.state — eso es handlerMu.
 	stateMu sync.Mutex
 
 	// Serializa el handler de mensajes con las goroutines del scheduler.
-	// Se adquiere antes de procesar cualquier update o ejecutar cualquier job.
+	// Se adquiere antes de procesar cualquier update (handleUpdate) o ejecutar
+	// cualquier job del scheduler (via WithLock). Garantiza acceso exclusivo a b.state.
 	handlerMu sync.Mutex
 
-	// Caché de días encerrada (evita llamadas repetidas a la API)
+	// Caché de días encerrada — válido por 5 minutos para evitar llamadas
+	// repetidas a la API de Chaster en cada mensaje del scheduler.
 	cachedDaysLocked   int
 	cachedDaysLockedAt time.Time
 
-	// Estado de UI transitorio — no se persiste entre reinicios
-	pendingActions []string // cola priorizada; [0] es la acción activa
-	pendingToyHint string
+	// pendingActions es una cola priorizada de acciones de foto/mensaje pendientes.
+	// [0] es la acción activa. Las acciones "efímeras" (new_toy, selecting_cage)
+	// se insertan al frente; las "persistentes" (ritual_photo, plug_photo, etc.)
+	// se insertan según pendingActionPriority y se reconstruyen al reiniciar.
+	// NO se persiste en state.json — se reconstruye en NewBot() desde los flags del estado.
+	pendingActions []string
 
+	// pendingToyHint guarda el nombre hint de /toys add [nombre]. Se pasa a DescribeToy()
+	// para que la IA tenga una base al identificar el juguete en la foto.
+	// Se limpia inmediatamente después de usarse en HandleToyPhoto().
+	pendingToyHint string
 }
 
 // pendingActionPriority define el orden de prioridad de las acciones persistentes de foto.
@@ -177,6 +194,15 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 
 // ── Estado ─────────────────────────────────────────────────────────────────
 
+// loadState carga el estado desde state.json con fallback a la DB.
+// Estrategia de recuperación:
+//  1. Lee state.json → si falla o JSON inválido, carga todo desde DB
+//  2. Si state.json tiene contadores en cero (TasksStreak==0 && TasksCompleted==0),
+//     restaura los contadores críticos desde session_state en DB (protección contra
+//     un state.json recién creado o importado sin historial)
+//
+// Los juguetes SIEMPRE se cargan desde DB en NewBot(), independientemente de lo
+// que diga state.json, ya que la DB es la fuente de verdad para los toys.
 func (b *Bot) loadState() *models.AppState {
 	data, err := os.ReadFile(b.statePath)
 	if err != nil {
@@ -234,7 +260,8 @@ func (b *Bot) loadStateFromDB() *models.AppState {
 	return s
 }
 
-// saveState guarda el estado usando write atómico para evitar corrupción
+// saveState serializa AppState a state.json usando escritura atómica (write a .tmp + rename).
+// El rename es atómico en Linux, garantizando que nunca se lea un archivo parcialmente escrito.
 func (b *Bot) saveState() error {
 	data, err := json.MarshalIndent(b.state, "", "  ")
 	if err != nil {
@@ -566,6 +593,15 @@ func (b *Bot) HandleTaskWithLevel(args string) {
 	b.handleTaskInternal(level)
 }
 
+// handleTaskInternal genera y asigna una nueva tarea. Si forcedLevel == 0, la intensidad
+// se calcula automáticamente por días encerrada (GetIntensity). De lo contrario usa
+// el nivel forzado (desde /order).
+//
+// Penalización por fallo: 1 + int(intensity) horas.
+// Escala: suave(1)=2h, moderada(2)=3h, intensa(3)=4h, máxima(4)=5h.
+//
+// La tarea tiene un plazo de 1 hora desde la asignación. Si no se completa antes
+// de las 22:00, SendNightStatus aplica la penalización automáticamente.
 func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 	if b.state.CurrentTask != nil && !b.state.CurrentTask.Completed && !b.state.CurrentTask.Failed {
 		awaiting := ""
@@ -639,6 +675,16 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 	))
 }
 
+// HandlePhoto procesa la foto de evidencia de una tarea activa.
+// NO realiza verificación por IA — la foto se acepta incondicionalmente.
+// Esto es intencional: la verificación por IA (VerifyTaskPhoto) fue retirada
+// porque el modelo de visión no reconocía con fiabilidad poses, ropa y posiciones
+// complejas, generando demasiados rechazos falsos. La foto se archiva en Cloudinary
+// como evidencia histórica (visible en /history y la galería web).
+//
+// NOTA: Esta función solo se llama cuando NO hay ninguna pendingAction activa en la cola.
+// Si hay acciones pendientes (plug_photo, checkin_photo, etc.), el dispatcher de
+// handleUpdate las procesa primero antes de llegar aquí.
 func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 	if b.state.CurrentTask == nil || b.state.CurrentTask.Completed || b.state.CurrentTask.Failed {
 		b.Send("No hay tarea activa esperando evidencia.")
@@ -1193,9 +1239,27 @@ func (b *Bot) handleContractViolation(v *ai.ChatViolation) {
 	}
 }
 
-// rollOrgasmOutcome decide el resultado usando la tabla de probabilidades.
+// rollOrgasmOutcome decide el resultado del permiso de orgasmo usando una tabla de probabilidades.
 // Outcomes: "denied", "edge", "granted_toys", "granted_cum"
-// daysSinceLastOrgasm: días desde el último orgasmo REAL reportado (999 = nunca)
+//
+// La probabilidad depende de dos ejes:
+//   - streak (TasksStreak): puntos de obediencia acumulados — más puntos = más fácil
+//   - daysSinceLastOrgasm: días desde el último orgasmo reportado con /came
+//
+// Tabla resumida (denied/edge/toys/cum %):
+//   streak<4:              85/10/5/0   — casi siempre denegado
+//   streak 4-8, <5 días:   55/35/8/2
+//   streak 4-8, <10 días:  30/40/20/10
+//   streak 4-8, 10+ días:  15/40/25/20
+//   streak 9-14, <5 días:  40/40/15/5
+//   streak 9-14, <10 días: 10/40/30/20
+//   streak 9-14, 10+ días: 3/27/30/40
+//   streak 15+, <5 días:   30/40/20/10
+//   streak 15+, <10 días:  5/30/30/35
+//   streak 15+, 10+ días:  2/20/25/53 — más de la mitad de las veces concedido
+//
+// Boost por consecutiveDenials: si lleva 3+ rechazos seguidos, se transfieren
+// probabilidades de "denied" hacia "edge" y "granted". 5+ rechazos = boost mayor.
 func rollOrgasmOutcome(streak, daysSinceLastOrgasm, consecutiveDenials int) string {
 	type probs struct{ denied, edge, grantedToys, grantedCum int }
 	var p probs
@@ -1247,6 +1311,9 @@ func rollOrgasmOutcome(streak, daysSinceLastOrgasm, consecutiveDenials int) stri
 	return "granted_cum"
 }
 
+// orgasmCooldownHours devuelve el tiempo de espera mínimo antes de poder pedir
+// permiso de orgasmo de nuevo, según el último resultado.
+// Evita que Jolie pida repetidamente tras una denegación.
 func orgasmCooldownHours(lastOutcome string) time.Duration {
 	switch lastOutcome {
 	case "granted_cum":
@@ -2872,6 +2939,9 @@ func (b *Bot) addWeeklyDebt(detail string) {
 	b.mustSaveState()
 }
 
+// cotLocation es la zona horaria Colombia (UTC-5, sin cambio de horario de verano).
+// Todas las fechas del bot usan COT: todayStr(), comparaciones de fecha de tareas,
+// ritual, plug, ruleta, etc. Los timestamps de la DB se guardan en UTC.
 var cotLocation = func() *time.Location {
 	loc, err := time.LoadLocation("America/Bogota")
 	if err != nil {
@@ -2880,6 +2950,8 @@ var cotLocation = func() *time.Location {
 	return loc
 }()
 
+// todayStr devuelve la fecha actual en COT como "2006-01-02".
+// Se usa como clave de deduplicación para tareas, plug, ritual, ruleta y outfit.
 func todayStr() string {
 	return time.Now().In(cotLocation).Format("2006-01-02")
 }

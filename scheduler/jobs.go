@@ -10,6 +10,29 @@ import (
 	"chaster-keyholder/telegram"
 )
 
+// Start registra todos los jobs del scheduler y arranca el loop de check-ins.
+// TODOS los horarios son en COT (Colombia, UTC-5). El servidor puede estar en
+// cualquier zona horaria — gocron usa la zona del sistema, pero el código en bot.go
+// usa cotLocation explícitamente para comparaciones de fecha.
+//
+// Resumen de jobs:
+//   08:00 — status matutino + mensaje de Papi
+//   08:30 — ritual matutino (foto de jaula + mensaje escrito)
+//   08:45 — asignación de plug del día
+//   09:00 — tarea diaria
+//   10:00 — outfit del día + mensaje de condicionamiento
+//   11:00 — expiración del ritual (penaliza si no se completó)
+//   12:00, 16:00, 20:00 — mensajes random de condicionamiento
+//   14:00 — mensaje de condicionamiento
+//   18:00 — ruleta diaria
+//   22:00 — status nocturno + penalización si tarea no completada
+//   23:00 — decay de obediencia (si 2+ días sin tarea, ConsecutiveDays = 0)
+//   cada 1 min  — check si el lock terminó (CheckLockFinished)
+//   cada 5 min  — expiración de eventos activos, check-ins, recordatorio de plug
+//   cada 15 min — voto comunitario de tareas de Chaster
+//   cada 30 min (8-22h) — eventos random (freeze, hidetime, pillory, etc.)
+//   domingos 21:00 — juicio semanal (WeeklyDebt → consecuencias)
+//   intervalo aleatorio (45min-3h, 8-23h) — check-ins espontáneos (goroutine separada)
 func Start(bot *telegram.Bot) {
 	s, err := gocron.NewScheduler()
 	if err != nil {

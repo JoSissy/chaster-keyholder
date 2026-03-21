@@ -135,6 +135,9 @@ type ChatViolation struct {
 	Minutes    int    `json:"minutes"`
 }
 
+// chatMessages envía una conversación completa (historial de mensajes) a la API de Groq.
+// Se usa para el chat libre con Jolie, donde se pasa todo el historial para dar contexto.
+// A diferencia de chat(), aquí el llamador controla los roles y el orden de los mensajes.
 func (c *Client) chatMessages(model string, messages []Message, maxTokens int) (string, error) {
 	req := ChatRequest{
 		Model:       model,
@@ -163,6 +166,9 @@ func (c *Client) chatMessages(model string, messages []Message, maxTokens int) (
 	return chatResp.Choices[0].Message.Content, nil
 }
 
+// chat envía un único intercambio system+user a la API de Groq.
+// Se usa para todos los prompts "de una sola vuelta": generar tareas, mensajes,
+// verificar fotos, etc. userContent puede ser string o []contentPart (para visión).
 func (c *Client) chat(model, systemPrompt string, userContent interface{}) (string, error) {
 	req := ChatRequest{
 		Model: model,
@@ -409,14 +415,15 @@ Be specific and practical. No beating around the bush.`,
 	return c.chat("llama-3.3-70b-versatile", system, prompt)
 }
 
-// GenerateTaskAccepted generates a condescending acknowledgment when a task photo is accepted.
+// GenerateTaskAccepted generates a lewd, possessive reaction to seeing Jolie's photo.
 func (c *Client) GenerateTaskAccepted(toys []models.Toy, daysLocked int) (string, error) {
 	ctx := buildContext(toys, daysLocked)
 	prompt := fmt.Sprintf(
-		`%s Jolie completed her task and submitted the photo evidence.
-As Papi, acknowledge it with cold, possessive satisfaction — she did what she was told, nothing more.
-She is not praised, she is confirmed: this is what she is for.
-Reference that she belongs to you — her compliance is not a choice, it's her nature. Use a nickname. Maximum 2 lines. In Spanish.`,
+		`%s Jolie just sent a photo of herself.
+As Papi, react to seeing her — raw, perverted, possessive. You like what you see and you make her feel it.
+Focus entirely on how she looks, her body, the cage, how pathetically desirable she is locked up like that.
+Do NOT mention any task, assignment, or that she "completed" anything.
+Be explicit, degenerate, and brief — 1 or 2 short sentences max. In Spanish. Use a degrading nickname.`,
 		ctx,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -581,7 +588,9 @@ Devuelve SOLO el texto del contrato, sin JSON, sin explicación. Solo las cláus
 	return strings.TrimSpace(resp), nil
 }
 
-// extractJSON extracts the first valid JSON block from a string
+// extractJSON extrae el primer bloque JSON válido de una respuesta de la IA.
+// Necesario porque los modelos de lenguaje a veces envuelven el JSON en bloques
+// de código markdown (```json ... ```) o añaden texto antes/después del objeto.
 func extractJSON(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "```json")

@@ -64,6 +64,29 @@ func (db *DB) migrate() error {
 }
 
 // migrateV1 crea todas las tablas base con el schema limpio y definitivo.
+//
+// Descripción de tablas:
+//   toys             — juguetes registrados (jaulas, plugs, vibradores, etc.)
+//   locks            — historial de sesiones de castidad (una fila por sesión)
+//   tasks            — tareas diarias asignadas (foto_url = evidencia en Cloudinary)
+//   chaster_tasks    — tareas comunitarias de Chaster (verificadas por la comunidad, no por IA)
+//   clothing         — prendas del guardarropa de Jolie
+//   outfit_log       — registro de outfits diarios asignados con foto aprobada
+//   events           — eventos random ejecutados (freeze, hidetime, pillory)
+//   negotiations     — historial de negociaciones de tiempo (/removetime)
+//   permission_log   — historial de solicitudes de permiso de orgasmo con resultado
+//   orgasm_log       — orgasmos reportados con /came (method, toy usado, si era permitido)
+//   session_state    — copia de seguridad de contadores críticos (espejo de AppState)
+//                      solo tiene UNA fila con id='current'
+//   contracts        — contratos generados al inicio de cada sesión (/contract)
+//   contract_rules   — reglas individuales del contrato activo con su castigo asociado
+//   checkins         — historial de check-ins espontáneos (verification_code, tiempo respuesta)
+//   chat_history     — historial de conversación del chat libre con Papi (para contexto)
+//   violations_log   — infracciones al contrato detectadas por la IA en el chat libre
+//   schema_version   — tabla de control de migraciones (una fila por migración aplicada)
+//
+// Todos los timestamps se guardan en UTC. Las comparaciones de "hoy" se hacen
+// en COT (cotLocation) en bot.go antes de persistir.
 func (db *DB) migrateV1() error {
 	_, err := db.conn.Exec(`
 	CREATE TABLE IF NOT EXISTS toys (
@@ -245,6 +268,12 @@ func (db *DB) migrateV1() error {
 }
 
 // migrateV2 corrige el schema de producción — tablas renombradas y columnas faltantes.
+// Contexto: en la versión inicial se usó "orgasm_log" para permisos y "orgasm_events"
+// para registros reales. Se renombraron a permission_log y orgasm_log respectivamente.
+// NOTA: las sentencias ALTER COLUMN son ignoradas silenciosamente por SQLite
+// (no las soporta), pero no causan error porque Exec() descarta el return value.
+// El efecto neto es que las columnas existentes mantienen sus constraints originales,
+// lo cual es aceptable porque migrateV1 ya las crea con DEFAULT '' correcto.
 func (db *DB) migrateV2() error {
 	// Renombrar tablas legacy si aún existen con nombres viejos
 	db.conn.Exec(`ALTER TABLE orgasm_log RENAME TO permission_log`)

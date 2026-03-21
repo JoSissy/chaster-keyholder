@@ -118,80 +118,149 @@ func GetObedienceLevelFromPoints(points int) int {
 	}
 }
 
-// AppState estado en memoria — se sincroniza con la DB periódicamente
+// AppState es el estado central del bot. Se persiste en dos lugares:
+//   - state.json (primario, escritura atómica via archivo temporal)
+//   - tabla session_state en SQLite (respaldo de contadores críticos)
+//
+// Al arrancar, loadState() lee state.json; si los contadores están en cero,
+// los restaura desde la DB. Si state.json no existe o está corrupto, carga todo desde DB.
+//
+// IMPORTANTE: pendingActions y pendingToyHint NO se persisten — son estado transitorio
+// de UI que se reconstruye en NewBot() a partir de los flags del estado.
 type AppState struct {
-	CurrentTask           *Task        `json:"current_task,omitempty"`
-	TotalTimeAddedHours   int          `json:"total_time_added_hours"`
-	TotalTimeRemovedHours int          `json:"total_time_removed_hours"`
-	DaysLocked            int          `json:"days_locked"`
-	Toys                  []Toy        `json:"toys"`
-	AwaitingLockPhoto     bool         `json:"awaiting_lock_photo"`
-	CurrentLockID         string       `json:"current_lock_id"`
-	ManualDurationSeconds int          `json:"manual_duration_seconds"`
-	TasksCompleted        int          `json:"tasks_completed"`
-	TasksFailed           int          `json:"tasks_failed"`
-	ActiveEvent           *ActiveEvent `json:"active_event,omitempty"`
-	TasksStreak           int          `json:"tasks_streak"`
+	// Tarea activa del día. nil si no hay tarea asignada todavía.
+	CurrentTask *Task `json:"current_task,omitempty"`
 
-	// Ritual matutino
-	LastRitualDate string `json:"last_ritual_date"` // "2006-01-02" COT
-	RitualStep     int    `json:"ritual_step"`       // 0=none/done, 1=awaiting photo, 2=awaiting message
+	// Tiempo total añadido/quitado a la condena durante esta sesión (en horas).
+	TotalTimeAddedHours   int `json:"total_time_added_hours"`
+	TotalTimeRemovedHours int `json:"total_time_removed_hours"`
 
-	// Fechas del lock activo (sincronizadas desde Chaster al arrancar)
+	// Cache local de días encerrada — actualizado por daysLocked() cada 5 minutos.
+	DaysLocked int `json:"days_locked"`
+
+	// Lista de juguetes registrados. Siempre cargada desde DB en NewBot().
+	Toys []Toy `json:"toys"`
+
+	// true mientras se espera la foto de confirmación del lock inicial (/newlock).
+	AwaitingLockPhoto bool `json:"awaiting_lock_photo"`
+
+	// ID del lock activo en Chaster (string _id de la API).
+	CurrentLockID string `json:"current_lock_id"`
+
+	// Duración manual de /newlock [duración]. Si > 0, se usa en lugar de dejar
+	// que la IA decida. Se limpia a 0 inmediatamente después de crear el lock.
+	// Formato: segundos. Ejemplo: "/newlock 2 días" → 172800.
+	ManualDurationSeconds int `json:"manual_duration_seconds"`
+
+	// Contadores de tareas completadas y falladas en esta sesión.
+	TasksCompleted int `json:"tasks_completed"`
+	TasksFailed    int `json:"tasks_failed"`
+
+	// Evento random activo (freeze o hidetime). nil si no hay evento activo.
+	ActiveEvent *ActiveEvent `json:"active_event,omitempty"`
+
+	// TasksStreak es un ACUMULADOR DE PUNTOS DE OBEDIENCIA, no un streak tradicional.
+	// Sube: +1 por tarea completada (o +2 si lleva 8+ días encerrada),
+	//       +3 bonus cada 7 días consecutivos de tareas,
+	//       +1 cada 2 confirmaciones de plug (vía PlugBonusAccum).
+	// Baja: -3 al fallar una tarea, -1 al no confirmar un edge a tiempo.
+	// Nunca resetea a 0 completamente — es un total histórico que determina
+	// el título de obediencia (ObedienceTitle) y la probabilidad de orgasmo (rollOrgasmOutcome).
+	TasksStreak int `json:"tasks_streak"`
+
+	// ── Ritual matutino ──────────────────────────────────────────────────────
+	// Cada día a las 8:30 AM se lanza el ritual. Flujo: foto de jaula → mensaje escrito.
+	LastRitualDate string `json:"last_ritual_date"` // "2006-01-02" COT — evita repetir el ritual el mismo día
+	RitualStep     int    `json:"ritual_step"`       // 0=sin iniciar/completado, 1=esperando foto, 2=esperando mensaje
+
+	// ── Fechas del lock activo ───────────────────────────────────────────────
+	// Sincronizadas desde la API de Chaster al arrancar el bot.
 	LockEndDate   *time.Time `json:"lock_end_date,omitempty"`
 	LockStartDate *time.Time `json:"lock_start_date,omitempty"`
 
-	// Outfit diario
+	// ── Outfit diario ────────────────────────────────────────────────────────
+	// Asignado como parte del ritual matutino (scheduler). La foto se verifica via IA.
 	DailyOutfitDesc     string `json:"daily_outfit_desc"`
 	DailyOutfitDate     string `json:"daily_outfit_date"` // "2006-01-02" COT
 	DailyPoseDesc       string `json:"daily_pose_desc"`
-	DailyOutfitPhotoURL string `json:"daily_outfit_photo_url"`
+	DailyOutfitPhotoURL string `json:"daily_outfit_photo_url"` // URL en Cloudinary tras aprobación
 	OutfitConfirmed     bool   `json:"outfit_confirmed"`
-	DailyOutfitComment  string `json:"daily_outfit_comment"` // comentario de Papi al aprobar
+	DailyOutfitComment  string `json:"daily_outfit_comment"` // comentario de Papi al aprobar la foto
 
-	// Control de plug diario
-	AssignedPlugID   string `json:"assigned_plug_id"`
+	// ── Plug diario ──────────────────────────────────────────────────────────
+	// A las 8:45 AM se asigna un plug aleatorio de los juguetes tipo "plug".
+	// La foto es verificada por IA (VerifyPlugPhoto).
+	AssignedPlugID   string `json:"assigned_plug_id"`   // ID del toy asignado
 	AssignedPlugDate string `json:"assigned_plug_date"` // "2006-01-02" COT
 	PlugConfirmed    bool   `json:"plug_confirmed"`
-	PlugReminderDate  string `json:"plug_reminder_date"`  // "2006-01-02" COT — evita recordatorios duplicados
+	PlugReminderDate string `json:"plug_reminder_date"` // "2006-01-02" COT — evita recordatorios duplicados por día
 
-	// Check-ins espontáneos
-	PendingCheckin           bool       `json:"pending_checkin"`
-	CheckinExpiresAt         *time.Time `json:"checkin_expires_at,omitempty"`
-	CheckinReminderSent      bool       `json:"checkin_reminder_sent"`
-	CurrentCheckinID         string     `json:"current_checkin_id,omitempty"`
-	CheckinVerificationCode  string     `json:"checkin_verification_code,omitempty"`
+	// ── Check-ins espontáneos ────────────────────────────────────────────────
+	// Disparados por el scheduler (11:00 y 15:00 COT, aleatoriamente).
+	// Jolie tiene 30 minutos para mandar una foto de la jaula.
+	// La foto se sube directamente a Chaster (verificación comunitaria, no IA).
+	// CheckinVerificationCode es un código de 6 dígitos que debe ser visible en la foto
+	// para que la comunidad de Chaster confirme que es en tiempo real.
+	PendingCheckin          bool       `json:"pending_checkin"`
+	CheckinExpiresAt        *time.Time `json:"checkin_expires_at,omitempty"`
+	CheckinReminderSent     bool       `json:"checkin_reminder_sent"` // true si ya se mandó el aviso de "5 minutos"
+	CurrentCheckinID        string     `json:"current_checkin_id,omitempty"`
+	CheckinVerificationCode string     `json:"checkin_verification_code,omitempty"`
 
-	// Ruleta
+	// ── Ruleta diaria ────────────────────────────────────────────────────────
+	// Disponible una vez por día a las 18:00. Resultados variables (tiempo, evento, etc.).
 	LastRuletaDate string `json:"last_ruleta_date"` // "2006-01-02" COT
 
-	// Edge pendiente
+	// ── Edge pendiente ───────────────────────────────────────────────────────
+	// Cuando rollOrgasmOutcome devuelve "edge", Jolie tiene 30 minutos para
+	// confirmar que lo hizo. EdgeCount acumula edges sin confirmar.
 	EdgePendingAt *time.Time `json:"edge_pending_at,omitempty"`
 	EdgeCount     int        `json:"edge_count,omitempty"`
 
-	// Control de cooldown de orgasmo
+	// ── Cooldown de orgasmo ──────────────────────────────────────────────────
+	// Evita que Jolie pida permiso repetidamente. El cooldown depende del resultado:
+	// granted_cum=24h, granted_toys=8h, edge=4h, denied=6h.
 	LastOrgasmRequestAt *time.Time `json:"last_orgasm_request_at,omitempty"`
-	LastOrgasmOutcome   string     `json:"last_orgasm_outcome,omitempty"` // "denied", "edge", "granted_cum", "granted_toys"
+	LastOrgasmOutcome   string     `json:"last_orgasm_outcome,omitempty"` // "denied" | "edge" | "granted_cum" | "granted_toys"
 
-	// Permiso de cum pendiente (Papi dijo granted_cum, Jolie no ha reportado aún)
+	// Cuando Papi concede un orgasmo real (granted_cum) pero Jolie aún no lo ha
+	// reportado con /came. Se limpia al recibir el reporte.
 	GrantedCumPendingAt *time.Time `json:"granted_cum_pending_at,omitempty"`
 
-	// Obediencia avanzada
-	ConsecutiveDays      int    `json:"consecutive_days"`        // días seguidos con tarea completada
-	PlugBonusAccum       int    `json:"plug_bonus_accum"`        // confirmaciones de plug acumuladas
+	// ── Obediencia avanzada ──────────────────────────────────────────────────
+
+	// Días seguidos con al menos una tarea completada. Se incrementa en HandlePhoto
+	// y se evalúa en CheckObedienceDecay (si pasan 2 días sin tarea, resetea a 0).
+	// Cada 7 días consecutivos otorga +3 puntos de obediencia (TasksStreak).
+	ConsecutiveDays int `json:"consecutive_days"`
+
+	// Acumulador de confirmaciones de plug. Cada 2 confirmaciones exitosas suma
+	// +1 a TasksStreak y resetea a 0. Permite ganar obediencia via plug además
+	// de via tareas, lo que facilita llegar a mejores probabilidades de orgasmo.
+	PlugBonusAccum int `json:"plug_bonus_accum"`
+
 	LastTaskCompletedDate string `json:"last_task_completed_date"` // "2006-01-02" COT
 
-	// Deuda semanal
+	// ── Deuda semanal ────────────────────────────────────────────────────────
+	// WeeklyDebt es un contador simple de infracciones acumuladas desde el último
+	// juicio dominical (domingo 21:00 COT). Cada infracción suma 1.
+	// WeeklyDebtDetails guarda una descripción de cada infracción (para el prompt del juicio).
+	// Se resetean a 0 después del juicio semanal (SendWeeklyJudgment).
+	// Infracciones que suman: tarea fallida, check-in ignorado, plug no confirmado,
+	// ritual ignorado, edge no confirmado, orgasmo sin permiso, tarea comunitaria rechazada.
 	WeeklyDebt        int      `json:"weekly_debt"`
 	WeeklyDebtDetails []string `json:"weekly_debt_details,omitempty"`
 	LastJudgmentDate  string   `json:"last_judgment_date"` // "2006-01-02" COT
 
-	// Tarea comunitaria de Chaster (asignada via extension API, verificada por la comunidad)
-	PendingChasterTask    string     `json:"pending_chaster_task,omitempty"`
-	ChasterTaskSessionID  string     `json:"chaster_task_session_id,omitempty"`
-	ChasterTaskLockID     string     `json:"chaster_task_lock_id,omitempty"`
-	ChasterTaskAssignedAt *time.Time `json:"chaster_task_assigned_at,omitempty"`
-	ChasterTaskDBID       string     `json:"chaster_task_db_id,omitempty"`
+	// ── Tarea comunitaria de Chaster ─────────────────────────────────────────
+	// Asignada via Extensions API. La foto se sube a Chaster y es verificada
+	// por la comunidad (no por IA local). ChasterTaskSessionID es el ID de sesión
+	// de la extensión, necesario para SubmitVerificationPicture.
+	PendingChasterTask    string     `json:"pending_chaster_task,omitempty"`     // descripción de la tarea, vacío si no hay tarea pendiente
+	ChasterTaskSessionID  string     `json:"chaster_task_session_id,omitempty"`  // ID de sesión de extensión para el submit
+	ChasterTaskLockID     string     `json:"chaster_task_lock_id,omitempty"`     // lock al que pertenece
+	ChasterTaskAssignedAt *time.Time `json:"chaster_task_assigned_at,omitempty"` // cuándo se asignó
+	ChasterTaskDBID       string     `json:"chaster_task_db_id,omitempty"`       // ID en la tabla chaster_tasks de la DB local
 }
 
 // ChatMessage un mensaje de la historia de conversación con Papi
@@ -210,7 +279,10 @@ type ContractRule struct {
 	Minutes    int
 }
 
-// GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual
+// GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual.
+// OBSOLETO — esta función usa una escala distinta (0-3, thresholds 3/6/10) a la
+// usada en todo el resto del código (GetObedienceLevelFromPoints, escala 0-4).
+// No se llama desde ningún lugar. Conservada por si se quiere reutilizar.
 func GetObedienceLevel(tasksStreak int) int {
 	switch {
 	case tasksStreak >= 10:
