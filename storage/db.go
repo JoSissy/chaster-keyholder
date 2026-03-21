@@ -35,6 +35,13 @@ func NewDB(path string) (*DB, error) {
 	db.conn.Exec(`ALTER TABLE orgasm_log RENAME TO permission_log`)
 	db.conn.Exec(`ALTER TABLE orgasm_events RENAME TO orgasm_log`)
 	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN outcome TEXT DEFAULT ''`)
+	// Columnas defensivas en orgasm_log (falla silencioso si ya existen)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN toy_id TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN toy_name TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN permitted INTEGER DEFAULT 1`)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN permission_outcome TEXT DEFAULT 'granted_cum'`)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN streak_at_time INTEGER DEFAULT 0`)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN days_locked INTEGER DEFAULT 0`)
 	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN verification_code TEXT DEFAULT ''`)
 
 	log.Println("✅ Base de datos iniciada")

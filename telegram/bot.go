@@ -1444,7 +1444,7 @@ func (b *Bot) HandleCame(args string) {
 
 	// Guardar en orgasm_log
 	if b.db != nil {
-		b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
+		if err := b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
 			Method:            method,
 			ToyID:             toyID,
 			ToyName:           toyName,
@@ -1452,7 +1452,9 @@ func (b *Bot) HandleCame(args string) {
 			PermissionOutcome: permissionOutcome,
 			StreakAtTime:      b.state.TasksStreak,
 			DaysLocked:        b.daysLocked(),
-		})
+		}); err != nil {
+			log.Printf("[HandleCame] SaveOrgasmEntry error: %v", err)
+		}
 	}
 
 	b.mustSaveState()
