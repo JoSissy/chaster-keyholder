@@ -35,14 +35,31 @@ func NewDB(path string) (*DB, error) {
 	db.conn.Exec(`ALTER TABLE orgasm_log RENAME TO permission_log`)
 	db.conn.Exec(`ALTER TABLE orgasm_events RENAME TO orgasm_log`)
 	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN outcome TEXT DEFAULT ''`)
-	// Columnas defensivas en orgasm_log (falla silencioso si ya existen)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN method TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN toy_id TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN toy_name TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN permitted INTEGER DEFAULT 1`)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN permission_outcome TEXT DEFAULT 'granted_cum'`)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN streak_at_time INTEGER DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN days_locked INTEGER DEFAULT 0`)
+	// Si orgasm_log tiene schema viejo (user_message NOT NULL), recrear con schema correcto
+	var hasUserMessage int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orgasm_log') WHERE name='user_message'`).Scan(&hasUserMessage)
+	if hasUserMessage > 0 {
+		log.Println("[migrate] recreando orgasm_log con schema correcto...")
+		db.conn.Exec(`CREATE TABLE IF NOT EXISTS orgasm_log_v2 (
+			id                  TEXT PRIMARY KEY,
+			created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+			method              TEXT DEFAULT '',
+			toy_id              TEXT DEFAULT '',
+			toy_name            TEXT DEFAULT '',
+			permitted           INTEGER DEFAULT 1,
+			permission_outcome  TEXT DEFAULT 'granted_cum',
+			streak_at_time      INTEGER DEFAULT 0,
+			days_locked         INTEGER DEFAULT 0
+		)`)
+		db.conn.Exec(`INSERT OR IGNORE INTO orgasm_log_v2
+			SELECT id, created_at, COALESCE(method,''), COALESCE(toy_id,''), COALESCE(toy_name,''),
+			       COALESCE(permitted,1), COALESCE(permission_outcome,'granted_cum'),
+			       COALESCE(streak_at_time,0), COALESCE(days_locked,0)
+			FROM orgasm_log`)
+		db.conn.Exec(`DROP TABLE orgasm_log`)
+		db.conn.Exec(`ALTER TABLE orgasm_log_v2 RENAME TO orgasm_log`)
+		log.Println("[migrate] orgasm_log recreada correctamente")
+	}
 	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN verification_code TEXT DEFAULT ''`)
 
 	log.Println("✅ Base de datos iniciada")
