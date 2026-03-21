@@ -67,6 +67,7 @@ func Start(bot *telegram.Bot) {
 			bot.WithLock(func() {
 				bot.CheckActiveEventExpiry()
 				bot.CheckCheckinExpiry()
+				bot.CheckPlugReminder()
 			})
 		}),
 	)

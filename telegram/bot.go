@@ -531,6 +531,16 @@ func (b *Bot) HandleStatus() {
 		ruletaLine, debtLine,
 	)
 	b.Send(msg)
+
+	// Comentario de Papi tras el status
+	taskDone := b.state.CurrentTask != nil && b.state.CurrentTask.Completed
+	daysOrgasm := -1
+	if b.db != nil {
+		daysOrgasm = b.db.GetDaysSinceLastOrgasm()
+	}
+	if comment, err := b.ai.GenerateStatusComment(b.daysLocked(), daysOrgasm, b.state.WeeklyDebt, b.state.TasksStreak, taskDone); err == nil {
+		b.Send(stripMarkdown(comment))
+	}
 }
 
 func (b *Bot) HandleTask() {
@@ -2156,7 +2166,11 @@ func (b *Bot) SendMorningStatus() {
 		timeRemaining = "indefinido"
 	}
 
-	msg, _ := b.ai.GenerateMorningMessage(days, timeRemaining, b.state.Toys)
+	daysSinceOrgasm := -1
+	if b.db != nil {
+		daysSinceOrgasm = b.db.GetDaysSinceLastOrgasm()
+	}
+	msg, _ := b.ai.GenerateMorningMessage(days, timeRemaining, b.state.Toys, daysSinceOrgasm)
 	b.Send("🌅 *BUENOS DÍAS*\n\n" + msg)
 }
 
@@ -2742,6 +2756,11 @@ func (b *Bot) sendRandomMessageInternal() {
 	// Forzar variedad eligiendo un tipo aleatorio antes de llamar a la IA
 	msgType := randomMessageTypes[rand.Intn(len(randomMessageTypes))]
 
+	daysSinceOrgasm := -1
+	if b.db != nil {
+		daysSinceOrgasm = b.db.GetDaysSinceLastOrgasm()
+	}
+
 	msg, err := b.ai.GenerateRandomMessage(
 		b.daysLocked(),
 		b.state.Toys,
@@ -2751,6 +2770,8 @@ func (b *Bot) sendRandomMessageInternal() {
 		activeType,
 		locked,
 		msgType,
+		b.todayTaskContext(),
+		daysSinceOrgasm,
 	)
 	if err != nil {
 		log.Printf("[SendRandomMessage] error: %v", err)
@@ -2831,14 +2852,14 @@ func (b *Bot) CheckActiveEventExpiry() {
 			log.Printf("[CheckExpiry] error unfreeze: %v", err)
 			return
 		}
-		b.Send("🔥 *DESCONGELADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_El tiempo de congelación terminó. Por ahora._")
+		b.Send("❄️ *DESCONGELADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Se acabó el hielo. El tiempo sigue corriendo — y yo sigo aquí._")
 
 	case "hidetime":
 		if err := b.chaster.SetTimerVisibility(lock.ID, true); err != nil {
 			log.Printf("[CheckExpiry] error show time: %v", err)
 			return
 		}
-		b.Send("👁 *TIMER RESTAURADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ya puedes ver el tiempo de nuevo. Disfruta mientras dura._")
+		b.Send("⏱ *TIMER RESTAURADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ya puedes ver cuánto te queda. Que el número no te dé falsas esperanzas._")
 	}
 }
 
@@ -3233,7 +3254,45 @@ func (b *Bot) CheckRitualExpiry() {
 	b.autoPillory("ignoró el ritual matutino de Papi")
 }
 
+// CheckPlugReminder avisa si el plug no fue confirmado y ya pasó el mediodía.
+func (b *Bot) CheckPlugReminder() {
+	if b.state.AssignedPlugDate != todayStr() {
+		return
+	}
+	if b.state.PlugConfirmed {
+		return
+	}
+	if b.state.PlugReminderDate == todayStr() {
+		return // ya se envió recordatorio hoy
+	}
+	loc, _ := time.LoadLocation("America/Bogota")
+	if time.Now().In(loc).Hour() < 12 {
+		return // esperar al mediodía
+	}
+	plugName := b.getAssignedPlugName()
+	if plugName == "" {
+		return
+	}
+	b.state.PlugReminderDate = todayStr()
+	b.mustSaveState()
+	b.Send(fmt.Sprintf("_¿Dónde está la foto del %s? Te lo ordené esta mañana. No me hagas repetirme._", plugName))
+}
+
 // ── Condicionamiento ───────────────────────────────────────────────────────
+
+// todayTaskContext returns a short English description of today's task status for AI prompts.
+func (b *Bot) todayTaskContext() string {
+	if b.state.CurrentTask == nil {
+		return ""
+	}
+	if b.state.CurrentTask.Completed {
+		return "completed her task today"
+	}
+	if b.state.CurrentTask.Failed {
+		return "failed her task today — Papi is not pleased"
+	}
+	return "has an active task not yet completed"
+}
 
 func (b *Bot) SendConditioningMessage() {
 	if _, err := b.chaster.GetActiveLock(); err != nil {
@@ -3242,7 +3301,11 @@ func (b *Bot) SendConditioningMessage() {
 	loc, _ := time.LoadLocation("America/Bogota")
 	hour := time.Now().In(loc).Hour()
 	obedienceLevel := models.GetObedienceLevelFromPoints(b.state.TasksStreak)
-	msg, err := b.ai.GenerateConditioningMessage(b.daysLocked(), b.state.Toys, hour, obedienceLevel)
+	daysSinceOrgasm := -1
+	if b.db != nil {
+		daysSinceOrgasm = b.db.GetDaysSinceLastOrgasm()
+	}
+	msg, err := b.ai.GenerateConditioningMessage(b.daysLocked(), b.state.Toys, hour, obedienceLevel, b.todayTaskContext(), daysSinceOrgasm)
 	if err != nil {
 		return
 	}
@@ -3924,7 +3987,25 @@ func (b *Bot) SendDailyOutfit() {
 	intensity := models.GetIntensity(b.daysLocked())
 	assignment, err := b.ai.GenerateOutfitAssignment(b.daysLocked(), wardrobeList, intensity)
 	if err != nil {
-		log.Printf("[outfit] error generando outfit: %v", err)
+		log.Printf("[outfit] error generando outfit, usando fallback: %v", err)
+		// Fallback: selección aleatoria sin IA
+		selected := make([]string, 0, 3)
+		perm := rand.Perm(len(wardrobeList))
+		for i := 0; i < len(wardrobeList) && i < 3; i++ {
+			selected = append(selected, wardrobeList[perm[i]])
+		}
+		desc := strings.Join(selected, ", ")
+		b.state.DailyOutfitDesc = desc
+		b.state.DailyPoseDesc = "pose de pie, manos detrás de la cabeza"
+		b.state.DailyOutfitDate = todayStr()
+		b.state.OutfitConfirmed = false
+		b.state.DailyOutfitComment = ""
+		b.mustSaveState()
+		b.enqueuePendingAction("outfit_photo")
+		b.Send(fmt.Sprintf(
+			"👗 *OUTFIT DEL DÍA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s_\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Póntelo. Manos detrás de la cabeza. Manda la foto._",
+			desc,
+		))
 		return
 	}
 

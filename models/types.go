@@ -153,6 +153,7 @@ type AppState struct {
 	AssignedPlugID   string `json:"assigned_plug_id"`
 	AssignedPlugDate string `json:"assigned_plug_date"` // "2006-01-02" COT
 	PlugConfirmed    bool   `json:"plug_confirmed"`
+	PlugReminderDate  string `json:"plug_reminder_date"`  // "2006-01-02" COT — evita recordatorios duplicados
 
 	// Check-ins espontáneos
 	PendingCheckin           bool       `json:"pending_checkin"`

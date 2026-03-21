@@ -301,15 +301,21 @@ func buildContextFree(toys []models.Toy) string {
 
 // ── Automatic messages ─────────────────────────────────────────────────────
 
-func (c *Client) GenerateMorningMessage(daysLocked int, timeRemaining string, toys []models.Toy) (string, error) {
+func (c *Client) GenerateMorningMessage(daysLocked int, timeRemaining string, toys []models.Toy, daysSinceLastOrgasm int) (string, error) {
 	ctx := buildContext(toys, daysLocked)
+	orgasmCtx := ""
+	if daysSinceLastOrgasm > 7 {
+		orgasmCtx = fmt.Sprintf(" She has not orgasmed in %d days — reference this subtly as part of her sentence.", daysSinceLastOrgasm)
+	} else if daysSinceLastOrgasm < 0 {
+		orgasmCtx = " She has never orgasmed — the cage has never let her."
+	}
 	prompt := fmt.Sprintf(
-		`%s She has %s left on her sentence.
+		`%s She has %s left on her sentence.%s
 Generate a morning message as Papi. She woke up caged — the device was on her body all night while she slept.
 Make her feel that before the day starts, she is already owned. Reference the physical cage subtly.
 Give her something possessive and slightly unsettling to carry into her day — one thought, one image, one reminder of what she is.
 Use a nickname. No greetings. Start directly. Maximum 3 lines. In Spanish.`,
-		ctx, timeRemaining,
+		ctx, timeRemaining, orgasmCtx,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
@@ -1144,7 +1150,7 @@ Evaluate whether she deserves you to end the event early.`,
 // GenerateRandomMessage generates a spontaneous keyholder message with no task context.
 // messageType forces a specific style — pass empty string to let AI decide.
 // locked indicates if there is an active session.
-func (c *Client) GenerateRandomMessage(daysLocked int, toys []models.Toy, tasksCompleted int, tasksFailed int, hasActiveEvent bool, activeEventType string, locked bool, messageType string) (string, error) {
+func (c *Client) GenerateRandomMessage(daysLocked int, toys []models.Toy, tasksCompleted int, tasksFailed int, hasActiveEvent bool, activeEventType string, locked bool, messageType string, todayContext string, daysSinceLastOrgasm int) (string, error) {
 	system := buildSystemPrompt(locked)
 
 	if !locked {
@@ -1182,10 +1188,20 @@ Maximum 2 lines. In Spanish.`,
 		typeInstruction = styles[rand.Intn(len(styles))]
 	}
 
+	extraCtx := ""
+	if todayContext != "" {
+		extraCtx += fmt.Sprintf(" Today: %s.", todayContext)
+	}
+	if daysSinceLastOrgasm > 5 {
+		extraCtx += fmt.Sprintf(" She has not orgasmed in %d days.", daysSinceLastOrgasm)
+	} else if daysSinceLastOrgasm < 0 {
+		extraCtx += " She has never orgasmed."
+	}
+
 	prompt := fmt.Sprintf(
 		`%s
 Tasks completed: %d | Failed: %d
-%s
+%s%s
 
 Papi picks up his phone and sends Jolie a spontaneous message.
 STYLE THIS TIME: %s
@@ -1196,7 +1212,7 @@ RULES:
 - No emojis. Calm, deliberate, perverse.
 - Use a nickname. Reference her cage, her secret, or what she is.
 - In Spanish.`,
-		ctx, tasksCompleted, tasksFailed, eventCtx, typeInstruction,
+		ctx, tasksCompleted, tasksFailed, eventCtx, extraCtx, typeInstruction,
 	)
 
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
@@ -1577,10 +1593,19 @@ Do NOT evaluate the face. Only reject if the cage is completely absent.`, plugRe
 // ── Condicionamiento ───────────────────────────────────────────────────────
 
 // GenerateConditioningMessage generates a spontaneous conditioning phrase during work hours
-func (c *Client) GenerateConditioningMessage(daysLocked int, toys []models.Toy, hour, obedienceLevel int) (string, error) {
+func (c *Client) GenerateConditioningMessage(daysLocked int, toys []models.Toy, hour, obedienceLevel int, todayContext string, daysSinceLastOrgasm int) (string, error) {
 	ctx := buildContext(toys, daysLocked)
+	extraCtx := ""
+	if todayContext != "" {
+		extraCtx += fmt.Sprintf(" Today: %s.", todayContext)
+	}
+	if daysSinceLastOrgasm > 5 {
+		extraCtx += fmt.Sprintf(" She has not orgasmed in %d days.", daysSinceLastOrgasm)
+	} else if daysSinceLastOrgasm < 0 {
+		extraCtx += " She has never orgasmed."
+	}
 	prompt := fmt.Sprintf(
-		`%s%s Hour: %d:00. Jolie is at her desk working from home — and she is caged under her clothes.
+		`%s%s Hour: %d:00. Jolie is at her desk working from home — and she is caged under her clothes.%s
 Papi sends her a brief message to interrupt her mentally. Choose one:
 - Psychological intrusion: a thought she cannot dismiss — what she is, what she has inside her, what no one around her knows
 - Physical awareness: make her acutely aware of the cage pressing against her right now, the plug inside her, her body betraying nothing while everything is there
@@ -1588,7 +1613,7 @@ Papi sends her a brief message to interrupt her mentally. Choose one:
 - Small private order: something tiny and humiliating to do alone at the desk — no photo (press her thighs together, think about being filled, whisper something to herself)
 - Veiled threat: what Papi is thinking about doing to her — vague, precise enough to unsettle
 Maximum 2 lines. No photo required. Just conditioning. In Spanish.`,
-		ctx, obedienceContext(obedienceLevel), hour,
+		ctx, obedienceContext(obedienceLevel), hour, extraCtx,
 	)
 	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
@@ -1807,4 +1832,28 @@ Papi hace el recuento semanal de Jolie y dicta sentencia.`,
 		result.FreezeHours = 0
 	}
 	return &result, nil
+}
+
+// GenerateStatusComment genera un comentario breve de Papi al final del /status.
+func (c *Client) GenerateStatusComment(daysLocked, daysSinceLastOrgasm, weeklyDebt, streak int, taskCompletedToday bool) (string, error) {
+	orgasmLine := ""
+	if daysSinceLastOrgasm < 0 {
+		orgasmLine = "She has never orgasmed."
+	} else {
+		orgasmLine = fmt.Sprintf("Last orgasm: %d days ago.", daysSinceLastOrgasm)
+	}
+
+	taskLine := "no task today"
+	if taskCompletedToday {
+		taskLine = "completed her task today"
+	}
+
+	prompt := fmt.Sprintf(`She has been locked for %d days. Streak: %d. Weekly infractions: %d. Task: %s. %s
+
+Papi has just seen her status report. Write 1-2 lines reacting to it — possessive, direct, in character.
+Comment on one specific thing that stands out: her time locked, her orgasm denial, her obedience streak, or her infractions.
+Do not list stats back. Just react like Papi looking at a possession. In Spanish. No emojis.`,
+		daysLocked, streak, weeklyDebt, taskLine, orgasmLine,
+	)
+	return c.chat("llama-3.3-70b-versatile", baseSystemLocked, prompt)
 }
