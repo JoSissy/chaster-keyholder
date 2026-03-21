@@ -189,9 +189,6 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 	if b.state.PendingChasterTask != "" {
 		b.enqueuePendingAction("chaster_task_photo")
 	}
-	if b.state.EdgePendingAt != nil && time.Now().Before(b.state.EdgePendingAt.Add(1*time.Hour)) {
-		b.enqueuePendingAction("edge_confirm")
-	}
 	if b.state.GrantedToysPendingAt != nil && time.Now().Before(b.state.GrantedToysPendingAt.Add(1*time.Hour)) {
 		b.enqueuePendingAction("toy_session_confirm")
 	}
@@ -1043,17 +1040,6 @@ func (b *Bot) HandleChat(text string) {
 	b.lastChatTime = time.Now()
 	b.chatMu.Unlock()
 
-	// Verificar expiración de edge pendiente
-	if b.state.EdgePendingAt != nil && time.Now().After(b.state.EdgePendingAt.Add(1*time.Hour)) {
-		b.state.EdgePendingAt = nil
-		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
-		b.removePendingAction("edge_confirm")
-		b.mustSaveState()
-		b.addWeeklyDebt("edge no confirmado a tiempo")
-		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge. -1 obediencia. Anotado._")
-		return
-	}
-
 	textLower := strings.ToLower(text)
 
 	// Ritual matutino — respuesta de texto
@@ -1071,12 +1057,6 @@ func (b *Bot) HandleChat(text string) {
 	// Detectar selección de juguete a eliminar
 	if b.currentPendingAction() == "removing_toy" {
 		b.handleToyRemoveSelection(text)
-		return
-	}
-
-	// Confirmación de edge pendiente
-	if b.currentPendingAction() == "edge_confirm" {
-		b.handleEdgeConfirmation(text)
 		return
 	}
 
@@ -1106,16 +1086,25 @@ func (b *Bot) HandleChat(text string) {
 		}
 	}
 
-	// Detectar ruego de permiso de orgasmo
-	orgasmKeywords := []string{
-		"masturbar", "correrme", "correrse", "orgasmo", "venirme", "acabar",
-		"tocarme", "dildo", "permiso para", "puedo usar", "puedo meter",
-		"puedo cogerme", "follarme", "usarme el culo",
-	}
-	for _, kw := range orgasmKeywords {
-		if strings.Contains(textLower, kw) {
-			b.handleOrgasmRequest(text)
+	// ── Clasificador de intención (lenguaje natural) ──────────────────────
+	// Cubre: pedir juguetes, pedir orgasmo, reportar orgasmo, confirmar sesión.
+	// cum_report tiene prioridad absoluta sobre cualquier pendingAction.
+	if intent, err := b.ai.ClassifyIntent(text); err == nil {
+		switch intent.Intent {
+		case "cum_report":
+			b.handleCumReport(text, intent.Toy)
 			return
+		case "toy_request":
+			b.handleToyRequest(text)
+			return
+		case "cum_request":
+			b.handleCumRequest(text)
+			return
+		case "toy_confirm":
+			if b.currentPendingAction() == "toy_session_confirm" {
+				b.handleToySessionConfirmation(text)
+				return
+			}
 		}
 	}
 
@@ -1250,143 +1239,151 @@ func (b *Bot) handleContractViolation(v *ai.ChatViolation) {
 	}
 }
 
-// rollOrgasmOutcome decide el resultado del permiso de orgasmo usando una tabla de probabilidades.
-// Outcomes: "denied", "edge", "granted_toys", "granted_cum"
+// rollOrgasmOutcome decide el resultado del permiso de orgasmo.
+// Outcomes: "denied" | "granted_cum"
 //
-// La probabilidad depende de dos ejes:
-//   - streak (TasksStreak): puntos de obediencia acumulados — más puntos = más fácil
-//   - daysSinceLastOrgasm: días desde el último orgasmo reportado con /came
-//
-// Tabla resumida (denied/edge/toys/cum %):
-//   streak<4:              85/10/5/0   — casi siempre denegado
-//   streak 4-8, <5 días:   55/35/8/2
-//   streak 4-8, <10 días:  30/40/20/10
-//   streak 4-8, 10+ días:  15/40/25/20
-//   streak 9-14, <5 días:  40/40/15/5
-//   streak 9-14, <10 días: 10/40/30/20
-//   streak 9-14, 10+ días: 3/27/30/40
-//   streak 15+, <5 días:   30/40/20/10
-//   streak 15+, <10 días:  5/30/30/35
-//   streak 15+, 10+ días:  2/20/25/53 — más de la mitad de las veces concedido
-//
-// Boost por consecutiveDenials: si lleva 3+ rechazos seguidos, se transfieren
-// probabilidades de "denied" hacia "edge" y "granted". 5+ rechazos = boost mayor.
-func rollOrgasmOutcome(streak, daysSinceLastOrgasm, consecutiveDenials int) string {
-	type probs struct{ denied, edge, grantedToys, grantedCum int }
-	var p probs
-
+// Tabla de probabilidades (% de granted_cum):
+//   streak<4:              5%
+//   streak 4-8,  <5 días:  25%
+//   streak 4-8,  <10 días: 50%
+//   streak 4-8,  10+ días: 70%
+//   streak 9-14, <5 días:  40%
+//   streak 9-14, <10 días: 75%
+//   streak 9-14, 10+ días: 90%
+//   streak 15+,  <5 días:  60%
+//   streak 15+,  <10 días: 85%
+//   streak 15+,  10+ días: 95%
+func rollOrgasmOutcome(streak, daysSinceLastOrgasm int) string {
+	var pGranted int
 	switch {
 	case streak < 4:
-		p = probs{85, 10, 5, 0}
+		pGranted = 5
 	case streak <= 8 && daysSinceLastOrgasm < 5:
-		p = probs{55, 35, 8, 2}
+		pGranted = 25
 	case streak <= 8 && daysSinceLastOrgasm < 10:
-		p = probs{30, 40, 20, 10}
+		pGranted = 50
 	case streak <= 8:
-		p = probs{15, 40, 25, 20}
+		pGranted = 70
 	case streak <= 14 && daysSinceLastOrgasm < 5:
-		p = probs{40, 40, 15, 5}
+		pGranted = 40
 	case streak <= 14 && daysSinceLastOrgasm < 10:
-		p = probs{10, 40, 30, 20}
+		pGranted = 75
 	case streak <= 14:
-		p = probs{3, 27, 30, 40}
+		pGranted = 90
 	case daysSinceLastOrgasm < 5:
-		p = probs{30, 40, 20, 10}
+		pGranted = 60
 	case daysSinceLastOrgasm < 10:
-		p = probs{5, 30, 30, 35}
+		pGranted = 85
 	default:
-		p = probs{2, 20, 25, 53}
+		pGranted = 95
 	}
-
-	// Boost por racha de rechazos consecutivos
-	if consecutiveDenials >= 5 {
-		boost := min(p.denied, 20)
-		p.denied -= boost
-		p.grantedToys += boost / 2
-		p.grantedCum += boost - boost/2
-	} else if consecutiveDenials >= 3 {
-		boost := min(p.denied, 12)
-		p.denied -= boost
-		p.edge += boost / 2
-		p.grantedToys += boost - boost/2
+	if rand.Intn(100) < pGranted {
+		return "granted_cum"
 	}
+	return "denied"
+}
 
+// rollInsistenceOutcome decide el resultado cuando Jolie insiste 3 veces en cooldown.
+// Outcomes: "granted_cum" | "granted_toys" | "punished"
+// Las probabilidades son peores que el roll normal — está apostando.
+func rollInsistenceOutcome(streak, daysSinceLastOrgasm int) string {
+	pCum, pToys := 0, 0
+	switch {
+	case streak < 4:
+		pCum, pToys = 3, 8
+	case streak <= 8:
+		pCum, pToys = 10, 20
+	case streak <= 14:
+		pCum, pToys = 20, 25
+	default:
+		pCum, pToys = 30, 25
+	}
+	if daysSinceLastOrgasm >= 10 {
+		pCum += 10
+		pToys += 5
+	} else if daysSinceLastOrgasm >= 5 {
+		pCum += 5
+	}
 	roll := rand.Intn(100)
-	if roll < p.denied {
-		return "denied"
-	} else if roll < p.denied+p.edge {
-		return "edge"
-	} else if roll < p.denied+p.edge+p.grantedToys {
+	if roll < pCum {
+		return "granted_cum"
+	} else if roll < pCum+pToys {
 		return "granted_toys"
 	}
-	return "granted_cum"
+	return "punished"
 }
 
-// orgasmCooldownHours devuelve el tiempo de espera mínimo antes de poder pedir
-// permiso de orgasmo de nuevo, según el último resultado.
-// Evita que Jolie pida repetidamente tras una denegación.
+// orgasmCooldownHours devuelve el tiempo de espera entre peticiones de orgasmo.
 func orgasmCooldownHours(lastOutcome string) time.Duration {
-	switch lastOutcome {
-	case "granted_cum":
+	if lastOutcome == "granted_cum" {
 		return 24 * time.Hour
-	case "granted_toys":
-		return 8 * time.Hour
-	case "edge":
-		return 4 * time.Hour
-	default: // "denied"
-		return 6 * time.Hour
 	}
+	return 6 * time.Hour // denied
 }
 
-// countConsecutiveDenials cuenta cuántos "denied" seguidos hay desde el último edge o granted.
-func countConsecutiveDenials(db interface {
-	GetPermissionHistory(int) ([]*storage.PermissionEntry, error)
-}) int {
-	entries, err := db.GetPermissionHistory(20)
+// handleToyRequest procesa una petición de sesión de juguetes en lenguaje natural.
+func (b *Bot) handleToyRequest(text string) {
+	// Sesión ya activa
+	if b.state.GrantedToysPendingAt != nil && time.Now().Before(b.state.GrantedToysPendingAt.Add(1*time.Hour)) {
+		b.Send("▪️ *SESIÓN EN CURSO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ya tienes una sesión activa. Confírmala cuando termines._")
+		return
+	}
+	// Permiso de cum activo — es aún mejor
+	if b.state.GrantedCumPendingAt != nil && time.Now().Before(b.state.GrantedCumPendingAt.Add(1*time.Hour)) {
+		b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso para correrte. Mucho mejor que juguetes._")
+		return
+	}
+	// Demasiada deuda semanal
+	if b.state.WeeklyDebt >= 3 {
+		msg, err := b.ai.GenerateToySessionDenied("debt", b.state.Toys, b.daysLocked())
+		if err != nil || strings.TrimSpace(msg) == "" {
+			msg = "Demasiadas infracciones esta semana. No mereces juguetes ahora."
+		}
+		b.Send("▪️ *DENEGADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(msg))
+		return
+	}
+	// Sesión reciente (4h)
+	if b.state.LastToySessionAt != nil && time.Now().Before(b.state.LastToySessionAt.Add(4*time.Hour)) {
+		msg, err := b.ai.GenerateToySessionDenied("cooldown", b.state.Toys, b.daysLocked())
+		if err != nil || strings.TrimSpace(msg) == "" {
+			msg = "Ya jugaste hace poco. Espera un poco más."
+		}
+		b.Send("▪️ *DEMASIADO PRONTO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(msg))
+		return
+	}
+
+	b.Send("_..._")
+	decision, err := b.ai.GenerateToySessionGranted(b.state.Toys, b.daysLocked())
 	if err != nil {
-		return 0
+		b.Send("_..._")
+		return
 	}
-	count := 0
-	for _, e := range entries {
-		if e.Outcome == "denied" {
-			count++
-		} else {
-			break
-		}
+
+	now := time.Now()
+	b.state.GrantedToysPendingAt = &now
+	b.enqueuePendingAction("toy_session_confirm")
+	b.mustSaveState()
+
+	msg := "▪️ *JUGUETES PERMITIDOS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
+	if strings.TrimSpace(decision.Condition) != "" {
+		msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 	}
-	return count
+	msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Confirma cuando termines. Tienes 1 hora._"
+	b.Send(msg)
 }
 
-func (b *Bot) handleOrgasmRequest(text string) {
-	// Si hay edge pendiente, no procesar
-	if b.state.EdgePendingAt != nil {
-		if time.Now().Before(b.state.EdgePendingAt.Add(1 * time.Hour)) {
-			b.Send("▪️ *EDGE PENDIENTE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todavía tienes una orden pendiente. Complétala primero._")
-			return
-		}
-		b.state.EdgePendingAt = nil
+// handleCumRequest procesa una petición de permiso de orgasmo en lenguaje natural.
+// Gestiona cooldown, insistencia (con roll especial a la 3ra), y el roll normal.
+func (b *Bot) handleCumRequest(text string) {
+	// Sesión de juguetes activa — primero complétala
+	if b.state.GrantedToysPendingAt != nil && time.Now().Before(b.state.GrantedToysPendingAt.Add(1*time.Hour)) {
+		b.Send("▪️ *SESIÓN EN CURSO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Todavía tienes una sesión activa. Confírmala primero._")
+		return
 	}
-
-	// Si hay sesión de juguetes activa, recordarlo
-	if b.state.GrantedToysPendingAt != nil {
-		if time.Now().Before(b.state.GrantedToysPendingAt.Add(1 * time.Hour)) {
-			b.Send("▪️ *SESIÓN EN CURSO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te ordenó una sesión con tus juguetes. Confírmala cuando termines._")
-			return
-		}
-		b.state.GrantedToysPendingAt = nil
-		b.state.GrantedCondition = ""
-		b.mustSaveState()
-	}
-
-	// Si ya tiene permiso de cum activo, recordarlo
-	if b.state.GrantedCumPendingAt != nil {
-		if time.Now().Before(b.state.GrantedCumPendingAt.Add(1 * time.Hour)) {
-			b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso para venirte. Cuando termines, usa `/came [método]`._")
-			return
-		}
-		b.state.GrantedCumPendingAt = nil
-		b.state.GrantedCondition = ""
-		b.mustSaveState()
+	// Permiso de cum ya activo
+	if b.state.GrantedCumPendingAt != nil && time.Now().Before(b.state.GrantedCumPendingAt.Add(1*time.Hour)) {
+		b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso. Cuando termines, repórtate._")
+		return
 	}
 
 	// Verificar cooldown
@@ -1395,7 +1392,18 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		elapsed := time.Since(*b.state.LastOrgasmRequestAt)
 		if elapsed < cooldown {
 			hoursLeft := (cooldown - elapsed).Hours()
-			msg, err := b.ai.GenerateOrgasmCooldownMessage(b.state.LastOrgasmOutcome, hoursLeft)
+			b.state.CooldownInsistCount++
+
+			// 3ra insistencia — roll especial
+			if b.state.CooldownInsistCount >= 3 {
+				b.state.CooldownInsistCount = 0
+				b.mustSaveState()
+				b.handleInsistenceRoll(text, hoursLeft)
+				return
+			}
+
+			b.mustSaveState()
+			msg, err := b.ai.GenerateInsistenceResponse(b.state.CooldownInsistCount, hoursLeft)
 			if err != nil || strings.TrimSpace(msg) == "" {
 				msg = fmt.Sprintf("Todavía no. Faltan %.0f horas.", hoursLeft)
 			}
@@ -1404,28 +1412,19 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		}
 	}
 
+	// Fuera de cooldown — reset contador y roll normal
+	b.state.CooldownInsistCount = 0
 	b.Send("_..._")
 
-	// Días desde el último orgasmo real (orgasm_log)
 	daysSinceLastOrgasm := 999
 	if b.db != nil {
-		d := b.db.GetDaysSinceLastOrgasm()
-		if d >= 0 {
+		if d := b.db.GetDaysSinceLastOrgasm(); d >= 0 {
 			daysSinceLastOrgasm = d
 		}
 	}
-	consecutiveDenials := 0
-	if b.db != nil {
-		consecutiveDenials = countConsecutiveDenials(b.db)
-	}
 
-	outcome := rollOrgasmOutcome(b.state.TasksStreak, daysSinceLastOrgasm, consecutiveDenials)
-
-	decision, err := b.ai.GenerateOrgasmMessage(
-		outcome, text,
-		b.state.Toys, b.daysLocked(),
-		b.state.TasksStreak, daysSinceLastOrgasm, consecutiveDenials,
-	)
+	outcome := rollOrgasmOutcome(b.state.TasksStreak, daysSinceLastOrgasm)
+	decision, err := b.ai.GenerateOrgasmMessage(outcome, text, b.state.Toys, b.daysLocked(), b.state.TasksStreak, daysSinceLastOrgasm, 0)
 	if err != nil {
 		b.Send("_..._")
 		return
@@ -1458,6 +1457,49 @@ func (b *Bot) handleOrgasmRequest(text string) {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
 		b.Send(msg)
+	default: // denied
+		b.mustSaveState()
+		b.Send("▪️ *DENEGADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message))
+	}
+}
+
+// handleInsistenceRoll ejecuta el roll especial de la 3ra insistencia.
+func (b *Bot) handleInsistenceRoll(text string, hoursLeft float64) {
+	daysSinceLastOrgasm := 999
+	if b.db != nil {
+		if d := b.db.GetDaysSinceLastOrgasm(); d >= 0 {
+			daysSinceLastOrgasm = d
+		}
+	}
+
+	outcome := rollInsistenceOutcome(b.state.TasksStreak, daysSinceLastOrgasm)
+	punishHours := 0
+	if outcome == "punished" {
+		punishHours = 2 + rand.Intn(3) // 2-4 horas
+	}
+
+	decision, err := b.ai.GenerateInsistenceRollMessage(outcome, b.state.Toys, b.daysLocked(), b.state.TasksStreak, punishHours)
+	if err != nil {
+		b.Send("▪️ *CONSECUENCIAS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Insististe demasiado._")
+		return
+	}
+
+	now := time.Now()
+
+	switch outcome {
+	case "granted_cum":
+		b.state.LastOrgasmRequestAt = &now
+		b.state.LastOrgasmOutcome = "granted_cum"
+		b.state.GrantedCumPendingAt = &now
+		if strings.TrimSpace(decision.Condition) != "" {
+			b.state.GrantedCondition = decision.Condition
+		}
+		b.mustSaveState()
+		msg := "▪️ *PERMISO CONCEDIDO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
+		if strings.TrimSpace(decision.Condition) != "" {
+			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
+		}
+		b.Send(msg)
 
 	case "granted_toys":
 		b.state.GrantedToysPendingAt = &now
@@ -1467,64 +1509,107 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		if strings.TrimSpace(decision.Condition) != "" {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
-		msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Confirma cuando termines la sesión. Tienes 1 hora._"
+		msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Confirma cuando termines. Tienes 1 hora._"
 		b.Send(msg)
 
-	case "edge":
-		b.state.EdgePendingAt = &now
-		b.enqueuePendingAction("edge_confirm")
-		b.mustSaveState()
-		msg := "▪️ *ORDEN DE EDGE*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message)
-		if strings.TrimSpace(decision.Condition) != "" {
-			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
+	default: // punished
+		if punishHours > 0 {
+			if lock, err := b.chaster.GetActiveLock(); err == nil {
+				b.chaster.AddTime(lock.ID, punishHours*3600)
+				b.state.TotalTimeAddedHours += punishHours
+			}
 		}
-		msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Confirma cuando hayas terminado. Tienes 2 horas._"
-		b.Send(msg)
-
-	default: // denied
+		b.addWeeklyDebt("insistió demasiado para pedir permiso")
 		b.mustSaveState()
-		b.Send("▪️ *DENEGADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message))
+		b.Send("▪️ *CONSECUENCIAS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message))
 	}
 }
 
-// handleEdgeConfirmation procesa la confirmación de un edge completado
-func (b *Bot) handleEdgeConfirmation(text string) {
-	if b.state.EdgePendingAt == nil {
-		b.removePendingAction("edge_confirm")
-		return
-	}
-
-	// Verificar timeout
-	if time.Now().After(b.state.EdgePendingAt.Add(1 * time.Hour)) {
-		b.state.EdgePendingAt = nil
-		b.state.TasksStreak = max(0, b.state.TasksStreak-1)
-		b.removePendingAction("edge_confirm")
-		b.mustSaveState()
-		b.addWeeklyDebt("edge no confirmado a tiempo")
-		b.Send("▪️ *TIEMPO AGOTADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_No confirmaste el edge a tiempo. -1 obediencia. Anotado._")
-		return
-	}
-
-	confirmKeywords := []string{"listo", "hecho", "confirmado", "hice", "cumplido", "terminé", "termine", "completo", "completé"}
+// handleCumReport procesa un reporte de orgasmo en lenguaje natural.
+// toyHint: nombre del juguete extraído por el clasificador (puede ser "").
+func (b *Bot) handleCumReport(text, toyHint string) {
+	// Extraer método del texto
 	textLower := strings.ToLower(text)
-	confirmed := false
-	for _, kw := range confirmKeywords {
-		if strings.Contains(textLower, kw) {
-			confirmed = true
-			break
+	method := "anal" // default — método principal declarado
+	switch {
+	case strings.Contains(textLower, "pezón") || strings.Contains(textLower, "pezon") || strings.Contains(textLower, "nipple"):
+		method = "nipples"
+	case strings.Contains(textLower, "arruinado") || strings.Contains(textLower, "ruined"):
+		method = "ruined"
+	case strings.Contains(textLower, "manual") || strings.Contains(textLower, "mano"):
+		method = "manual"
+	}
+
+	// Buscar juguete en inventario por hint
+	toyID, toyName := "", ""
+	if toyHint != "" {
+		for _, t := range b.state.Toys {
+			if strings.Contains(strings.ToLower(t.Name), strings.ToLower(toyHint)) {
+				toyID = t.ID
+				toyName = t.Name
+				break
+			}
+		}
+	}
+	if toyName == "" {
+		// Fallback: plug asignado del día
+		if plug := b.getAssignedPlugName(); plug != "" {
+			toyName = plug
+			for _, t := range b.state.Toys {
+				if t.Name == plug {
+					toyID = t.ID
+					break
+				}
+			}
 		}
 	}
 
-	if !confirmed {
-		b.Send("_¿Ya lo hiciste? Confirma cuando termines el edge._")
-		return
+	// Días desde el último orgasmo — ANTES de guardar
+	daysSinceLastOrgasm := -1
+	if b.db != nil {
+		daysSinceLastOrgasm = b.db.GetDaysSinceLastOrgasm()
 	}
 
-	b.state.EdgePendingAt = nil
-	b.removePendingAction("edge_confirm")
+	// Determinar si había permiso
+	permitted := false
+	permissionOutcome := "none"
+	grantedCondition := b.state.GrantedCondition
+	if b.state.GrantedCumPendingAt != nil && time.Now().Before(b.state.GrantedCumPendingAt.Add(1*time.Hour)) {
+		permitted = true
+		permissionOutcome = "granted_cum"
+		b.state.GrantedCumPendingAt = nil
+		b.state.GrantedCondition = ""
+	}
+
+	if b.db != nil {
+		b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
+			Method:            method,
+			ToyID:             toyID,
+			ToyName:           toyName,
+			Permitted:         permitted,
+			PermissionOutcome: permissionOutcome,
+			StreakAtTime:      b.state.TasksStreak,
+			DaysLocked:        b.daysLocked(),
+		})
+	}
 	b.mustSaveState()
 
-	b.Send("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Al borde y sin correrte. Como debe ser._")
+	response, err := b.ai.GenerateCameResponse(method, toyName, permitted, b.daysLocked(), daysSinceLastOrgasm, grantedCondition, b.state.Toys)
+	if err != nil || strings.TrimSpace(response) == "" {
+		if permitted {
+			response = "Bien hecha, mi puta sissy. Así me gusta."
+		} else {
+			response = "Sin permiso. Vas a pagar por esto."
+		}
+	}
+
+	header := "▪️ *ORGASMO REGISTRADO*"
+	if !permitted {
+		header = "▪️ *VIOLACIÓN REGISTRADA*"
+		b.addWeeklyDebt("orgasmo sin permiso de Papi")
+		b.autoPillory("se vino sin permiso de Papi")
+	}
+	b.Send(fmt.Sprintf("%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", header, stripMarkdown(response)))
 }
 
 // handleToySessionConfirmation procesa la confirmación de una sesión de juguetes completada.
@@ -1560,125 +1645,40 @@ func (b *Bot) handleToySessionConfirmation(text string) {
 		return
 	}
 
+	now := time.Now()
 	b.state.GrantedToysPendingAt = nil
 	b.state.GrantedCondition = ""
+	b.state.LastToySessionAt = &now
 	b.removePendingAction("toy_session_confirm")
 	b.mustSaveState()
+
+	// Loguear sesión en orgasm_log como toy_session
+	if b.db != nil {
+		b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
+			Method:       "toy_session",
+			Permitted:    true,
+			StreakAtTime: b.state.TasksStreak,
+			DaysLocked:   b.daysLocked(),
+		})
+	}
 
 	b.Send("▪️ *SESIÓN CONFIRMADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Bien. Mis juguetes usados como ordené. Recuerda quién decide cuándo y cómo._")
 }
 
-// HandleCame procesa el reporte de orgasmo real de Jolie — /came [método]
-// Métodos válidos: nipples/pezones, toys/juguetes, anal, ruined/arruinado, manual, other
+// HandleCame — fallback de comando /came para compatibilidad.
+// El flujo principal es lenguaje natural via handleCumReport.
 func (b *Bot) HandleCame(args string) {
-	// Separar método y juguete opcional: "/came anal dildo" → method="anal", toyHint="dildo"
-	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
-	methodRaw := strings.ToLower(parts[0])
+	args = strings.TrimSpace(args)
+	if args == "" {
+		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/came anal [juguete]` — anal\n`/came toys [juguete]` — juguetes\n`/came nipples` — pezones\n`/came ruined` — arruinado\n`/came manual` — manual\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejemplo: `/came anal dildo`_")
+		return
+	}
+	parts := strings.SplitN(args, " ", 2)
 	toyHint := ""
 	if len(parts) > 1 {
-		toyHint = strings.ToLower(strings.TrimSpace(parts[1]))
+		toyHint = strings.TrimSpace(parts[1])
 	}
-
-	// Normalizar método
-	var method string
-	switch {
-	case methodRaw == "":
-		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/came nipples` — pezones\n`/came anal [juguete]` — anal\n`/came toys [juguete]` — juguetes\n`/came ruined` — arruinado\n`/came manual` — manual\n`/came other` — otro\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejemplo: `/came anal dildo`_")
-		return
-	case methodRaw == "pezones" || methodRaw == "nipples":
-		method = "nipples"
-	case methodRaw == "juguetes" || methodRaw == "toys":
-		method = "toys"
-	case methodRaw == "anal":
-		method = "anal"
-	case methodRaw == "arruinado" || methodRaw == "ruined":
-		method = "ruined"
-	case methodRaw == "manual":
-		method = "manual"
-	default:
-		method = "other"
-	}
-
-	// Buscar juguete: primero por hint en args, luego plug asignado del día
-	toyID := ""
-	toyName := ""
-	if method == "anal" || method == "toys" {
-		if toyHint != "" {
-			// Buscar en inventario por nombre (contiene el hint)
-			for _, t := range b.state.Toys {
-				if strings.Contains(strings.ToLower(t.Name), toyHint) {
-					toyID = t.ID
-					toyName = t.Name
-					break
-				}
-			}
-		}
-		// Fallback: plug asignado del día
-		if toyName == "" {
-			plugName := b.getAssignedPlugName()
-			if plugName != "" {
-				toyName = plugName
-				for _, t := range b.state.Toys {
-					if t.Name == plugName {
-						toyID = t.ID
-						break
-					}
-				}
-			}
-		}
-	}
-
-	// Días desde el último orgasmo — leer ANTES de guardar para capturar la espera real
-	daysSinceLastOrgasm := -1
-	if b.db != nil {
-		daysSinceLastOrgasm = b.db.GetDaysSinceLastOrgasm()
-	}
-
-	// Determinar si había permiso válido
-	permitted := false
-	permissionOutcome := "none"
-	grantedCondition := b.state.GrantedCondition
-	if b.state.GrantedCumPendingAt != nil && time.Now().Before(b.state.GrantedCumPendingAt.Add(1*time.Hour)) {
-		permitted = true
-		permissionOutcome = "granted_cum"
-		b.state.GrantedCumPendingAt = nil
-		b.state.GrantedCondition = ""
-	}
-
-	// Guardar en orgasm_log
-	if b.db != nil {
-		saveErr := b.db.SaveOrgasmEntry(&storage.OrgasmEntry{
-			Method:            method,
-			ToyID:             toyID,
-			ToyName:           toyName,
-			Permitted:         permitted,
-			PermissionOutcome: permissionOutcome,
-			StreakAtTime:      b.state.TasksStreak,
-			DaysLocked:        b.daysLocked(),
-		})
-		log.Printf("[HandleCame] SaveOrgasmEntry method=%s permitted=%v err=%v", method, permitted, saveErr)
-	}
-
-	b.mustSaveState()
-
-	// Reacción de Papi
-	response, err := b.ai.GenerateCameResponse(method, toyName, permitted, b.daysLocked(), daysSinceLastOrgasm, grantedCondition, b.state.Toys)
-	if err != nil || strings.TrimSpace(response) == "" {
-		if permitted {
-			response = "Bien hecha, mi puta sissy. Así me gusta."
-		} else {
-			response = "Sin permiso. Vas a pagar por esto."
-		}
-	}
-
-	header := "▪️ *ORGASMO REGISTRADO*"
-	if !permitted {
-		header = "▪️ *VIOLACIÓN REGISTRADA*"
-		b.addWeeklyDebt("orgasmo sin permiso de Papi")
-		b.autoPillory("se vino sin permiso de Papi")
-	}
-
-	b.Send(fmt.Sprintf("%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s", header, stripMarkdown(response)))
+	b.handleCumReport("me corrí "+args, toyHint)
 }
 
 // HandleStats muestra las estadísticas completas de Jolie
@@ -1694,14 +1694,8 @@ func (b *Bot) HandleStats() {
 		stats = &storage.OrgasmStats{Methods: make(map[string]int)}
 	}
 
-	// Permiso stats (permission_log)
-	totalPerms, grantedCum, edged, denied, _ := b.db.GetPermissionStats()
-	// En el nuevo sistema, granted_toys es un permiso que no es cum ni edge ni denied
-	// lo contamos como "juguetes" si el outcome en orgasm_log es "granted_toys"
-	grantedToys := totalPerms - grantedCum - edged - denied
-	if grantedToys < 0 {
-		grantedToys = 0
-	}
+	// Permiso stats
+	totalPerms, grantedCum, _, denied, _ := b.db.GetPermissionStats()
 
 	// Sección de orgasmos reales
 	realSection := ""
@@ -1744,6 +1738,16 @@ func (b *Bot) HandleStats() {
 		)
 	}
 
+	// Sección de sesiones de juguetes
+	toySection := ""
+	if stats.ToySessions > 0 {
+		toyLine := fmt.Sprintf("🧸 Sesiones con juguetes — *%d*", stats.ToySessions)
+		if stats.FavToy != "" {
+			toyLine += fmt.Sprintf("\n🏆 Juguete favorito — *%s* (%dx)", stats.FavToy, stats.FavToyCount)
+		}
+		toySection = "\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + toyLine
+	}
+
 	// Sección de permisos
 	permSection := ""
 	if totalPerms == 0 {
@@ -1754,14 +1758,14 @@ func (b *Bot) HandleStats() {
 			cumRate = (grantedCum * 100) / totalPerms
 		}
 		permSection = fmt.Sprintf(
-			"🎰 Permisos pedidos — *%d*\n✅ Cum — *%d*  🧸 Juguetes — *%d*  🌊 Edges — *%d*  ❌ Denegados — *%d*\n📊 Tasa de cum — *%d%%*",
-			totalPerms, grantedCum, grantedToys, edged, denied, cumRate,
+			"🎰 Permisos pedidos — *%d*\n✅ Cum — *%d*  ❌ Denegados — *%d*\n📊 Tasa de cum — *%d%%*",
+			totalPerms, grantedCum, denied, cumRate,
 		)
 	}
 
 	b.Send(fmt.Sprintf(
-		"▪️ *JOLIE STATS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
-		realSection, permSection,
+		"▪️ *JOLIE STATS*\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s%s\n▬▬▬▬▬▬▬▬▬▬▬▬\n%s",
+		realSection, toySection, permSection,
 	))
 }
 

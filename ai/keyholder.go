@@ -653,13 +653,180 @@ Be GENEROUS in your evaluation:
 	return &verdict, nil
 }
 
+// ── Clasificador de intención ──────────────────────────────────────────────
+
+// IntentResult resultado del clasificador de intención del chat libre.
+type IntentResult struct {
+	Intent string `json:"intent"` // "toy_request"|"cum_request"|"cum_report"|"toy_confirm"|"chat"
+	Toy    string `json:"toy,omitempty"`
+}
+
+// ClassifyIntent clasifica un mensaje en lenguaje natural en una intención de acción.
+// Es una llamada ligera y rápida — el modelo solo devuelve JSON corto.
+func (c *Client) ClassifyIntent(message string) (*IntentResult, error) {
+	system := `You classify a Spanish chat message into ONE intent. Respond ONLY in JSON, no extra text.
+
+Intents:
+- toy_request: asking permission to use toys/dildo/plug/vibrator to masturbate (NOT asking to cum)
+- cum_request: asking permission to orgasm/cum/correrse
+- cum_report: reporting they already came/orgasmed (with or without permission)
+- toy_confirm: saying they finished/completed a toy or masturbation session
+- chat: anything else
+
+Extract toy name only if explicitly mentioned in the message.
+
+Examples:
+"papi puedo usar mi dildo" → {"intent":"toy_request","toy":"dildo"}
+"papi quiero correrme por favor" → {"intent":"cum_request"}
+"papi me corrí con el dildo grande" → {"intent":"cum_report","toy":"dildo grande"}
+"me vine sin permiso papi perdón" → {"intent":"cum_report"}
+"terminé papi listo" → {"intent":"toy_confirm"}
+"papi cómo estás" → {"intent":"chat"}
+"me duele la espalda hoy" → {"intent":"chat"}
+
+Respond ONLY with JSON: {"intent":"...", "toy":"..."} — omit "toy" key if none mentioned.`
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, fmt.Sprintf(`Message: "%s"`, message))
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var result IntentResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return &IntentResult{Intent: "chat"}, nil
+	}
+	return &result, nil
+}
+
+// ── Sesión de juguetes ─────────────────────────────────────────────────────
+
+// GenerateToySessionGranted genera el mensaje de Papi al conceder una sesión de juguetes.
+// Devuelve message (reacción) + condition (instrucciones específicas de cómo usarlos).
+func (c *Client) GenerateToySessionGranted(toys []models.Toy, daysLocked int) (*OrgasmDecision, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	var toyNames []string
+	for _, t := range toys {
+		if t.Type != "cage" {
+			toyNames = append(toyNames, t.Name)
+		}
+	}
+	toyList := "ninguno registrado"
+	if len(toyNames) > 0 {
+		toyList = strings.Join(toyNames, ", ")
+	}
+
+	system := baseSystemLocked + `
+Jolie asks permission to use her toys/dildo. You GRANT it — but she may NOT cum.
+Respond in JSON: {"outcome":"granted_toys","message":"...","condition":"..."}
+- message: 2 lines. Possessive. You allow her to play — she is yours, the toys are yours.
+- condition: exact instructions — which toy, how to insert/use it, for how long (15-30 min), what position. She must stop if she gets close to cumming. Confirm when done.
+- Available toys: ` + toyList + `
+- Use "maricona", "puta sissy", possessive tone.
+- Respond in Spanish. JSON only.`
+
+	raw, err := c.chat("llama-3.3-70b-versatile", system, ctx)
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var decision OrgasmDecision
+	if err := json.Unmarshal([]byte(raw), &decision); err != nil {
+		return &OrgasmDecision{Outcome: "granted_toys", Message: raw}, nil
+	}
+	decision.Outcome = "granted_toys"
+	return &decision, nil
+}
+
+// GenerateToySessionDenied genera el mensaje de Papi al negar una sesión de juguetes.
+// reason: "debt" (deuda alta) | "cooldown" (sesión reciente)
+func (c *Client) GenerateToySessionDenied(reason string, toys []models.Toy, daysLocked int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	var situacion string
+	switch reason {
+	case "debt":
+		situacion = "She has been misbehaving too much this week — too much debt. Deny her toys as punishment. Cold, dismissive. 1-2 lines."
+	default: // cooldown
+		situacion = "She just had a toy session not long ago. Too soon to ask again. Mock her neediness. 1-2 lines."
+	}
+	system := baseSystemLocked + "\n" + situacion + "\nSpanish. No JSON. No emojis."
+	return c.chat("llama-3.3-70b-versatile", system, ctx)
+}
+
+// ── Insistencia durante cooldown ───────────────────────────────────────────
+
+// GenerateInsistenceResponse genera la reacción de Papi cuando Jolie insiste durante cooldown.
+// attempt: 1 (primera insistencia) o 2 (segunda — la siguiente es el roll especial).
+func (c *Client) GenerateInsistenceResponse(attempt int, hoursLeft float64) (string, error) {
+	var situacion string
+	if attempt == 1 {
+		situacion = fmt.Sprintf("She was already denied and is begging again. %.0f hours of cooldown remain. Be condescending — mock her desperation. Warn her not to insist. 1-2 lines.", hoursLeft)
+	} else {
+		situacion = fmt.Sprintf("She insists a second time. %.0f hours of cooldown remain. You are annoyed. Warn her that ONE more insistence will have consequences — good or bad. Tense, cold. 1-2 lines.", hoursLeft)
+	}
+	system := baseSystemLocked + "\n" + situacion + "\nSpanish. No JSON. No emojis."
+	return c.chat("llama-3.3-70b-versatile", system, fmt.Sprintf("Jolie begs again"))
+}
+
+// GenerateInsistenceRollMessage genera la reacción de Papi al resultado del roll de insistencia.
+// outcome: "granted_cum" | "granted_toys" | "punished"
+// punishHours: horas añadidas al candado si punished (para que Papi las mencione).
+func (c *Client) GenerateInsistenceRollMessage(outcome string, toys []models.Toy, daysLocked, streak, punishHours int) (*OrgasmDecision, error) {
+	ctx := buildContext(toys, daysLocked)
+
+	var toyNames []string
+	for _, t := range toys {
+		if t.Type != "cage" {
+			toyNames = append(toyNames, t.Name)
+		}
+	}
+	toyList := "ninguno"
+	if len(toyNames) > 0 {
+		toyList = strings.Join(toyNames, ", ")
+	}
+
+	var instruction string
+	switch outcome {
+	case "granted_cum":
+		instruction = `She insisted and you decide to give in — but make her feel it was YOUR choice, not hers.
+Respond in JSON: {"outcome":"granted_cum","message":"...","condition":"..."}
+- message: 2 lines. You grant it — with contempt. She earned nothing, you just feel like it.
+- condition: exactly how she must cum (anal, with toy if available, narrate herself). End with: "Repórtate con /came cuando termines."
+- Available toys: ` + toyList
+	case "granted_toys":
+		instruction = `She insisted and you allow toys but NOT cumming — a half-concession to shut her up.
+Respond in JSON: {"outcome":"granted_toys","message":"...","condition":"..."}
+- message: 2 lines. You allow toys, not cumming. Condescending.
+- condition: which toy, how, 15-20 min, stop before cumming, confirm when done.
+- Available toys: ` + toyList
+	default: // punished
+		instruction = fmt.Sprintf(`She insisted too much and you punish her.
+Respond in JSON: {"outcome":"punished","message":"...","condition":""}
+- message: 2-3 lines. Cold fury. She gets NOTHING and ` + fmt.Sprintf("%d hours were added to her lock", punishHours) + `. Make her regret it.
+- condition: empty string.`)
+	}
+
+	system := baseSystemLocked + "\n" + instruction + "\nSpanish. JSON only."
+	raw, err := c.chat("llama-3.3-70b-versatile", system, fmt.Sprintf("%s\nStreak: %d", ctx, streak))
+	if err != nil {
+		return nil, err
+	}
+	raw = extractJSON(raw)
+	var decision OrgasmDecision
+	if err := json.Unmarshal([]byte(raw), &decision); err != nil {
+		return &OrgasmDecision{Outcome: outcome, Message: raw}, nil
+	}
+	decision.Outcome = outcome
+	return &decision, nil
+}
+
 // ── Permiso de orgasmo ─────────────────────────────────────────────────────
 
 // OrgasmDecision resultado de una solicitud de permiso de orgasmo
 type OrgasmDecision struct {
-	Outcome   string `json:"outcome"`             // "denied", "edge", "granted_cum", "granted_toys"
+	Outcome   string `json:"outcome"`             // "denied" | "granted_cum" | "granted_toys" | "punished"
 	Message   string `json:"message"`
-	Condition string `json:"condition,omitempty"` // instrucciones si granted o edge
+	Condition string `json:"condition,omitempty"` // instrucciones si granted
 }
 
 // GenerateOrgasmMessage genera el texto de Papi para un outcome ya decidido.
@@ -696,22 +863,8 @@ Respond in JSON: {"outcome": "granted_cum", "message": "...", "condition": "..."
 - message: short dominant reaction, granting her (2-3 lines). Possessive and perverse.
 - condition: explicit degrading instructions on HOW she must cum — method, toy if available, must narrate herself during. Be specific about technique.
 - She can ONLY cum through her ass/nipples — never her caged dick.
-- End condition with: "Cuando termines, repórtate con /came [método]."
+- End condition with: "Cuando termines, repórtate."
 - Use "maricona", "puta sissy", "agujero", "culo de puta".`
-	case "granted_toys":
-		outcomeInstruction = `THE DECISION IS: GRANTED TOYS — she may use her toys but NOT cum.
-Respond in JSON: {"outcome": "granted_toys", "message": "...", "condition": "..."}
-- message: Papi allows her to use her toys — tease herself, feel owned — but cumming is absolutely forbidden (2-3 lines).
-- condition: which toy to use, how, for how long, specific degrading details. She must stop before the edge if she gets close.
-- Available toys: ` + toyList + `
-- If no toys available: she can touch her nipples but not cum.
-- Use "maricona", "puta sissy".`
-	case "edge":
-		outcomeInstruction = `THE DECISION IS: EDGE — masturbate but do NOT cum.
-Respond in JSON: {"outcome": "edge", "message": "...", "condition": "..."}
-- message: cold dominant order. She gets to touch herself but NOT cum. Make her feel the cruelty (2-3 lines).
-- condition: insert the dildo/toy, masturbate until the very edge, stop right before cumming. Confirm when done with a message.
-- Use "maricona", "puta sissy", "agujero".`
 	default: // "denied"
 		var deniedOrgasmRef string
 		if daysSinceLastOrgasm >= 999 {
@@ -733,6 +886,7 @@ Respond in JSON: {"outcome": "denied", "message": "...", "condition": ""}
 
 	system := baseSystemLocked + `
 Jolie is begging Papi for permission to orgasm or use her toys.
+Available toys: ` + toyList + `
 ` + outcomeInstruction + `
 
 Rules:

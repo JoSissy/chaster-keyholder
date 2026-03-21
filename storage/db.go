@@ -657,28 +657,32 @@ func (db *DB) GetPermissionStats() (total, granted, edged, denied int, err error
 
 // ── Orgasm Log (real orgasms reported by Jolie) ────────────────────────────
 
-// OrgasmEntry un orgasmo real reportado por Jolie via /corri
+// OrgasmEntry un orgasmo real o sesión de juguetes reportada por Jolie.
+// Method="toy_session" indica sesión de juguetes sin orgasmo.
 type OrgasmEntry struct {
 	ID                string
 	CreatedAt         time.Time
-	Method            string    // "nipples", "toys", "anal", "ruined", "manual", "other"
+	Method            string // "nipples", "anal", "ruined", "manual", "other", "toy_session"
 	ToyID             string
 	ToyName           string
-	Permitted         bool      // false = sin permiso de Papi
-	PermissionOutcome string    // "granted_cum", "granted_toys", etc.
+	Permitted         bool   // false = sin permiso de Papi (solo relevante para orgasmos reales)
+	PermissionOutcome string // "granted_cum", "none", etc.
 	StreakAtTime      int
 	DaysLocked        int
 }
 
-// OrgasmStats estadísticas de orgasmos reales
+// OrgasmStats estadísticas de orgasmos reales y sesiones de juguetes.
 type OrgasmStats struct {
-	Total       int
-	WithToys    int
-	WithoutToys int
-	Violations  int
-	Methods     map[string]int // método → cantidad
-	LastMethod  string
-	LastAt      *time.Time
+	Total         int            // orgasmos reales (excluye toy_session)
+	WithToys      int
+	WithoutToys   int
+	Violations    int
+	Methods       map[string]int // método → cantidad (solo orgasmos reales)
+	LastMethod    string
+	LastAt        *time.Time
+	ToySessions   int    // sesiones de juguetes sin orgasmo
+	FavToy        string // juguete más usado (orgasmos + sesiones)
+	FavToyCount   int
 }
 
 func (db *DB) SaveOrgasmEntry(e *OrgasmEntry) error {
@@ -719,57 +723,60 @@ func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
 }
 
 // GetDaysSinceLastOrgasm devuelve los días desde el último orgasmo real reportado.
-// Devuelve -1 si nunca hubo uno (no hay registros).
+// Excluye sesiones de juguetes (method='toy_session'). Devuelve -1 si nunca hubo uno.
 func (db *DB) GetDaysSinceLastOrgasm() int {
 	var createdAt time.Time
 	err := db.conn.QueryRow(
-		`SELECT created_at FROM orgasm_log ORDER BY created_at DESC LIMIT 1`,
+		`SELECT created_at FROM orgasm_log WHERE method != 'toy_session' ORDER BY created_at DESC LIMIT 1`,
 	).Scan(&createdAt)
 	if err != nil {
-		return -1 // nunca
+		return -1
 	}
 	return int(time.Since(createdAt).Hours()) / 24
 }
 
-// GetOrgasmStats devuelve estadísticas completas de orgasmos reales.
+// GetOrgasmStats devuelve estadísticas completas de orgasmos reales y sesiones de juguetes.
 func (db *DB) GetOrgasmStats() (*OrgasmStats, error) {
 	stats := &OrgasmStats{Methods: make(map[string]int)}
 
-	err := db.conn.QueryRow(`
+	// Orgasmos reales (excluye toy_session)
+	db.conn.QueryRow(`
 		SELECT COUNT(*),
 		       COALESCE(SUM(CASE WHEN toy_id != '' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN toy_id = '' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN permitted = 0 THEN 1 ELSE 0 END), 0)
-		FROM orgasm_log`).Scan(&stats.Total, &stats.WithToys, &stats.WithoutToys, &stats.Violations)
-	if err != nil {
-		return stats, err
-	}
+		FROM orgasm_log WHERE method != 'toy_session'`,
+	).Scan(&stats.Total, &stats.WithToys, &stats.WithoutToys, &stats.Violations)
 
-	// Conteo por método
-	rows, err := db.conn.Query(`SELECT method, COUNT(*) FROM orgasm_log GROUP BY method ORDER BY COUNT(*) DESC`)
-	if err != nil {
-		return stats, err
-	}
-	defer rows.Close()
-	first := true
-	for rows.Next() {
-		var method string
-		var count int
-		rows.Scan(&method, &count)
-		stats.Methods[method] = count
-		if first {
-			stats.LastMethod = method // el más frecuente
-			first = false
+	// Sesiones de juguetes
+	db.conn.QueryRow(`SELECT COUNT(*) FROM orgasm_log WHERE method = 'toy_session'`).Scan(&stats.ToySessions)
+
+	// Conteo por método (solo orgasmos reales)
+	rows, err := db.conn.Query(`SELECT method, COUNT(*) FROM orgasm_log WHERE method != 'toy_session' GROUP BY method ORDER BY COUNT(*) DESC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var method string
+			var count int
+			rows.Scan(&method, &count)
+			stats.Methods[method] = count
 		}
 	}
 
-	// Último orgasmo
+	// Último orgasmo real
 	var lastAt time.Time
 	var lastMethod string
-	err2 := db.conn.QueryRow(`SELECT created_at, method FROM orgasm_log ORDER BY created_at DESC LIMIT 1`).Scan(&lastAt, &lastMethod)
-	if err2 == nil {
+	if err2 := db.conn.QueryRow(`SELECT created_at, method FROM orgasm_log WHERE method != 'toy_session' ORDER BY created_at DESC LIMIT 1`).Scan(&lastAt, &lastMethod); err2 == nil {
 		stats.LastAt = &lastAt
 		stats.LastMethod = lastMethod
+	}
+
+	// Juguete favorito (orgasmos + sesiones con toy_name no vacío)
+	var favToy string
+	var favCount int
+	if err3 := db.conn.QueryRow(`SELECT toy_name, COUNT(*) as c FROM orgasm_log WHERE toy_name != '' GROUP BY toy_name ORDER BY c DESC LIMIT 1`).Scan(&favToy, &favCount); err3 == nil {
+		stats.FavToy = favToy
+		stats.FavToyCount = favCount
 	}
 
 	return stats, nil
