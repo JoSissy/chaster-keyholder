@@ -6,7 +6,6 @@ import (
 	"chaster-keyholder/scheduler"
 	"chaster-keyholder/storage"
 	"chaster-keyholder/telegram"
-	"chaster-keyholder/tts"
 	"chaster-keyholder/web"
 	"log"
 	"net/http"
@@ -67,15 +66,6 @@ func main() {
 		log.Fatal("Error iniciando bot de Telegram:", err)
 	}
 
-	// Google Cloud TTS (opcional)
-	ttsKey := os.Getenv("GOOGLE_TTS_API_KEY")
-	ttsVoice := os.Getenv("GOOGLE_TTS_VOICE") // ej. "es-US-Neural2-B"
-	if ttsKey != "" {
-		bot.SetTTS(tts.New(ttsKey, ttsVoice))
-		log.Println("✅ Google Cloud TTS configurado")
-	} else {
-		log.Println("⚠️  Google Cloud TTS no configurado — sin notas de voz")
-	}
 
 	log.Println("🔒 Chaster Keyholder Bot iniciado")
 

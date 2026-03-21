@@ -18,7 +18,6 @@ import (
 	"chaster-keyholder/ai"
 	"chaster-keyholder/chaster"
 	"chaster-keyholder/models"
-	"chaster-keyholder/tts"
 	"chaster-keyholder/storage"
 )
 
@@ -51,8 +50,6 @@ type Bot struct {
 	pendingAction  string
 	pendingToyHint string
 
-	// TTS opcional — nil si no está configurado
-	tts *tts.Client
 }
 
 func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient *ai.Client, db *storage.DB, cloudinary *storage.CloudinaryClient) (*Bot, error) {
@@ -208,46 +205,6 @@ func (b *Bot) Send(text string) {
 	}
 }
 
-// SetTTS inyecta el cliente TTS opcional.
-func (b *Bot) SetTTS(client *tts.Client) {
-	b.tts = client
-}
-
-// SendVoice envía el texto como nota de voz usando ElevenLabs.
-// Si el cliente no está configurado o falla, no hace nada (el caller decide el fallback).
-func (b *Bot) SendVoice(text string) {
-	if b.tts == nil {
-		log.Println("[TTS] cliente no configurado — GOOGLE_TTS_API_KEY faltante?")
-		return
-	}
-	clean := stripMarkdown(text)
-	log.Printf("[TTS] generando audio (%d chars)...", len(clean))
-	audio, err := b.tts.TextToSpeech(clean)
-	if err != nil {
-		log.Printf("[TTS] error: %v", err)
-		return
-	}
-	log.Printf("[TTS] audio generado (%d bytes), enviando...", len(audio))
-	voice := tgbotapi.NewVoice(b.chatID, tgbotapi.FileBytes{
-		Name:  "papi.ogg",
-		Bytes: audio,
-	})
-	if _, err := b.api.Send(voice); err != nil {
-		log.Printf("[TTS] error enviando nota de voz: %v", err)
-	} else {
-		log.Println("[TTS] nota de voz enviada ✓")
-	}
-}
-
-// HandleTestVoice envía una nota de voz de prueba — /testvoice
-func (b *Bot) HandleTestVoice() {
-	if b.tts == nil {
-		b.Send("❌ TTS no configurado. Verifica GOOGLE_TTS_API_KEY en las variables de entorno.")
-		return
-	}
-	b.Send("🎙 Generando nota de voz de prueba...")
-	b.SendVoice("Hola mi puta sissy. Este es un mensaje de prueba de tu Papi. El audio está funcionando correctamente.")
-}
 
 func stripMarkdown(s string) string {
 	replacer := strings.NewReplacer(
@@ -1315,7 +1272,6 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		if strings.TrimSpace(decision.Condition) != "" {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
-		b.SendVoice(decision.Message)
 		b.Send(msg)
 
 	case "granted_toys":
@@ -1324,7 +1280,6 @@ func (b *Bot) handleOrgasmRequest(text string) {
 		if strings.TrimSpace(decision.Condition) != "" {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
-		b.SendVoice(decision.Message)
 		b.Send(msg)
 
 	case "edge":
@@ -1336,12 +1291,10 @@ func (b *Bot) handleOrgasmRequest(text string) {
 			msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_" + stripMarkdown(decision.Condition) + "_"
 		}
 		msg += "\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Confirma cuando hayas terminado. Tienes 2 horas._"
-		b.SendVoice(decision.Message)
 		b.Send(msg)
 
 	default: // denied
 		b.mustSaveState()
-		b.SendVoice(decision.Message)
 		b.Send("▪️ *DENEGADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(decision.Message))
 	}
 }
@@ -2086,8 +2039,6 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleRemoveTime(strings.TrimPrefix(text, "/removetime "))
 	case text == "/dbwipe":
 		b.HandleDBWipe()
-	case text == "/testvoice":
-		b.HandleTestVoice()
 	case text != "" && !strings.HasPrefix(text, "/"):
 		b.HandleChat(text)
 	}
@@ -2130,7 +2081,6 @@ func (b *Bot) SendMorningStatus() {
 	}
 
 	msg, _ := b.ai.GenerateMorningMessage(days, timeRemaining, b.state.Toys)
-	b.SendVoice(msg)
 	b.Send("🌅 *BUENOS DÍAS*\n\n" + msg)
 }
 
@@ -2166,7 +2116,6 @@ func (b *Bot) SendNightStatus() {
 	}
 
 	msg, _ := b.ai.GenerateNightMessage(days, taskCompleted, b.state.Toys)
-	b.SendVoice(msg)
 	b.Send("🌙 *BUENAS NOCHES*\n\n" + msg)
 
 	b.state.CurrentTask = nil
@@ -3215,7 +3164,6 @@ func (b *Bot) SendConditioningMessage() {
 	if err != nil {
 		return
 	}
-	b.SendVoice(msg)
 	b.Send(stripMarkdown(msg))
 }
 
@@ -3251,7 +3199,6 @@ func (b *Bot) HandleWeeklyJudgment() {
 	b.state.WeeklyDebtDetails = nil
 	b.mustSaveState()
 
-	b.SendVoice(verdict.Message)
 	b.Send("⚖️ *SENTENCIA SEMANAL*\n▬▬▬▬▬▬▬▬▬▬▬▬\n" + stripMarkdown(verdict.Message))
 
 	if verdict.AddTimeHours > 0 {
