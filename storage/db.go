@@ -36,6 +36,7 @@ func NewDB(path string) (*DB, error) {
 	db.conn.Exec(`ALTER TABLE orgasm_events RENAME TO orgasm_log`)
 	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN outcome TEXT DEFAULT ''`)
 	// Columnas defensivas en orgasm_log (falla silencioso si ya existen)
+	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN method TEXT DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN toy_id TEXT DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN toy_name TEXT DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE orgasm_log ADD COLUMN permitted INTEGER DEFAULT 1`)
