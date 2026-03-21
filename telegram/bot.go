@@ -2289,6 +2289,10 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleWardrobe(strings.TrimPrefix(text, "/wardrobe "))
 	case text == "/contract":
 		b.HandleContrato()
+	case text == "/removetime":
+		b.HandleRemoveTime("")
+	case strings.HasPrefix(text, "/removetime "):
+		b.HandleRemoveTime(strings.TrimPrefix(text, "/removetime "))
 	case text != "" && !strings.HasPrefix(text, "/"):
 		b.HandleChat(text)
 	}
