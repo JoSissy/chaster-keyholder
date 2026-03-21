@@ -1228,7 +1228,7 @@ func (b *Bot) handleOrgasmRequest(text string) {
 	// Si ya tiene permiso de cum activo, recordarlo
 	if b.state.GrantedCumPendingAt != nil {
 		if time.Now().Before(b.state.GrantedCumPendingAt.Add(3 * time.Hour)) {
-			b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso para venirte. Cuando termines, usa `/corri [método]`._")
+			b.Send("▪️ *YA TIENES PERMISO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Papi ya te dio permiso para venirte. Cuando termines, usa `/came [método]`._")
 			return
 		}
 		b.state.GrantedCumPendingAt = nil
@@ -1373,10 +1373,10 @@ func (b *Bot) handleEdgeConfirmation(text string) {
 	b.Send("▪️ *EDGE CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Al borde y sin correrte. Como debe ser._")
 }
 
-// HandleCorri procesa el reporte de orgasmo real de Jolie — /corri [método]
+// HandleCame procesa el reporte de orgasmo real de Jolie — /came [método]
 // Métodos válidos: nipples/pezones, toys/juguetes, anal, ruined/arruinado, manual, other
-func (b *Bot) HandleCorri(args string) {
-	// Separar método y juguete opcional: "/corri anal dildo" → method="anal", toyHint="dildo"
+func (b *Bot) HandleCame(args string) {
+	// Separar método y juguete opcional: "/came anal dildo" → method="anal", toyHint="dildo"
 	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
 	methodRaw := strings.ToLower(parts[0])
 	toyHint := ""
@@ -1388,7 +1388,7 @@ func (b *Bot) HandleCorri(args string) {
 	var method string
 	switch {
 	case methodRaw == "":
-		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/corri nipples` — pezones\n`/corri anal [juguete]` — anal\n`/corri toys [juguete]` — juguetes\n`/corri ruined` — arruinado\n`/corri manual` — manual\n`/corri other` — otro\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejemplo: `/corri anal dildo`_")
+		b.Send("▪️ *¿CÓMO FUE?*\n▬▬▬▬▬▬▬▬▬▬▬▬\n`/came nipples` — pezones\n`/came anal [juguete]` — anal\n`/came toys [juguete]` — juguetes\n`/came ruined` — arruinado\n`/came manual` — manual\n`/came other` — otro\n▬▬▬▬▬▬▬▬▬▬▬▬\n_Ejemplo: `/came anal dildo`_")
 		return
 	case methodRaw == "pezones" || methodRaw == "nipples":
 		method = "nipples"
@@ -1884,7 +1884,7 @@ func (b *Bot) HandleHelp() {
 /lockstats — Estadísticas de sesión
 /history — Últimas 10 tareas
 /permisos — Historial de permisos
-/corri — Reportar orgasmo real
+/came — Reportar orgasmo real
 /stats — Estadísticas de Jolie
 /mood — Estado de ánimo de Papi
 
@@ -1936,7 +1936,7 @@ func (b *Bot) Start() {
 		{tgbotapi.NewKeyboardButton("/roulette"), tgbotapi.NewKeyboardButton("/chatask")},
 		{tgbotapi.NewKeyboardButton("/toys"), tgbotapi.NewKeyboardButton("/wardrobe")},
 		{tgbotapi.NewKeyboardButton("/permisos"), tgbotapi.NewKeyboardButton("/stats")},
-		{tgbotapi.NewKeyboardButton("/corri"), tgbotapi.NewKeyboardButton("/history")},
+		{tgbotapi.NewKeyboardButton("/came"), tgbotapi.NewKeyboardButton("/history")},
 		{tgbotapi.NewKeyboardButton("/mood"), tgbotapi.NewKeyboardButton("/contrato")},
 		{tgbotapi.NewKeyboardButton("/lockstats")},
 		{tgbotapi.NewKeyboardButton("/help")},
@@ -2033,10 +2033,10 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleLockStats()
 	case text == "/permisos":
 		b.HandlePermisos()
-	case text == "/corri":
-		b.HandleCorri("")
-	case strings.HasPrefix(text, "/corri "):
-		b.HandleCorri(strings.TrimPrefix(text, "/corri "))
+	case text == "/came":
+		b.HandleCame("")
+	case strings.HasPrefix(text, "/came "):
+		b.HandleCame(strings.TrimPrefix(text, "/came "))
 	case text == "/stats":
 		b.HandleStats()
 	case text == "/history":
