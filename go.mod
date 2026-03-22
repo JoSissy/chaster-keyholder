@@ -20,6 +20,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/sys v0.28.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/gc/v3 v3.1.2 // indirect
 	modernc.org/libc v1.61.13 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

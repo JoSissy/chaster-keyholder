@@ -3,6 +3,7 @@ package main
 import (
 	"chaster-keyholder/ai"
 	"chaster-keyholder/chaster"
+	"chaster-keyholder/prompts"
 	"chaster-keyholder/scheduler"
 	"chaster-keyholder/storage"
 	"chaster-keyholder/telegram"
@@ -59,7 +60,17 @@ func main() {
 		log.Println("⚠️  Extensions API no configurada — freeze/pillory/hidetime no disponibles")
 	}
 
-	aiClient := ai.NewClient(groqKey)
+	promptsPath := os.Getenv("PROMPTS_PATH")
+	if promptsPath == "" {
+		promptsPath = "prompts/prompts.yaml"
+	}
+	p, err := prompts.Load(promptsPath)
+	if err != nil {
+		log.Fatalf("Error cargando prompts: %v", err)
+	}
+	log.Println("✅ Prompts cargados desde", promptsPath)
+
+	aiClient := ai.NewClient(groqKey, p)
 
 	bot, err := telegram.NewBot(telegramToken, chatID, chasterClient, aiClient, db, cloudinary)
 	if err != nil {
