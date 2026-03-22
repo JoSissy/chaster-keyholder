@@ -9,17 +9,25 @@ import (
 	"time"
 
 	"chaster-keyholder/models"
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type DB struct {
 	conn *sql.DB
 }
 
-func NewDB(path string) (*DB, error) {
-	conn, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_foreign_keys=on")
+func NewDB(url string) (*DB, error) {
+	conn, err := sql.Open("pgx", url)
 	if err != nil {
 		return nil, fmt.Errorf("error abriendo base de datos: %w", err)
+	}
+
+	conn.SetMaxOpenConns(25)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(5 * time.Minute)
+
+	if err := conn.Ping(); err != nil {
+		return nil, fmt.Errorf("error conectando a la base de datos: %w", err)
 	}
 
 	db := &DB{conn: conn}
@@ -56,7 +64,7 @@ func (db *DB) migrate() error {
 		if err := m.fn(); err != nil {
 			return fmt.Errorf("migration v%d (%s): %w", m.version, m.label, err)
 		}
-		db.conn.Exec(`INSERT INTO schema_version (version) VALUES (?)`, m.version)
+		db.conn.Exec(`INSERT INTO schema_version (version) VALUES ($1)`, m.version)
 		version = m.version
 		log.Printf("[migrate] v%d aplicada ✓", m.version)
 	}
@@ -66,45 +74,47 @@ func (db *DB) migrate() error {
 // migrateV1 crea todas las tablas base con el schema limpio y definitivo.
 //
 // Descripción de tablas:
-//   toys             — juguetes registrados (jaulas, plugs, vibradores, etc.)
-//   locks            — historial de sesiones de castidad (una fila por sesión)
-//   tasks            — tareas diarias asignadas (foto_url = evidencia en Cloudinary)
-//   chaster_tasks    — tareas comunitarias de Chaster (verificadas por la comunidad, no por IA)
-//   clothing         — prendas del guardarropa de Jolie
-//   outfit_log       — registro de outfits diarios asignados con foto aprobada
-//   events           — eventos random ejecutados (freeze, hidetime, pillory)
-//   negotiations     — historial de negociaciones de tiempo (/removetime)
-//   permission_log   — historial de solicitudes de permiso de orgasmo con resultado
-//   orgasm_log       — orgasmos reportados con /came (method, toy usado, si era permitido)
-//   session_state    — copia de seguridad de contadores críticos (espejo de AppState)
-//                      solo tiene UNA fila con id='current'
-//   contracts        — contratos generados al inicio de cada sesión (/contract)
-//   contract_rules   — reglas individuales del contrato activo con su castigo asociado
-//   checkins         — historial de check-ins espontáneos (verification_code, tiempo respuesta)
-//   chat_history     — historial de conversación del chat libre con Papi (para contexto)
-//   violations_log   — infracciones al contrato detectadas por la IA en el chat libre
-//   schema_version   — tabla de control de migraciones (una fila por migración aplicada)
+//
+//	toys             — juguetes registrados (jaulas, plugs, vibradores, etc.)
+//	locks            — historial de sesiones de castidad (una fila por sesión)
+//	tasks            — tareas diarias asignadas (foto_url = evidencia en Cloudinary)
+//	chaster_tasks    — tareas comunitarias de Chaster (verificadas por la comunidad, no por IA)
+//	clothing         — prendas del guardarropa de Jolie
+//	outfit_log       — registro de outfits diarios asignados con foto aprobada
+//	events           — eventos random ejecutados (freeze, hidetime, pillory)
+//	negotiations     — historial de negociaciones de tiempo (/removetime)
+//	permission_log   — historial de solicitudes de permiso de orgasmo con resultado
+//	orgasm_log       — orgasmos reportados con /came (method, toy usado, si era permitido)
+//	session_state    — copia de seguridad de contadores críticos (espejo de AppState)
+//	                   solo tiene UNA fila con id='current'
+//	contracts        — contratos generados al inicio de cada sesión (/contract)
+//	contract_rules   — reglas individuales del contrato activo con su castigo asociado
+//	checkins         — historial de check-ins espontáneos (verification_code, tiempo respuesta)
+//	chat_history     — historial de conversación del chat libre con Papi (para contexto)
+//	violations_log   — infracciones al contrato detectadas por la IA en el chat libre
+//	schema_version   — tabla de control de migraciones (una fila por migración aplicada)
+//	bot_state        — KV store para el AppState serializado (reemplaza state.json)
 //
 // Todos los timestamps se guardan en UTC. Las comparaciones de "hoy" se hacen
 // en COT (cotLocation) en bot.go antes de persistir.
 func (db *DB) migrateV1() error {
 	_, err := db.conn.Exec(`
 	CREATE TABLE IF NOT EXISTS toys (
-		id             TEXT PRIMARY KEY,
-		name           TEXT NOT NULL,
-		description    TEXT DEFAULT '',
-		photo_url      TEXT DEFAULT '',
+		id              TEXT PRIMARY KEY,
+		name            TEXT NOT NULL,
+		description     TEXT DEFAULT '',
+		photo_url       TEXT DEFAULT '',
 		photo_public_id TEXT DEFAULT '',
-		type           TEXT DEFAULT 'other',
-		in_use         INTEGER DEFAULT 0,
-		created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+		type            TEXT DEFAULT 'other',
+		in_use          INTEGER DEFAULT 0,
+		created_at      TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS locks (
 		id                  TEXT PRIMARY KEY,
 		chaster_id          TEXT NOT NULL,
-		started_at          DATETIME NOT NULL,
-		ended_at            DATETIME,
+		started_at          TIMESTAMPTZ NOT NULL,
+		ended_at            TIMESTAMPTZ,
 		duration_hours      INTEGER DEFAULT 0,
 		tasks_completed     INTEGER DEFAULT 0,
 		tasks_failed        INTEGER DEFAULT 0,
@@ -118,9 +128,9 @@ func (db *DB) migrateV1() error {
 		lock_id       TEXT REFERENCES locks(id),
 		description   TEXT NOT NULL,
 		photo_url     TEXT DEFAULT '',
-		assigned_at   DATETIME NOT NULL,
-		due_at        DATETIME NOT NULL,
-		completed_at  DATETIME,
+		assigned_at   TIMESTAMPTZ NOT NULL,
+		due_at        TIMESTAMPTZ NOT NULL,
+		completed_at  TIMESTAMPTZ,
 		status        TEXT DEFAULT 'pending',
 		penalty_hours INTEGER DEFAULT 0,
 		reward_hours  INTEGER DEFAULT 0
@@ -131,8 +141,8 @@ func (db *DB) migrateV1() error {
 		description TEXT NOT NULL,
 		photo_url   TEXT DEFAULT '',
 		result      TEXT DEFAULT 'pending',
-		assigned_at DATETIME NOT NULL,
-		resolved_at DATETIME
+		assigned_at TIMESTAMPTZ NOT NULL,
+		resolved_at TIMESTAMPTZ
 	);
 
 	CREATE TABLE IF NOT EXISTS clothing (
@@ -142,7 +152,7 @@ func (db *DB) migrateV1() error {
 		photo_url       TEXT DEFAULT '',
 		photo_public_id TEXT DEFAULT '',
 		type            TEXT DEFAULT 'other',
-		added_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+		added_at        TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS outfit_log (
@@ -152,7 +162,7 @@ func (db *DB) migrateV1() error {
 		pose_desc   TEXT DEFAULT '',
 		photo_url   TEXT DEFAULT '',
 		comment     TEXT DEFAULT '',
-		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at  TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS events (
@@ -160,8 +170,8 @@ func (db *DB) migrateV1() error {
 		lock_id          TEXT REFERENCES locks(id),
 		type             TEXT NOT NULL,
 		duration_minutes INTEGER DEFAULT 0,
-		triggered_at     DATETIME NOT NULL,
-		resolved_at      DATETIME,
+		triggered_at     TIMESTAMPTZ NOT NULL,
+		resolved_at      TIMESTAMPTZ,
 		negotiated       INTEGER DEFAULT 0
 	);
 
@@ -171,7 +181,7 @@ func (db *DB) migrateV1() error {
 		request          TEXT NOT NULL,
 		decision         TEXT NOT NULL,
 		time_delta_hours INTEGER DEFAULT 0,
-		created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at       TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS permission_log (
@@ -183,12 +193,12 @@ func (db *DB) migrateV1() error {
 		condition_text TEXT DEFAULT '',
 		streak_at_time INTEGER DEFAULT 0,
 		days_locked    INTEGER DEFAULT 0,
-		created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at     TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS orgasm_log (
 		id                 TEXT PRIMARY KEY,
-		created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+		created_at         TIMESTAMPTZ DEFAULT NOW(),
 		method             TEXT DEFAULT '',
 		toy_id             TEXT DEFAULT '',
 		toy_name           TEXT DEFAULT '',
@@ -209,21 +219,21 @@ func (db *DB) migrateV1() error {
 		weekly_debt_details      TEXT DEFAULT '[]',
 		last_judgment_date       TEXT DEFAULT '',
 		current_lock_id          TEXT DEFAULT '',
-		updated_at               DATETIME DEFAULT CURRENT_TIMESTAMP
+		updated_at               TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS contracts (
 		id         TEXT PRIMARY KEY,
 		lock_id    TEXT DEFAULT '',
 		text       TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS checkins (
 		id                 TEXT PRIMARY KEY,
 		lock_id            TEXT DEFAULT '',
-		requested_at       DATETIME NOT NULL,
-		responded_at       DATETIME,
+		requested_at       TIMESTAMPTZ NOT NULL,
+		responded_at       TIMESTAMPTZ,
 		photo_url          TEXT DEFAULT '',
 		verification_code  TEXT DEFAULT '',
 		status             TEXT DEFAULT 'pending',
@@ -231,10 +241,10 @@ func (db *DB) migrateV1() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS chat_history (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		id         BIGSERIAL PRIMARY KEY,
 		role       TEXT NOT NULL,
 		content    TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS contract_rules (
@@ -244,7 +254,7 @@ func (db *DB) migrateV1() error {
 		punishment TEXT NOT NULL,
 		hours      INTEGER DEFAULT 0,
 		minutes    INTEGER DEFAULT 0,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE TABLE IF NOT EXISTS violations_log (
@@ -254,7 +264,7 @@ func (db *DB) migrateV1() error {
 		punishment TEXT NOT NULL,
 		hours      INTEGER DEFAULT 0,
 		minutes    INTEGER DEFAULT 0,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_tasks_assigned_at       ON tasks(assigned_at);
@@ -263,57 +273,22 @@ func (db *DB) migrateV1() error {
 	CREATE INDEX IF NOT EXISTS idx_checkins_requested_at   ON checkins(requested_at);
 	CREATE INDEX IF NOT EXISTS idx_chat_history_created    ON chat_history(created_at);
 	CREATE INDEX IF NOT EXISTS idx_violations_log_created  ON violations_log(created_at);
+
+	CREATE TABLE IF NOT EXISTS bot_state (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL DEFAULT '',
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
 	`)
 	return err
 }
 
-// migrateV2 corrige el schema de producción — tablas renombradas y columnas faltantes.
-// Contexto: en la versión inicial se usó "orgasm_log" para permisos y "orgasm_events"
-// para registros reales. Se renombraron a permission_log y orgasm_log respectivamente.
-// NOTA: las sentencias ALTER COLUMN son ignoradas silenciosamente por SQLite
-// (no las soporta), pero no causan error porque Exec() descarta el return value.
-// El efecto neto es que las columnas existentes mantienen sus constraints originales,
-// lo cual es aceptable porque migrateV1 ya las crea con DEFAULT '' correcto.
+// migrateV2 — versión simplificada para Postgres con IF NOT EXISTS.
 func (db *DB) migrateV2() error {
-	// Renombrar tablas legacy si aún existen con nombres viejos
-	db.conn.Exec(`ALTER TABLE orgasm_log RENAME TO permission_log`)
-	db.conn.Exec(`ALTER TABLE orgasm_events RENAME TO orgasm_log`)
-
-	// Columnas faltantes en tablas existentes (falla silencioso si ya existen)
-	db.conn.Exec(`ALTER TABLE toys ADD COLUMN photo_public_id TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE clothing ADD COLUMN photo_public_id TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN outcome TEXT DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE permission_log ALTER COLUMN user_message SET DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE permission_log ALTER COLUMN senor_response SET DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN verification_code TEXT DEFAULT ''`)
-
-	// Si orgasm_log tiene schema viejo de permisos (user_message NOT NULL), recrear
-	var hasUserMessage int
-	db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orgasm_log') WHERE name='user_message'`).Scan(&hasUserMessage)
-	if hasUserMessage > 0 {
-		log.Println("[migrateV2] recreando orgasm_log con schema correcto...")
-		db.conn.Exec(`CREATE TABLE IF NOT EXISTS orgasm_log_new (
-			id                 TEXT PRIMARY KEY,
-			created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
-			method             TEXT DEFAULT '',
-			toy_id             TEXT DEFAULT '',
-			toy_name           TEXT DEFAULT '',
-			permitted          INTEGER DEFAULT 1,
-			permission_outcome TEXT DEFAULT 'granted_cum',
-			streak_at_time     INTEGER DEFAULT 0,
-			days_locked        INTEGER DEFAULT 0
-		)`)
-		db.conn.Exec(`INSERT OR IGNORE INTO orgasm_log_new
-			SELECT id, created_at,
-			       COALESCE(method,''), COALESCE(toy_id,''), COALESCE(toy_name,''),
-			       COALESCE(permitted,1), COALESCE(permission_outcome,'granted_cum'),
-			       COALESCE(streak_at_time,0), COALESCE(days_locked,0)
-			FROM orgasm_log`)
-		db.conn.Exec(`DROP TABLE orgasm_log`)
-		db.conn.Exec(`ALTER TABLE orgasm_log_new RENAME TO orgasm_log`)
-		db.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_orgasm_log_created ON orgasm_log(created_at)`)
-	}
-
+	db.conn.Exec(`ALTER TABLE toys ADD COLUMN IF NOT EXISTS photo_public_id TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE clothing ADD COLUMN IF NOT EXISTS photo_public_id TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE permission_log ADD COLUMN IF NOT EXISTS outcome TEXT DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE checkins ADD COLUMN IF NOT EXISTS verification_code TEXT DEFAULT ''`)
 	return nil
 }
 
@@ -336,8 +311,16 @@ func (db *DB) SaveToy(t *Toy) error {
 		inUse = 1
 	}
 	_, err := db.conn.Exec(`
-		INSERT OR REPLACE INTO toys (id, name, description, photo_url, photo_public_id, type, in_use, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO toys (id, name, description, photo_url, photo_public_id, type, in_use, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (id) DO UPDATE SET
+			name=EXCLUDED.name,
+			description=EXCLUDED.description,
+			photo_url=EXCLUDED.photo_url,
+			photo_public_id=EXCLUDED.photo_public_id,
+			type=EXCLUDED.type,
+			in_use=EXCLUDED.in_use,
+			created_at=EXCLUDED.created_at`,
 		t.ID, t.Name, t.Description, t.PhotoURL, t.PhotoPublicID, t.Type, inUse, t.CreatedAt,
 	)
 	return err
@@ -392,7 +375,7 @@ func (db *DB) SetToyInUse(id string, inUse bool) error {
 	if inUse {
 		db.conn.Exec(`UPDATE toys SET in_use=0 WHERE type='cage'`)
 	}
-	_, err := db.conn.Exec(`UPDATE toys SET in_use=? WHERE id=?`, val, id)
+	_, err := db.conn.Exec(`UPDATE toys SET in_use=$1 WHERE id=$2`, val, id)
 	return err
 }
 
@@ -402,7 +385,7 @@ func (db *DB) ClearAllInUse() error {
 }
 
 func (db *DB) DeleteToy(id string) error {
-	_, err := db.conn.Exec(`DELETE FROM toys WHERE id = ?`, id)
+	_, err := db.conn.Exec(`DELETE FROM toys WHERE id = $1`, id)
 	return err
 }
 
@@ -423,9 +406,19 @@ type Lock struct {
 
 func (db *DB) SaveLock(l *Lock) error {
 	_, err := db.conn.Exec(`
-		INSERT OR REPLACE INTO locks
+		INSERT INTO locks
 		(id, chaster_id, started_at, ended_at, duration_hours, tasks_completed, tasks_failed, time_added_hours, time_removed_hours, events_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (id) DO UPDATE SET
+			chaster_id=EXCLUDED.chaster_id,
+			started_at=EXCLUDED.started_at,
+			ended_at=EXCLUDED.ended_at,
+			duration_hours=EXCLUDED.duration_hours,
+			tasks_completed=EXCLUDED.tasks_completed,
+			tasks_failed=EXCLUDED.tasks_failed,
+			time_added_hours=EXCLUDED.time_added_hours,
+			time_removed_hours=EXCLUDED.time_removed_hours,
+			events_count=EXCLUDED.events_count`,
 		l.ID, l.ChasterID, l.StartedAt, l.EndedAt, l.DurationHours,
 		l.TasksCompleted, l.TasksFailed, l.TimeAddedHours, l.TimeRemovedHours, l.EventsCount,
 	)
@@ -434,9 +427,9 @@ func (db *DB) SaveLock(l *Lock) error {
 
 func (db *DB) UpdateLockEnd(id string, endedAt time.Time, tasksCompleted, tasksFailed, timeAdded, timeRemoved, eventsCount int) error {
 	_, err := db.conn.Exec(`
-		UPDATE locks SET ended_at=?, tasks_completed=?, tasks_failed=?,
-		time_added_hours=?, time_removed_hours=?, events_count=?
-		WHERE id=?`,
+		UPDATE locks SET ended_at=$1, tasks_completed=$2, tasks_failed=$3,
+		time_added_hours=$4, time_removed_hours=$5, events_count=$6
+		WHERE id=$7`,
 		endedAt, tasksCompleted, tasksFailed, timeAdded, timeRemoved, eventsCount, id,
 	)
 	return err
@@ -477,9 +470,19 @@ type Task struct {
 
 func (db *DB) SaveTask(t *Task) error {
 	_, err := db.conn.Exec(`
-		INSERT OR REPLACE INTO tasks
+		INSERT INTO tasks
 		(id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (id) DO UPDATE SET
+			lock_id=EXCLUDED.lock_id,
+			description=EXCLUDED.description,
+			photo_url=EXCLUDED.photo_url,
+			assigned_at=EXCLUDED.assigned_at,
+			due_at=EXCLUDED.due_at,
+			completed_at=EXCLUDED.completed_at,
+			status=EXCLUDED.status,
+			penalty_hours=EXCLUDED.penalty_hours,
+			reward_hours=EXCLUDED.reward_hours`,
 		t.ID, t.LockID, t.Description, t.PhotoURL, t.AssignedAt, t.DueAt,
 		t.CompletedAt, t.Status, t.PenaltyHours, t.RewardHours,
 	)
@@ -487,7 +490,7 @@ func (db *DB) SaveTask(t *Task) error {
 }
 
 func (db *DB) GetTasksByLock(lockID string) ([]*Task, error) {
-	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks WHERE lock_id=? ORDER BY assigned_at`, lockID)
+	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks WHERE lock_id=$1 ORDER BY assigned_at`, lockID)
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +508,7 @@ func (db *DB) GetTasksByLock(lockID string) ([]*Task, error) {
 }
 
 func (db *DB) GetRecentTasks(n int) ([]*Task, error) {
-	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
+	rows, err := db.conn.Query(`SELECT id, lock_id, description, photo_url, assigned_at, due_at, completed_at, status, penalty_hours, reward_hours FROM tasks ORDER BY assigned_at DESC LIMIT $1`, n)
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +571,7 @@ func (db *DB) GetAllPermissionEntries() ([]*PermissionEntry, error) {
 }
 
 func (db *DB) GetRecentTaskDescriptions(n int) ([]string, error) {
-	rows, err := db.conn.Query(`SELECT description FROM tasks ORDER BY assigned_at DESC LIMIT ?`, n)
+	rows, err := db.conn.Query(`SELECT description FROM tasks ORDER BY assigned_at DESC LIMIT $1`, n)
 	if err != nil {
 		return nil, err
 	}
@@ -614,7 +617,7 @@ func (db *DB) SavePermissionEntry(e *PermissionEntry) error {
 	}
 	_, err := db.conn.Exec(`
 		INSERT INTO permission_log (id, granted, outcome, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		id, granted, outcome, e.UserMessage, e.SenorResponse, e.Condition, e.StreakAtTime, e.DaysLocked, time.Now(),
 	)
 	return err
@@ -623,7 +626,7 @@ func (db *DB) SavePermissionEntry(e *PermissionEntry) error {
 func (db *DB) GetPermissionHistory(limit int) ([]*PermissionEntry, error) {
 	rows, err := db.conn.Query(`
 		SELECT id, granted, COALESCE(outcome,''), user_message, senor_response, condition_text, streak_at_time, days_locked, created_at
-		FROM permission_log ORDER BY created_at DESC LIMIT ?`, limit)
+		FROM permission_log ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -701,7 +704,7 @@ func (db *DB) SaveOrgasmEntry(e *OrgasmEntry) error {
 	}
 	_, err := db.conn.Exec(`
 		INSERT INTO orgasm_log (id, created_at, method, toy_id, toy_name, permitted, permission_outcome, streak_at_time, days_locked)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		id, time.Now(), e.Method, e.ToyID, e.ToyName, permitted, e.PermissionOutcome, e.StreakAtTime, e.DaysLocked,
 	)
 	return err
@@ -711,7 +714,7 @@ func (db *DB) GetOrgasmHistory(limit int) ([]*OrgasmEntry, error) {
 	rows, err := db.conn.Query(`
 		SELECT id, created_at, method, COALESCE(toy_id,''), COALESCE(toy_name,''), permitted,
 		       COALESCE(permission_outcome,'granted_cum'), streak_at_time, days_locked
-		FROM orgasm_log ORDER BY created_at DESC LIMIT ?`, limit)
+		FROM orgasm_log ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -811,18 +814,18 @@ func (db *DB) SaveSessionState(s *SessionState) error {
 			(id, tasks_streak, tasks_completed, tasks_failed,
 			 total_time_added_hours, total_time_removed_hours,
 			 weekly_debt, weekly_debt_details, last_judgment_date, current_lock_id, updated_at)
-		VALUES ('current', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(id) DO UPDATE SET
-			tasks_streak=excluded.tasks_streak,
-			tasks_completed=excluded.tasks_completed,
-			tasks_failed=excluded.tasks_failed,
-			total_time_added_hours=excluded.total_time_added_hours,
-			total_time_removed_hours=excluded.total_time_removed_hours,
-			weekly_debt=excluded.weekly_debt,
-			weekly_debt_details=excluded.weekly_debt_details,
-			last_judgment_date=excluded.last_judgment_date,
-			current_lock_id=excluded.current_lock_id,
-			updated_at=excluded.updated_at`,
+		VALUES ('current', $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			tasks_streak=EXCLUDED.tasks_streak,
+			tasks_completed=EXCLUDED.tasks_completed,
+			tasks_failed=EXCLUDED.tasks_failed,
+			total_time_added_hours=EXCLUDED.total_time_added_hours,
+			total_time_removed_hours=EXCLUDED.total_time_removed_hours,
+			weekly_debt=EXCLUDED.weekly_debt,
+			weekly_debt_details=EXCLUDED.weekly_debt_details,
+			last_judgment_date=EXCLUDED.last_judgment_date,
+			current_lock_id=EXCLUDED.current_lock_id,
+			updated_at=EXCLUDED.updated_at`,
 		s.TasksStreak, s.TasksCompleted, s.TasksFailed,
 		s.TotalTimeAddedHours, s.TotalTimeRemovedHours,
 		s.WeeklyDebt, string(details), s.LastJudgmentDate, s.CurrentLockID,
@@ -864,8 +867,14 @@ type ChasterTask struct {
 
 func (db *DB) SaveChasterTask(t *ChasterTask) error {
 	_, err := db.conn.Exec(
-		`INSERT OR REPLACE INTO chaster_tasks (id, description, photo_url, result, assigned_at, resolved_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO chaster_tasks (id, description, photo_url, result, assigned_at, resolved_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (id) DO UPDATE SET
+		 	description=EXCLUDED.description,
+		 	photo_url=EXCLUDED.photo_url,
+		 	result=EXCLUDED.result,
+		 	assigned_at=EXCLUDED.assigned_at,
+		 	resolved_at=EXCLUDED.resolved_at`,
 		t.ID, t.Description, t.PhotoURL, t.Result, t.AssignedAt, t.ResolvedAt,
 	)
 	return err
@@ -873,14 +882,14 @@ func (db *DB) SaveChasterTask(t *ChasterTask) error {
 
 func (db *DB) UpdateChasterTaskResult(id, result string, photoURL string, resolvedAt *time.Time) error {
 	_, err := db.conn.Exec(
-		`UPDATE chaster_tasks SET result=?, photo_url=CASE WHEN ?!='' THEN ? ELSE photo_url END, resolved_at=? WHERE id=?`,
-		result, photoURL, photoURL, resolvedAt, id,
+		`UPDATE chaster_tasks SET result=$1, photo_url=CASE WHEN $2!='' THEN $2 ELSE photo_url END, resolved_at=$3 WHERE id=$4`,
+		result, photoURL, resolvedAt, id,
 	)
 	return err
 }
 
 func (db *DB) GetRecentChasterTaskDescriptions(n int) ([]string, error) {
-	rows, err := db.conn.Query(`SELECT description FROM chaster_tasks ORDER BY assigned_at DESC LIMIT ?`, n)
+	rows, err := db.conn.Query(`SELECT description FROM chaster_tasks ORDER BY assigned_at DESC LIMIT $1`, n)
 	if err != nil {
 		return nil, err
 	}
@@ -899,7 +908,7 @@ func (db *DB) GetRecentChasterTaskDescriptions(n int) ([]string, error) {
 func (db *DB) GetChasterTaskHistory(n int) ([]*ChasterTask, error) {
 	rows, err := db.conn.Query(
 		`SELECT id, description, photo_url, result, assigned_at, resolved_at
-		 FROM chaster_tasks ORDER BY assigned_at DESC LIMIT ?`, n,
+		 FROM chaster_tasks ORDER BY assigned_at DESC LIMIT $1`, n,
 	)
 	if err != nil {
 		return nil, err
@@ -929,7 +938,14 @@ type ClothingItem struct {
 
 func (db *DB) SaveClothingItem(c *ClothingItem) error {
 	_, err := db.conn.Exec(
-		`INSERT OR REPLACE INTO clothing (id, name, description, photo_url, type, added_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO clothing (id, name, description, photo_url, type, added_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (id) DO UPDATE SET
+		 	name=EXCLUDED.name,
+		 	description=EXCLUDED.description,
+		 	photo_url=EXCLUDED.photo_url,
+		 	type=EXCLUDED.type,
+		 	added_at=EXCLUDED.added_at`,
 		c.ID, c.Name, c.Description, c.PhotoURL, c.Type, c.AddedAt,
 	)
 	return err
@@ -953,7 +969,7 @@ func (db *DB) GetClothingItems() ([]*ClothingItem, error) {
 }
 
 func (db *DB) DeleteClothingItem(id string) error {
-	_, err := db.conn.Exec(`DELETE FROM clothing WHERE id = ?`, id)
+	_, err := db.conn.Exec(`DELETE FROM clothing WHERE id = $1`, id)
 	return err
 }
 
@@ -963,7 +979,8 @@ func (db *DB) DeleteClothingItem(id string) error {
 func (db *DB) ResetAllTables() error {
 	tables := []string{
 		"toys", "locks", "tasks", "chaster_tasks", "clothing", "outfit_log",
-		"events", "negotiations", "permission_log", "orgasm_log", "session_state", "checkins", "contracts",
+		"events", "negotiations", "permission_log", "orgasm_log", "session_state",
+		"checkins", "contracts", "bot_state",
 	}
 	for _, t := range tables {
 		if _, err := db.conn.Exec("DELETE FROM " + t); err != nil {
@@ -1071,7 +1088,12 @@ type Contract struct {
 
 func (db *DB) SaveContract(c *Contract) error {
 	_, err := db.conn.Exec(
-		`INSERT OR REPLACE INTO contracts (id, lock_id, text, created_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO contracts (id, lock_id, text, created_at)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (id) DO UPDATE SET
+		 	lock_id=EXCLUDED.lock_id,
+		 	text=EXCLUDED.text,
+		 	created_at=EXCLUDED.created_at`,
 		c.ID, c.LockID, c.Text, c.CreatedAt,
 	)
 	return err
@@ -1091,7 +1113,7 @@ func (db *DB) GetLatestContract() (*Contract, error) {
 func (db *DB) GetContractByLockID(lockID string) (*Contract, error) {
 	c := &Contract{}
 	err := db.conn.QueryRow(
-		`SELECT id, lock_id, text, created_at FROM contracts WHERE lock_id=? ORDER BY created_at DESC LIMIT 1`,
+		`SELECT id, lock_id, text, created_at FROM contracts WHERE lock_id=$1 ORDER BY created_at DESC LIMIT 1`,
 		lockID,
 	).Scan(&c.ID, &c.LockID, &c.Text, &c.CreatedAt)
 	if err != nil {
@@ -1106,7 +1128,7 @@ func (db *DB) SeedPermissionGranted(daysAgo int) error {
 	createdAt := time.Now().AddDate(0, 0, -daysAgo)
 	_, err := db.conn.Exec(
 		`INSERT INTO permission_log (id, granted, user_message, senor_response, condition_text, streak_at_time, days_locked, created_at)
-		 VALUES (?, 1, 'permiso', 'Concedido.', '', 0, 0, ?)`,
+		 VALUES ($1, 1, 'permiso', 'Concedido.', '', 0, 0, $2)`,
 		id, createdAt,
 	)
 	return err
@@ -1127,8 +1149,16 @@ type CheckinEntry struct {
 
 func (db *DB) SaveCheckin(c *CheckinEntry) error {
 	_, err := db.conn.Exec(
-		`INSERT OR REPLACE INTO checkins (id, lock_id, requested_at, responded_at, photo_url, status, response_time_mins, verification_code)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO checkins (id, lock_id, requested_at, responded_at, photo_url, status, response_time_mins, verification_code)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (id) DO UPDATE SET
+		 	lock_id=EXCLUDED.lock_id,
+		 	requested_at=EXCLUDED.requested_at,
+		 	responded_at=EXCLUDED.responded_at,
+		 	photo_url=EXCLUDED.photo_url,
+		 	status=EXCLUDED.status,
+		 	response_time_mins=EXCLUDED.response_time_mins,
+		 	verification_code=EXCLUDED.verification_code`,
 		c.ID, c.LockID, c.RequestedAt, c.RespondedAt, c.PhotoURL, c.Status, c.ResponseTimeMins, c.VerificationCode,
 	)
 	return err
@@ -1136,8 +1166,8 @@ func (db *DB) SaveCheckin(c *CheckinEntry) error {
 
 func (db *DB) UpdateCheckin(id, status, photoURL string, respondedAt *time.Time, responseTimeMins int) error {
 	_, err := db.conn.Exec(
-		`UPDATE checkins SET status=?, photo_url=CASE WHEN ?!='' THEN ? ELSE photo_url END, responded_at=?, response_time_mins=? WHERE id=?`,
-		status, photoURL, photoURL, respondedAt, responseTimeMins, id,
+		`UPDATE checkins SET status=$1, photo_url=CASE WHEN $2!='' THEN $2 ELSE photo_url END, responded_at=$3, response_time_mins=$4 WHERE id=$5`,
+		status, photoURL, respondedAt, responseTimeMins, id,
 	)
 	return err
 }
@@ -1145,7 +1175,7 @@ func (db *DB) UpdateCheckin(id, status, photoURL string, respondedAt *time.Time,
 func (db *DB) GetCheckinHistory(limit int) ([]*CheckinEntry, error) {
 	rows, err := db.conn.Query(
 		`SELECT id, lock_id, requested_at, responded_at, photo_url, status, response_time_mins
-		 FROM checkins ORDER BY requested_at DESC LIMIT ?`, limit,
+		 FROM checkins ORDER BY requested_at DESC LIMIT $1`, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -1167,7 +1197,7 @@ func (db *DB) GetCheckinStats() (total, approved, missed int, avgResponseMins in
 		SELECT COUNT(*),
 		       SUM(CASE WHEN status='submitted' OR status='approved' THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN status='missed' OR status='rejected' THEN 1 ELSE 0 END),
-		       COALESCE(AVG(CASE WHEN (status='submitted' OR status='approved') AND response_time_mins > 0 THEN response_time_mins END), 0)
+		       COALESCE(ROUND(AVG(CASE WHEN (status='submitted' OR status='approved') AND response_time_mins > 0 THEN response_time_mins END))::integer, 0)
 		FROM checkins`).Scan(&total, &approved, &missed, &avgResponseMins)
 	return
 }
@@ -1199,8 +1229,15 @@ type OutfitEntry struct {
 
 func (db *DB) SaveOutfitEntry(e *OutfitEntry) error {
 	_, err := db.conn.Exec(
-		`INSERT OR REPLACE INTO outfit_log (id, date, outfit_desc, pose_desc, photo_url, comment, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO outfit_log (id, date, outfit_desc, pose_desc, photo_url, comment, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (id) DO UPDATE SET
+		 	date=EXCLUDED.date,
+		 	outfit_desc=EXCLUDED.outfit_desc,
+		 	pose_desc=EXCLUDED.pose_desc,
+		 	photo_url=EXCLUDED.photo_url,
+		 	comment=EXCLUDED.comment,
+		 	created_at=EXCLUDED.created_at`,
 		e.ID, e.Date, e.OutfitDesc, e.PoseDesc, e.PhotoURL, e.Comment, e.CreatedAt,
 	)
 	return err
@@ -1209,7 +1246,7 @@ func (db *DB) SaveOutfitEntry(e *OutfitEntry) error {
 func (db *DB) GetOutfitHistory(limit int) ([]*OutfitEntry, error) {
 	rows, err := db.conn.Query(
 		`SELECT id, date, outfit_desc, pose_desc, photo_url, comment, created_at
-		 FROM outfit_log ORDER BY created_at DESC LIMIT ?`, limit,
+		 FROM outfit_log ORDER BY created_at DESC LIMIT $1`, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -1244,8 +1281,15 @@ func (db *DB) SaveEvent(e *Event) error {
 		neg = 1
 	}
 	_, err := db.conn.Exec(`
-		INSERT OR REPLACE INTO events (id, lock_id, type, duration_minutes, triggered_at, resolved_at, negotiated)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO events (id, lock_id, type, duration_minutes, triggered_at, resolved_at, negotiated)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (id) DO UPDATE SET
+			lock_id=EXCLUDED.lock_id,
+			type=EXCLUDED.type,
+			duration_minutes=EXCLUDED.duration_minutes,
+			triggered_at=EXCLUDED.triggered_at,
+			resolved_at=EXCLUDED.resolved_at,
+			negotiated=EXCLUDED.negotiated`,
 		e.ID, e.LockID, e.Type, e.DurationMinutes, e.TriggeredAt, e.ResolvedAt, neg,
 	)
 	return err
@@ -1265,7 +1309,7 @@ type Negotiation struct {
 func (db *DB) SaveNegotiation(n *Negotiation) error {
 	_, err := db.conn.Exec(`
 		INSERT INTO negotiations (id, lock_id, request, decision, time_delta_hours, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		VALUES ($1, $2, $3, $4, $5, $6)`,
 		n.ID, n.LockID, n.Request, n.Decision, n.TimeDeltaHours, n.CreatedAt,
 	)
 	return err
@@ -1301,7 +1345,7 @@ func (db *DB) GetStats() (*Stats, error) {
 // ── Chat History ───────────────────────────────────────────────────────────
 
 func (db *DB) SaveChatMessage(role, content string) error {
-	_, err := db.conn.Exec(`INSERT INTO chat_history (role, content, created_at) VALUES (?, ?, ?)`, role, content, time.Now())
+	_, err := db.conn.Exec(`INSERT INTO chat_history (role, content, created_at) VALUES ($1, $2, $3)`, role, content, time.Now())
 	return err
 }
 
@@ -1320,8 +1364,8 @@ func (db *DB) GetRecentChatHistory(n int, maxIdleMinutes int) ([]models.ChatMess
 
 	rows, err := db.conn.Query(`
 		SELECT role, content FROM (
-			SELECT id, role, content FROM chat_history ORDER BY id DESC LIMIT ?
-		) ORDER BY id ASC`, n*2)
+			SELECT id, role, content FROM chat_history ORDER BY id DESC LIMIT $1
+		) AS recent ORDER BY id ASC`, n*2)
 	if err != nil {
 		return nil, err
 	}
@@ -1349,7 +1393,7 @@ func (db *DB) SaveContractRules(rules []models.ContractRule) error {
 	db.conn.Exec(`DELETE FROM contract_rules`)
 	for _, r := range rules {
 		db.conn.Exec(
-			`INSERT INTO contract_rules (id, lock_id, rule_text, punishment, hours, minutes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO contract_rules (id, lock_id, rule_text, punishment, hours, minutes, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			r.ID, r.LockID, r.RuleText, r.Punishment, r.Hours, r.Minutes, time.Now(),
 		)
 	}
@@ -1384,7 +1428,7 @@ func (db *DB) ClearContractRules() error {
 func (db *DB) LogViolation(ruleID, ruleText, punishment string, hours, minutes int) error {
 	id := fmt.Sprintf("violation-%d", time.Now().UnixNano())
 	_, err := db.conn.Exec(
-		`INSERT INTO violations_log (id, rule_id, rule_text, punishment, hours, minutes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO violations_log (id, rule_id, rule_text, punishment, hours, minutes, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		id, ruleID, ruleText, punishment, hours, minutes, time.Now(),
 	)
 	return err
@@ -1394,9 +1438,43 @@ func (db *DB) LogViolation(ruleID, ruleText, punishment string, hours, minutes i
 func (db *DB) CountRecentViolations(ruleID string, hoursBack int) int {
 	var count int
 	db.conn.QueryRow(
-		`SELECT COUNT(*) FROM violations_log WHERE rule_id=? AND created_at > datetime('now', ?)`,
-		ruleID, fmt.Sprintf("-%d hours", hoursBack),
+		fmt.Sprintf(`SELECT COUNT(*) FROM violations_log WHERE rule_id=$1 AND created_at > NOW() - INTERVAL '%d hours'`, hoursBack),
+		ruleID,
 	).Scan(&count)
 	return count
 }
 
+// ── App State (replaces state.json) ────────────────────────────────────────
+
+// SaveAppState serializa el AppState completo como JSON en la tabla bot_state.
+func (db *DB) SaveAppState(s *models.AppState) error {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return fmt.Errorf("error serializando AppState: %w", err)
+	}
+	_, err = db.conn.Exec(`
+		INSERT INTO bot_state (key, value, updated_at)
+		VALUES ('app_state', $1, NOW())
+		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
+		string(data),
+	)
+	return err
+}
+
+// LoadAppState deserializa el AppState desde la tabla bot_state.
+// Devuelve nil, nil si no hay estado guardado (primera ejecución).
+func (db *DB) LoadAppState() (*models.AppState, error) {
+	var value string
+	err := db.conn.QueryRow(`SELECT value FROM bot_state WHERE key='app_state'`).Scan(&value)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var s models.AppState
+	if err := json.Unmarshal([]byte(value), &s); err != nil {
+		return nil, fmt.Errorf("error deserializando AppState: %w", err)
+	}
+	return &s, nil
+}

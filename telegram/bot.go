@@ -1,14 +1,12 @@
 package telegram
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +32,6 @@ type Bot struct {
 	chaster    *chaster.Client
 	ai         *ai.Client
 	state      *models.AppState
-	statePath  string
 	db         *storage.DB
 	cloudinary *storage.CloudinaryClient
 
@@ -157,7 +154,6 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 		chatID:     chatID,
 		chaster:    chasterClient,
 		ai:         aiClient,
-		statePath:  "state.json",
 		db:         db,
 		cloudinary: cloudinary,
 	}
@@ -197,112 +193,48 @@ func NewBot(token string, chatID int64, chasterClient *chaster.Client, aiClient 
 
 // ── Estado ─────────────────────────────────────────────────────────────────
 
-// loadState carga el estado desde state.json con fallback a la DB.
-// Estrategia de recuperación:
-//  1. Lee state.json → si falla o JSON inválido, carga todo desde DB
-//  2. Si state.json tiene contadores en cero (TasksStreak==0 && TasksCompleted==0),
-//     restaura los contadores críticos desde session_state en DB (protección contra
-//     un state.json recién creado o importado sin historial)
-//
-// Los juguetes SIEMPRE se cargan desde DB en NewBot(), independientemente de lo
-// que diga state.json, ya que la DB es la fuente de verdad para los toys.
 func (b *Bot) loadState() *models.AppState {
-	data, err := os.ReadFile(b.statePath)
-	if err != nil {
-		return b.loadStateFromDB()
+	if b.db == nil {
+		return &models.AppState{Toys: []models.Toy{}}
 	}
-	var s models.AppState
-	if err := json.Unmarshal(data, &s); err != nil {
-		log.Printf("error parseando state.json: %v — intentando DB", err)
-		return b.loadStateFromDB()
+	s, err := b.db.LoadAppState()
+	if err != nil {
+		log.Printf("error cargando AppState desde DB: %v — iniciando vacío", err)
+		return &models.AppState{Toys: []models.Toy{}}
+	}
+	if s == nil {
+		log.Println("AppState no encontrado en DB — primera ejecución")
+		return &models.AppState{Toys: []models.Toy{}}
+	}
+	// Toys siempre se cargan desde DB (source of truth), no desde el blob JSON
+	if b.db != nil {
+		if dbToys, err := b.db.GetToys(); err == nil {
+			s.Toys = make([]models.Toy, len(dbToys))
+			for i, t := range dbToys {
+				s.Toys[i] = models.Toy{
+					ID: t.ID, Name: t.Name, Description: t.Description,
+					PhotoURL: t.PhotoURL, Type: t.Type, InUse: t.InUse,
+				}
+			}
+		}
 	}
 	if s.Toys == nil {
 		s.Toys = []models.Toy{}
 	}
-	// Si el state.json existe pero los contadores están todos en cero,
-	// restaurar los campos críticos desde la DB por si acaso
-	if s.TasksStreak == 0 && s.TasksCompleted == 0 && b.db != nil {
-		if ss, err := b.db.LoadSessionState(); err == nil {
-			s.TasksStreak = ss.TasksStreak
-			s.TasksCompleted = ss.TasksCompleted
-			s.TasksFailed = ss.TasksFailed
-			s.TotalTimeAddedHours = ss.TotalTimeAddedHours
-			s.TotalTimeRemovedHours = ss.TotalTimeRemovedHours
-			s.WeeklyDebt = ss.WeeklyDebt
-			s.WeeklyDebtDetails = ss.WeeklyDebtDetails
-			s.LastJudgmentDate = ss.LastJudgmentDate
-			if s.CurrentLockID == "" {
-				s.CurrentLockID = ss.CurrentLockID
-			}
-			log.Println("✅ Contadores restaurados desde DB")
-		}
-	}
-	return &s
-}
-
-func (b *Bot) loadStateFromDB() *models.AppState {
-	s := &models.AppState{Toys: []models.Toy{}}
-	if b.db == nil {
-		return s
-	}
-	ss, err := b.db.LoadSessionState()
-	if err != nil {
-		log.Printf("no se encontró session_state en DB: %v", err)
-		return s
-	}
-	s.TasksStreak = ss.TasksStreak
-	s.TasksCompleted = ss.TasksCompleted
-	s.TasksFailed = ss.TasksFailed
-	s.TotalTimeAddedHours = ss.TotalTimeAddedHours
-	s.TotalTimeRemovedHours = ss.TotalTimeRemovedHours
-	s.WeeklyDebt = ss.WeeklyDebt
-	s.WeeklyDebtDetails = ss.WeeklyDebtDetails
-	s.LastJudgmentDate = ss.LastJudgmentDate
-	s.CurrentLockID = ss.CurrentLockID
-	log.Println("✅ Estado restaurado desde DB (state.json no disponible)")
+	log.Println("✅ AppState restaurado desde DB")
 	return s
 }
 
-// saveState serializa AppState a state.json usando escritura atómica (write a .tmp + rename).
-// El rename es atómico en Linux, garantizando que nunca se lea un archivo parcialmente escrito.
 func (b *Bot) saveState() error {
-	data, err := json.MarshalIndent(b.state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("error serializando estado: %w", err)
+	if b.db == nil {
+		return nil
 	}
-
-	tmp := b.statePath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return fmt.Errorf("error escribiendo estado temporal: %w", err)
-	}
-
-	if err := os.Rename(tmp, b.statePath); err != nil {
-		return fmt.Errorf("error aplicando estado: %w", err)
-	}
-
-	return nil
+	return b.db.SaveAppState(b.state)
 }
 
 func (b *Bot) mustSaveState() {
-	b.stateMu.Lock()
-	defer b.stateMu.Unlock()
 	if err := b.saveState(); err != nil {
 		log.Printf("CRÍTICO — error guardando estado: %v", err)
-	}
-	if b.db != nil {
-		if err := b.db.SaveSessionState(&storage.SessionState{
-			TasksStreak:           b.state.TasksStreak,
-			TasksCompleted:        b.state.TasksCompleted,
-			TasksFailed:           b.state.TasksFailed,
-			TotalTimeAddedHours:   b.state.TotalTimeAddedHours,
-			TotalTimeRemovedHours: b.state.TotalTimeRemovedHours,
-			WeeklyDebt:            b.state.WeeklyDebt,
-			WeeklyDebtDetails:     b.state.WeeklyDebtDetails,
-			LastJudgmentDate:      b.state.LastJudgmentDate,
-			CurrentLockID:         b.state.CurrentLockID,
-		}); err != nil {
-			log.Printf("error guardando session_state en DB: %v", err)
-		}
 	}
 }
 

@@ -32,12 +32,12 @@ func main() {
 		log.Fatal("TELEGRAM_CHAT_ID inválido:", err)
 	}
 
-	// Base de datos SQLite
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "keyholder.db"
+	// Base de datos PostgreSQL
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL es requerida")
 	}
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(dbURL)
 	if err != nil {
 		log.Fatal("Error iniciando base de datos:", err)
 	}
@@ -93,7 +93,7 @@ func startWebServer(db *storage.DB, botUsername, dashPassword string) {
 		port = "8080"
 	}
 
-	handler := web.New(db, "state.json", botUsername, dashPassword)
+	handler := web.New(db, botUsername, dashPassword)
 	log.Printf("🌐 Dashboard iniciado en puerto %s", port)
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Printf("error en servidor web: %v", err)

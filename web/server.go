@@ -1,12 +1,10 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"chaster-keyholder/models"
@@ -16,20 +14,18 @@ import (
 // Server hosts the web dashboard.
 type Server struct {
 	db           *storage.DB
-	statePath    string
 	telegramLink string
 	password     string
 }
 
 // New wires up all routes and returns the http.Handler for the dashboard.
-func New(db *storage.DB, statePath, botUsername, password string) http.Handler {
+func New(db *storage.DB, botUsername, password string) http.Handler {
 	link := "https://t.me/" + botUsername
 	if botUsername == "" {
 		link = "#"
 	}
 	s := &Server{
 		db:           db,
-		statePath:    statePath,
 		telegramLink: link,
 		password:     password,
 	}
@@ -64,17 +60,16 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// loadState reads state.json and returns the app state.
+// loadState reads the app state from the database.
 func (s *Server) loadState() *models.AppState {
-	data, err := os.ReadFile(s.statePath)
-	if err != nil {
+	if s.db == nil {
 		return &models.AppState{}
 	}
-	var st models.AppState
-	if err := json.Unmarshal(data, &st); err != nil {
+	st, err := s.db.LoadAppState()
+	if err != nil || st == nil {
 		return &models.AppState{}
 	}
-	return &st
+	return st
 }
 
 // render executes the base template with the given page template injected as "content".
