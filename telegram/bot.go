@@ -1030,6 +1030,36 @@ func (b *Bot) HandleToyPhoto(imageBytes []byte, mimeType string) {
 
 // ── Chat libre ────────────────────────────────────────────────────────────
 
+// isCancelIntent detecta frases de cancelación sin llamar a la IA.
+// Se usa al inicio de HandleChat para que cancel funcione en cualquier estado.
+func isCancelIntent(textLower string) bool {
+	phrases := []string{
+		"cancela", "cancelar",
+		"olvídalo", "olvidalo",
+		"me arrepentí", "me arrepenti", "arrepentí", "arrepenti",
+		"ya no quiero", "no quiero hacer",
+		"para esto", "detén esto", "deten esto",
+	}
+	for _, p := range phrases {
+		if strings.Contains(textLower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isCumReportText detecta frases de reporte de orgasmo sin llamar a la IA.
+// Se usa para que cum_report tenga prioridad sobre toy_session_confirm.
+func isCumReportText(textLower string) bool {
+	phrases := []string{"me corrí", "me corri", "me vine", "me vení", "me veni", "me llegué", "me llegue", "me fui", "me acabé", "me acabe"}
+	for _, p := range phrases {
+		if strings.Contains(textLower, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Bot) HandleChat(text string) {
 	// Rate limiting — máximo 1 mensaje IA cada 3 segundos
 	b.chatMu.Lock()
@@ -1041,6 +1071,14 @@ func (b *Bot) HandleChat(text string) {
 	b.chatMu.Unlock()
 
 	textLower := strings.ToLower(text)
+
+	// ── Cancel tiene prioridad absoluta — funciona en CUALQUIER estado ──────
+	// Se comprueba ANTES de cualquier routing por estado para que "cancela" /
+	// "olvídalo" / "me arrepentí" siempre funcionen, incluso en selecting_cage.
+	if isCancelIntent(textLower) {
+		b.HandleCancel()
+		return
+	}
 
 	// Ritual matutino — respuesta de texto
 	if b.currentPendingAction() == "ritual_message" {
@@ -1060,8 +1098,16 @@ func (b *Bot) HandleChat(text string) {
 		return
 	}
 
-	// Confirmación de sesión de juguetes
+	// Confirmación de sesión de juguetes.
+	// cum_report tiene prioridad: si reportas que ya te corriste durante la sesión,
+	// se procesa como reporte de orgasmo (posiblemente sin permiso) en lugar de confirmación.
 	if b.currentPendingAction() == "toy_session_confirm" {
+		if isCumReportText(textLower) {
+			if intent, err := b.ai.ClassifyIntent(text); err == nil && intent.Intent == "cum_report" {
+				b.handleCumReport(text, intent.Toy)
+				return
+			}
+		}
 		b.handleToySessionConfirmation(text)
 		return
 	}
@@ -1114,11 +1160,16 @@ func (b *Bot) HandleChat(text string) {
 		}
 	}
 
-	// Detectar negociación de tiempo
+	// Detectar negociación de tiempo.
+	// IMPORTANTE: mantener esta lista específica — palabras genéricas como "tiempo",
+	// "horas", "permiso", "puedo", "por favor" generan falsos positivos en conversación normal.
 	negotiationKeywords := []string{
-		"quitar", "reducir", "menos tiempo", "recompensa", "me porté",
-		"porte bien", "negociar", "tiempo", "horas", "minutos", "liberar",
-		"permiso", "puedo", "déjame", "por favor",
+		"quitar tiempo", "quita tiempo", "quitarme tiempo",
+		"reducir tiempo", "reduce tiempo", "reducirme tiempo",
+		"quitar horas", "reducir horas", "menos tiempo", "menos horas",
+		"me porté bien", "me porte bien", "me comporté", "me comporte",
+		"negociar", "recompensa",
+		"liberar antes", "salir antes", "terminar antes",
 	}
 
 	isNegotiation := false

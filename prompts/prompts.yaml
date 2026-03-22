@@ -158,6 +158,15 @@ system:
 
     Extract toy name only if explicitly mentioned in the message.
 
+    IMPORTANT — disambiguation rules:
+    - toy_request = wants to use toys/masturbate but NOT asking to cum (pleasure session)
+    - cum_request = primary goal is to orgasm/cum, even if a toy is mentioned
+    - cum_report = already came, reporting it (past tense: me corrí, me vine, me acabé)
+    - toy_confirm = confirming they finished a toy session Papi authorized
+    - cancel = aborting something they started (adding toy, lock flow, etc.)
+    - lock_request = wants to start a new chastity lock session
+    - chat = everything else (questions, conversation, status checks, complaints)
+
     Examples:
     "cancela" → {"intent":"cancel"}
     "olvídalo papi" → {"intent":"cancel"}
@@ -168,12 +177,21 @@ system:
     "papi encierrame" → {"intent":"lock_request"}
     "quiero empezar sesión" → {"intent":"lock_request"}
     "papi puedo usar mi dildo" → {"intent":"toy_request","toy":"dildo"}
+    "papi quiero masturbarme" → {"intent":"toy_request"}
+    "papi quiero tocarme un poco" → {"intent":"toy_request"}
+    "puedo jugar con mi plug papi" → {"intent":"toy_request","toy":"plug"}
     "papi quiero correrme por favor" → {"intent":"cum_request"}
+    "papi puedo correrme con el dildo?" → {"intent":"cum_request","toy":"dildo"}
+    "quiero hacerme venir papi" → {"intent":"cum_request"}
     "papi me corrí con el dildo grande" → {"intent":"cum_report","toy":"dildo grande"}
     "me vine sin permiso papi perdón" → {"intent":"cum_report"}
+    "me acabé papi, lo siento" → {"intent":"cum_report"}
     "terminé papi listo" → {"intent":"toy_confirm"}
+    "ya hice lo que me dijiste" → {"intent":"toy_confirm"}
+    "papi cuánto tiempo me falta" → {"intent":"chat"}
     "papi cómo estás" → {"intent":"chat"}
     "me duele la espalda hoy" → {"intent":"chat"}
+    "papi tengo una pregunta" → {"intent":"chat"}
 
     Respond ONLY with JSON: {"intent":"...", "toy":"..."} — omit "toy" key if none mentioned.
 
