@@ -221,7 +221,7 @@ func buildContext(toys []models.Toy, daysLocked int) string {
 		}
 	}
 
-	ctx := fmt.Sprintf("Jolie has been locked for %d days. Intensity level: %s.", daysLocked, intensity.String())
+	ctx := fmt.Sprintf("She has been locked for %d days. Intensity level: %s.", daysLocked, intensity.String())
 
 	if len(inUse) > 0 {
 		ctx += fmt.Sprintf(" Toys currently in use: %s.", strings.Join(inUse, ", "))
@@ -246,7 +246,7 @@ func buildContextFree(toys []models.Toy) string {
 	if len(toyNames) > 0 {
 		toyContext = strings.Join(toyNames, ", ")
 	}
-	return fmt.Sprintf("Jolie is currently free. Available toys: %s.", toyContext)
+	return fmt.Sprintf("She is currently free. Available toys: %s.", toyContext)
 }
 
 // ── Automatic messages ─────────────────────────────────────────────────────
@@ -550,7 +550,7 @@ func (c *Client) GenerateInsistenceResponse(attempt int, hoursLeft float64) (str
 	}
 	suffix := c.P.MustRender(suffixKey, map[string]any{"HoursLeft": hoursLeft})
 	system := c.P.System.Locked + "\n" + suffix
-	return c.chat(c.P.Models.Text, system, "Jolie begs again")
+	return c.chat(c.P.Models.Text, system, "She begs again")
 }
 
 // GenerateInsistenceRollMessage genera la reacción de Papi al resultado del roll de insistencia.
@@ -693,7 +693,7 @@ func (c *Client) GenerateOrgasmCooldownMessage(lastOutcome string, hoursLeft flo
 		suffixKey = "orgasm_cooldown_denied"
 	}
 	system := c.P.System.Locked + "\n" + c.P.MustRender(suffixKey, map[string]any{"HoursLeft": hoursLeft})
-	return c.chat(c.P.Models.Text, system, "Jolie asks: permission please")
+	return c.chat(c.P.Models.Text, system, "She asks: permission please")
 }
 
 // GenerateCameResponse genera la reacción de Papi cuando Jolie reporta que se vino.
