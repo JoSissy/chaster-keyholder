@@ -207,6 +207,28 @@ func (c *Client) chat(model, systemPrompt string, userContent interface{}) (stri
 // Los system prompts viven en prompts/prompts.yaml (system.locked / system.free).
 // Se acceden via c.P.System.Locked, c.P.System.Free, o c.P.BuildSystemPrompt(locked).
 
+// toyShortRef devuelve la referencia informal en español para un tipo de juguete.
+// Se usa en prompts de personalidad para evitar que el modelo repita el nombre completo registrado.
+// Los prompts de verificación de foto usan el nombre completo (necesario para identificar el objeto).
+func toyShortRef(toyType string) string {
+	switch toyType {
+	case "cage":
+		return "la jaula"
+	case "plug":
+		return "el plug"
+	case "dildo":
+		return "el dildo"
+	case "vibrator":
+		return "el vibrador"
+	case "nipple":
+		return "las pinzas"
+	case "restraint":
+		return "las ataduras"
+	default:
+		return "el juguete"
+	}
+}
+
 // buildContext builds toy and intensity context for prompts
 func buildContext(toys []models.Toy, daysLocked int) string {
 	intensity := models.GetIntensity(daysLocked)
@@ -215,16 +237,16 @@ func buildContext(toys []models.Toy, daysLocked int) string {
 	available := []string{}
 	for _, t := range toys {
 		if t.InUse {
-			inUse = append(inUse, t.Name)
+			inUse = append(inUse, toyShortRef(t.Type))
 		} else {
-			available = append(available, t.Name)
+			available = append(available, toyShortRef(t.Type))
 		}
 	}
 
 	ctx := fmt.Sprintf("She has been locked for %d days. Intensity level: %s.", daysLocked, intensity.String())
 
 	if len(inUse) > 0 {
-		ctx += fmt.Sprintf(" Toys currently in use: %s.", strings.Join(inUse, ", "))
+		ctx += fmt.Sprintf(" Currently wearing: %s.", strings.Join(inUse, ", "))
 	}
 	if len(available) > 0 {
 		ctx += fmt.Sprintf(" Available toys: %s.", strings.Join(available, ", "))
@@ -238,13 +260,13 @@ func buildContext(toys []models.Toy, daysLocked int) string {
 
 // buildContextFree context when there is no active session
 func buildContextFree(toys []models.Toy) string {
-	toyNames := []string{}
+	toyRefs := []string{}
 	for _, t := range toys {
-		toyNames = append(toyNames, t.Name)
+		toyRefs = append(toyRefs, toyShortRef(t.Type))
 	}
 	toyContext := "no toys registered"
-	if len(toyNames) > 0 {
-		toyContext = strings.Join(toyNames, ", ")
+	if len(toyRefs) > 0 {
+		toyContext = strings.Join(toyRefs, ", ")
 	}
 	return fmt.Sprintf("She is currently free. Available toys: %s.", toyContext)
 }
@@ -503,7 +525,7 @@ func (c *Client) GenerateToySessionGranted(toys []models.Toy, daysLocked int) (*
 	var toyNames []string
 	for _, t := range toys {
 		if t.Type != "cage" {
-			toyNames = append(toyNames, t.Name)
+			toyNames = append(toyNames, toyShortRef(t.Type))
 		}
 	}
 	toyList := "ninguno registrado"
@@ -562,7 +584,7 @@ func (c *Client) GenerateInsistenceRollMessage(outcome string, toys []models.Toy
 	var toyNames []string
 	for _, t := range toys {
 		if t.Type != "cage" {
-			toyNames = append(toyNames, t.Name)
+			toyNames = append(toyNames, toyShortRef(t.Type))
 		}
 	}
 	toyList := "ninguno"
@@ -625,7 +647,7 @@ func (c *Client) GenerateOrgasmMessage(outcome, userMessage string, toys []model
 	var toyNames []string
 	for _, t := range toys {
 		if t.Type != "cage" {
-			toyNames = append(toyNames, t.Name)
+			toyNames = append(toyNames, toyShortRef(t.Type))
 		}
 	}
 	toyList := "none"
@@ -1236,7 +1258,7 @@ func (c *Client) GeneratePlugAssignment(plugName string, daysLocked int, obedien
 	prompt := c.P.MustRender("plug_assignment", map[string]any{
 		"DaysLocked":   daysLocked,
 		"ObedienceCtx": c.P.ObedienceCtx(obedienceLevel),
-		"PlugName":     plugName,
+		"PlugName":     toyShortRef("plug"),
 	})
 	return c.chat(c.P.Models.Text, c.P.System.Locked, prompt)
 }
@@ -1276,7 +1298,7 @@ func (c *Client) VerifyPlugPhoto(imageBytes []byte, mimeType, plugName string) (
 func (c *Client) GenerateCheckinRequest(daysLocked int, assignedPlugName string) (string, error) {
 	plugInfo := ""
 	if assignedPlugName != "" {
-		plugInfo = fmt.Sprintf(" El %s que lleva puesto también debe ser visible en la foto.", assignedPlugName)
+		plugInfo = " Tu plug también debe ser visible en la foto."
 	}
 	prompt := c.P.MustRender("checkin_request", map[string]any{
 		"DaysLocked": daysLocked,
