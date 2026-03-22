@@ -271,6 +271,11 @@ type AppState struct {
 	ChasterTaskLockID     string     `json:"chaster_task_lock_id,omitempty"`     // lock al que pertenece
 	ChasterTaskAssignedAt *time.Time `json:"chaster_task_assigned_at,omitempty"` // cuándo se asignó
 	ChasterTaskDBID       string     `json:"chaster_task_db_id,omitempty"`       // ID en la tabla chaster_tasks de la DB local
+
+	// ── Tracking de interacción (in-memory, parcialmente persistido) ─────────
+	LastMessageAt      *time.Time `json:"-"`                                    // último mensaje recibido (no persistido — se resetea al reiniciar)
+	LastPhotoActionAt  *time.Time `json:"last_photo_action_at,omitempty"`       // última foto procesada con éxito
+	LastPhotoActionType string    `json:"last_photo_action_type,omitempty"`     // "task"|"ritual"|"plug"|"checkin"|"outfit"
 }
 
 // ChatMessage un mensaje de la historia de conversación con Papi

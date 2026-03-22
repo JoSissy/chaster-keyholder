@@ -778,12 +778,47 @@ type NegotiationResult struct {
 // Chat free conversation with the keyholder. totalHoursAdded in HOURS.
 // locked indicates if there is an active session — changes the system prompt.
 // history: recent messages (user/assistant pairs). rules: active contract rules to enforce.
-func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int, locked bool, history []models.ChatMessage, rules []models.ContractRule) (*ChatResult, error) {
+// attitude: "brat"|"emotional"|"playful"|"neutral" — detected from message keywords.
+// minutesSinceLastMsg: -1 if unknown, otherwise minutes since her last message.
+// recentPhotoCtx: "task"|"ritual"|"plug"|"checkin"|"outfit" if a photo was processed <30min ago, else "".
+func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int, locked bool, history []models.ChatMessage, rules []models.ContractRule, attitude string, minutesSinceLastMsg int, recentPhotoCtx string) (*ChatResult, error) {
 	system := c.P.BuildSystemPrompt(locked)
+
+	// ── Contexto adicional de actitud, tiempo y foto ─────────────────────────
+	var extraCtx string
+
+	switch attitude {
+	case "brat":
+		extraCtx += " She is being bratty or resistant — address this directly, coldly, with quiet consequence. Do not raise your voice. Just make her feel what happens next."
+	case "emotional":
+		extraCtx += " She seems emotionally vulnerable. Do NOT comfort her warmly — own her emotionally instead. She is yours even when she is sad. Possessive and dark, not warm."
+	case "playful":
+		extraCtx += " She is being playful or affectionate. You can briefly enjoy your property's mood — then remind her of her place."
+	}
+
+	if minutesSinceLastMsg > 180 {
+		hours := minutesSinceLastMsg / 60
+		extraCtx += fmt.Sprintf(" She disappeared for %d hours and just reappeared. Papi notices — he always does.", hours)
+	} else if minutesSinceLastMsg > 60 {
+		extraCtx += " She was gone for over an hour before writing. Papi is aware of when she goes quiet."
+	}
+
+	switch recentPhotoCtx {
+	case "task":
+		extraCtx += " She just sent her task photo moments ago."
+	case "ritual":
+		extraCtx += " She just completed her morning ritual photo."
+	case "plug":
+		extraCtx += " She just confirmed wearing the plug."
+	case "checkin":
+		extraCtx += " She just sent a check-in photo."
+	case "outfit":
+		extraCtx += " She just submitted her outfit photo."
+	}
 
 	var userPrompt string
 	if locked {
-		ctx := buildContext(toys, daysLocked)
+		ctx := buildContext(toys, daysLocked) + extraCtx
 		userPrompt = c.P.MustRender("chat_locked", map[string]any{
 			"Ctx":             ctx,
 			"TasksCompleted":  tasksCompleted,
@@ -792,7 +827,7 @@ func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tas
 			"UserMessage":     userMessage,
 		})
 	} else {
-		ctx := buildContextFree(toys)
+		ctx := buildContextFree(toys) + extraCtx
 		userPrompt = c.P.MustRender("chat_free", map[string]any{
 			"Ctx":         ctx,
 			"UserMessage": userMessage,

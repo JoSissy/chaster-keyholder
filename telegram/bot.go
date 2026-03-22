@@ -713,6 +713,9 @@ func (b *Bot) HandlePhoto(imageBytes []byte, mimeType string) {
 	b.state.CurrentTask.Completed = true
 	b.state.CurrentTask.AwaitingPhoto = false
 	b.state.TasksCompleted++
+	photoNow := time.Now()
+	b.state.LastPhotoActionAt = &photoNow
+	b.state.LastPhotoActionType = "task"
 
 	// Puntos: +2 si está en intensidad alta (8+ días), +1 normal
 	taskPoints := 1
@@ -1060,6 +1063,41 @@ func isCumReportText(textLower string) bool {
 	return false
 }
 
+// detectAttitude clasifica la actitud del mensaje: "brat", "emotional", "playful", "neutral".
+// Se pasa a ai.Chat como contexto adicional para calibrar la respuesta de Papi.
+func detectAttitude(textLower string) string {
+	bratPhrases := []string{
+		"no quiero", "no me da la gana", "no es justo", "es injusto",
+		"no pienso", "me niego", "que aburrido", "eres malo",
+		"no me gusta esto", "odio esto", "no quiero hacer",
+	}
+	for _, p := range bratPhrases {
+		if strings.Contains(textLower, p) {
+			return "brat"
+		}
+	}
+	emotionalPhrases := []string{
+		"estoy triste", "me siento mal", "me siento sola", "estoy llorando",
+		"me puse a llorar", "estoy angustiada", "me siento rara", "estoy deprimida",
+		"tengo miedo", "estoy asustada", "me siento vacía", "me duele el alma",
+	}
+	for _, p := range emotionalPhrases {
+		if strings.Contains(textLower, p) {
+			return "emotional"
+		}
+	}
+	playfulPhrases := []string{
+		"holi", "papiii", "papi rico", "papi guapo", "te quiero papi",
+		"jajaja", "jajaj", "jejeje", "hehehe", "uwu", ":3",
+	}
+	for _, p := range playfulPhrases {
+		if strings.Contains(textLower, p) {
+			return "playful"
+		}
+	}
+	return "neutral"
+}
+
 func (b *Bot) HandleChat(text string) {
 	// Rate limiting — máximo 1 mensaje IA cada 3 segundos
 	b.chatMu.Lock()
@@ -1197,6 +1235,21 @@ func (b *Bot) HandleChat(text string) {
 		}
 	}
 
+	// ── Actitud, tiempo de respuesta y contexto de foto reciente ─────────────
+	attitude := detectAttitude(textLower)
+
+	minutesSinceLastMsg := -1
+	if b.state.LastMessageAt != nil {
+		minutesSinceLastMsg = int(time.Since(*b.state.LastMessageAt).Minutes())
+	}
+	now := time.Now()
+	b.state.LastMessageAt = &now
+
+	recentPhotoCtx := ""
+	if b.state.LastPhotoActionAt != nil && time.Since(*b.state.LastPhotoActionAt) < 30*time.Minute {
+		recentPhotoCtx = b.state.LastPhotoActionType
+	}
+
 	result, err := b.ai.Chat(
 		text,
 		b.state.Toys,
@@ -1207,6 +1260,9 @@ func (b *Bot) HandleChat(text string) {
 		locked,
 		history,
 		rules,
+		attitude,
+		minutesSinceLastMsg,
+		recentPhotoCtx,
 	)
 	if err != nil {
 		b.Send("_..._")
@@ -3255,6 +3311,9 @@ func (b *Bot) HandleRitualPhoto(imgBytes []byte, mime string) {
 	switch verdict.Status {
 	case "approved":
 		b.state.RitualStep = 2
+		ritualNow := time.Now()
+		b.state.LastPhotoActionAt = &ritualNow
+		b.state.LastPhotoActionType = "ritual"
 		b.mustSaveState()
 		b.removePendingAction("ritual_photo")
 		b.enqueuePendingAction("ritual_message")
@@ -3330,6 +3389,9 @@ func (b *Bot) HandlePlugPhoto(imgBytes []byte, mime string) {
 		b.removePendingAction("plug_photo")
 		b.state.PlugConfirmed = true
 		b.state.PlugBonusAccum++
+		plugNow := time.Now()
+		b.state.LastPhotoActionAt = &plugNow
+		b.state.LastPhotoActionType = "plug"
 		plugMsg := fmt.Sprintf("✅ *PLUG CONFIRMADO*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_%s puesto, como debe ser. Que dure todo el día._", plugName)
 		if b.state.PlugBonusAccum >= 2 {
 			b.state.TasksStreak++
@@ -3446,7 +3508,10 @@ func (b *Bot) HandleCheckinPhoto(imgBytes []byte, mime string) {
 	}
 
 	b.removePendingAction("checkin_photo")
-	respondedAt := time.Now()
+	checkinNow := time.Now()
+	b.state.LastPhotoActionAt = &checkinNow
+	b.state.LastPhotoActionType = "checkin"
+	respondedAt := checkinNow
 	responseTimeMins := 0
 	if b.state.CheckinExpiresAt != nil {
 		responseTimeMins = int(30 - time.Until(*b.state.CheckinExpiresAt).Minutes())
@@ -4359,6 +4424,9 @@ func (b *Bot) HandleOutfitPhoto(imgBytes []byte, mimeType string) {
 	b.removePendingAction("outfit_photo")
 	b.state.OutfitConfirmed = true
 	b.state.DailyOutfitPhotoURL = outfitPhotoURL
+	outfitNow := time.Now()
+	b.state.LastPhotoActionAt = &outfitNow
+	b.state.LastPhotoActionType = "outfit"
 
 	// Generar comentario de Papi
 	comment, err := b.ai.GenerateOutfitComment(b.daysLocked(), b.state.DailyOutfitDesc, b.state.DailyPoseDesc)
