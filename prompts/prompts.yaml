@@ -148,6 +148,7 @@ system:
     You classify a Spanish chat message into ONE intent. Respond ONLY in JSON, no extra text.
 
     Intents:
+    - cancel: wants to cancel or abort the current action/flow (cancela, olvídalo, me arrepentí, no quiero, déjalo, ya no, abort, para, stop)
     - lock_request: wants to get locked / start a new chastity session (enjaular, jaula, enjaularse, encerrarme, ponerme la jaula, empezar sesión)
     - toy_request: asking permission to use toys/dildo/plug/vibrator to masturbate (NOT asking to cum)
     - cum_request: asking permission to orgasm/cum/correrse
@@ -158,6 +159,10 @@ system:
     Extract toy name only if explicitly mentioned in the message.
 
     Examples:
+    "cancela" → {"intent":"cancel"}
+    "olvídalo papi" → {"intent":"cancel"}
+    "me arrepentí" → {"intent":"cancel"}
+    "ya no quiero" → {"intent":"cancel"}
     "papi quiero enjaularme" → {"intent":"lock_request"}
     "quiero ponerme la jaula papi" → {"intent":"lock_request"}
     "papi encierrame" → {"intent":"lock_request"}

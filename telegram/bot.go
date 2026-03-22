@@ -1091,6 +1091,9 @@ func (b *Bot) HandleChat(text string) {
 	// cum_report tiene prioridad absoluta sobre cualquier pendingAction.
 	if intent, err := b.ai.ClassifyIntent(text); err == nil {
 		switch intent.Intent {
+		case "cancel":
+			b.HandleCancel()
+			return
 		case "lock_request":
 			b.handleNaturalLockRequest(text)
 			return
@@ -2125,6 +2128,7 @@ func (b *Bot) HandleHelp() {
 /mood — Estado de ánimo de Papi
 
 ▬▬▬▬▬▬▬▬▬▬▬▬
+/cancel — Cancelar el proceso activo (añadir juguete, jaula, prenda, etc.)
 _Para completar una tarea — manda la foto directo al chat._`)
 }
 
@@ -2296,6 +2300,8 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 		b.HandleRemoveTime("")
 	case strings.HasPrefix(text, "/removetime "):
 		b.HandleRemoveTime(strings.TrimPrefix(text, "/removetime "))
+	case text == "/cancel":
+		b.HandleCancel()
 	case text != "" && !strings.HasPrefix(text, "/"):
 		b.HandleChat(text)
 	}
@@ -2413,6 +2419,62 @@ func parseDuration(input string) int {
 		return amount * 604800
 	}
 	return 0
+}
+
+// cancellableActions son las acciones efímeras que el usuario puede abortar.
+// Las acciones persistentes (ritual_photo, plug_photo, etc.) no son cancelables — las asignó Papi.
+var cancellableActions = map[string]bool{
+	"selecting_cage":   true,
+	"new_toy":          true,
+	"removing_toy":     true,
+	"new_clothing":     true,
+	"removing_clothing": true,
+	"toy_session_confirm": true,
+}
+
+// HandleCancel aborta el flujo activo si es cancelable.
+// Accesible via /cancel y lenguaje natural ("olvídalo", "me arrepentí", etc.)
+func (b *Bot) HandleCancel() {
+	current := b.currentPendingAction()
+	awaitingLock := b.state.AwaitingLockPhoto
+
+	// Nada que cancelar
+	if current == "" && !awaitingLock {
+		b.Send("_No hay ningún proceso activo que cancelar._")
+		return
+	}
+
+	// Acciones asignadas por Papi — no cancelables
+	if current != "" && !cancellableActions[current] {
+		b.Send("_Eso lo ordenó Papi. No puedes cancelarlo._")
+		return
+	}
+
+	// Cancelar flujo de nueva jaula (selección de jaula o foto del candado)
+	if current == "selecting_cage" || awaitingLock {
+		b.removePendingAction("selecting_cage")
+		b.state.AwaitingLockPhoto = false
+		b.state.ManualDurationSeconds = 0
+		b.mustSaveState()
+		b.Send("_Proceso de jaula cancelado._")
+		return
+	}
+
+	// Resto de acciones efímeras
+	desc := map[string]string{
+		"new_toy":          "registro de juguete",
+		"removing_toy":     "eliminación de juguete",
+		"new_clothing":     "registro de prenda",
+		"removing_clothing": "eliminación de prenda",
+		"toy_session_confirm": "confirmación de sesión",
+	}
+	label := desc[current]
+	if label == "" {
+		label = current
+	}
+	b.removePendingAction(current)
+	b.mustSaveState()
+	b.Send(fmt.Sprintf("_Cancelado: %s._", label))
 }
 
 // handleNaturalLockRequest maneja "papi quiero enjaularme" y flujos similares en lenguaje natural.
