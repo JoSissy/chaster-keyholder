@@ -5,6 +5,7 @@ package prompts
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +13,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed prompts.yaml
+var defaultPromptsYAML []byte
 
 // Models holds the Groq model identifiers.
 type Models struct {
@@ -141,10 +145,19 @@ func (l *Loader) MustRender(key string, data any) string {
 
 // Load reads and parses the YAML file at path, compiles all templates,
 // and returns a ready-to-use *Loader. Call once at startup from main.go.
+// If path is empty or the file does not exist, falls back to the embedded
+// prompts.yaml compiled into the binary.
 func Load(path string) (*Loader, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("prompts: read %q: %w", path, err)
+	var data []byte
+	if path != "" {
+		var err error
+		data, err = os.ReadFile(path)
+		if err != nil {
+			log.Printf("⚠️  prompts: no se pudo leer %q (%v) — usando prompts embebidos", path, err)
+			data = defaultPromptsYAML
+		}
+	} else {
+		data = defaultPromptsYAML
 	}
 
 	var raw rawConfig
