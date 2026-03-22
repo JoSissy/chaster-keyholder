@@ -473,7 +473,7 @@ func (c *Client) VerifyLockPhoto(imageBytes []byte, mimeType string) (*PhotoVerd
 
 // IntentResult resultado del clasificador de intención del chat libre.
 type IntentResult struct {
-	Intent string `json:"intent"` // "toy_request"|"cum_request"|"cum_report"|"toy_confirm"|"chat"
+	Intent string `json:"intent"` // "lock_request"|"toy_request"|"cum_request"|"cum_report"|"toy_confirm"|"chat"
 	Toy    string `json:"toy,omitempty"`
 }
 
@@ -1494,6 +1494,17 @@ func (c *Client) GenerateWeeklyJudgment(daysLocked int, toys []models.Toy, weekl
 }
 
 // GenerateStatusComment genera un comentario breve de Papi al final del /status.
+// AcknowledgeLockRequest genera la reacción en-personaje de Papi cuando la sub pide enjaularse.
+// Se llama antes de iniciar el flujo de newlock para que la interacción sea natural.
+func (c *Client) AcknowledgeLockRequest(userMessage string, toys []models.Toy) (string, error) {
+	ctx := buildContextFree(toys)
+	prompt := c.P.MustRender("lock_request_response", map[string]any{
+		"Ctx":         ctx,
+		"UserMessage": userMessage,
+	})
+	return c.chat(c.P.Models.Text, c.P.System.Free, prompt)
+}
+
 func (c *Client) GenerateStatusComment(daysLocked, daysSinceLastOrgasm, weeklyDebt, streak int, taskCompletedToday bool) (string, error) {
 	orgasmLine := ""
 	if daysSinceLastOrgasm < 0 {

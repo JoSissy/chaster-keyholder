@@ -1091,6 +1091,9 @@ func (b *Bot) HandleChat(text string) {
 	// cum_report tiene prioridad absoluta sobre cualquier pendingAction.
 	if intent, err := b.ai.ClassifyIntent(text); err == nil {
 		switch intent.Intent {
+		case "lock_request":
+			b.handleNaturalLockRequest(text)
+			return
 		case "cum_report":
 			b.handleCumReport(text, intent.Toy)
 			return
@@ -2410,6 +2413,19 @@ func parseDuration(input string) int {
 		return amount * 604800
 	}
 	return 0
+}
+
+// handleNaturalLockRequest maneja "papi quiero enjaularme" y flujos similares en lenguaje natural.
+// Primero genera la reacción en-personaje de Papi, luego inicia el flujo normal de newlock.
+func (b *Bot) handleNaturalLockRequest(text string) {
+	if _, err := b.chaster.GetActiveLock(); err == nil {
+		b.Send("🔒 Ya tienes una sesión activa. Espera a que termine antes de crear una nueva.")
+		return
+	}
+	if msg, err := b.ai.AcknowledgeLockRequest(text, b.state.Toys); err == nil && msg != "" {
+		b.Send(msg)
+	}
+	b.HandleNewLock("")
 }
 
 func (b *Bot) HandleNewLock(args string) {
