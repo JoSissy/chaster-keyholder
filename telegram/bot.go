@@ -562,6 +562,10 @@ func (b *Bot) handleTaskInternal(forcedLevel models.IntensityLevel) {
 		return
 	}
 
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
+
 	days := b.daysLocked()
 	var intensity models.IntensityLevel
 	if forcedLevel == 0 {
@@ -2326,6 +2330,10 @@ func (b *Bot) handleUpdate(msg *tgbotapi.Message, keyboard [][]tgbotapi.Keyboard
 	case strings.HasPrefix(text, "/toys "):
 		b.HandleToys(strings.TrimPrefix(text, "/toys "))
 	case text == "/roulette":
+		if _, err := b.chaster.GetActiveLock(); err != nil {
+			b.Send("❌ No hay sesión activa.")
+			return
+		}
 		b.HandleRuleta()
 	case text == "/chatask":
 		b.HandleChasterTaskCommand()
@@ -3583,6 +3591,9 @@ func (b *Bot) CheckPlugReminder() {
 	if time.Now().In(cotLocation).Hour() < 12 {
 		return // esperar al mediodía
 	}
+	if _, err := b.chaster.GetActiveLock(); err != nil {
+		return
+	}
 	plugName := b.getAssignedPlugName()
 	if plugName == "" {
 		return
@@ -3711,7 +3722,6 @@ func (b *Bot) HandleRuleta() {
 	}
 	lock, err := b.chaster.GetActiveLock()
 	if err != nil {
-		b.Send("❌ No hay sesión activa.")
 		return
 	}
 	b.Send("_Girando la ruleta..._")
