@@ -434,11 +434,68 @@ a:hover { color: var(--purple); }
 }
 .empty-icon { font-size: 36px; margin-bottom: 10px; }
 .empty-text { font-size: 13px; }
+.empty-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+/* ── Filter buttons (shared across pages) ── */
+.filter-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 5px 14px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+  transition: all .15s;
+}
+.filter-btn:hover { border-color: var(--pink); color: var(--pink); }
+.filter-btn.active { background: rgba(232,119,154,.15); border-color: var(--pink); color: var(--pink); }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  :root { --sw: 0px; }
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s;
+    width: 240px;
+    z-index: 100;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0; padding: 16px 18px; }
+  .g5 { grid-template-columns: repeat(2, 1fr); }
+  .g4 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: repeat(2, 1fr); }
+  .grid-2 { grid-template-columns: 1fr; }
+  .lock-hero { flex-direction: column; gap: 16px; }
+  .lock-hero > div:last-child { border-left: none !important; padding-left: 0 !important; margin-left: 0 !important; border-top: 1px solid var(--border); padding-top: 14px !important; }
+  .menu-btn { display: flex; }
+  .cal-grid { font-size: 11px; }
+  .cal-cell { min-height: 52px; padding: 5px; }
+  .cal-num { font-size: 12px; }
+  .gal-grid { columns: 2 120px; }
+}
+@media (min-width: 769px) {
+  .menu-btn { display: none; }
+}
+.menu-btn {
+  position: fixed; top: 14px; left: 14px; z-index: 200;
+  background: var(--card); border: 1px solid var(--border);
+  color: var(--text); width: 38px; height: 38px;
+  border-radius: 8px; cursor: pointer; font-size: 18px;
+  align-items: center; justify-content: center;
+}
+.sidebar-backdrop {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 50;
+}
+.sidebar-backdrop.open { display: block; }
 </style>
 </head>
 <body>
 
-<aside class="sidebar">
+<button class="menu-btn" id="menu-btn" aria-label="Menú">☰</button>
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+<aside class="sidebar" id="sidebar">
   <div class="brand">
     <span class="brand-name">Jolie's Diary</span>
     <span class="brand-sub">castidad &amp; obediencia</span>
@@ -486,6 +543,18 @@ a:hover { color: var(--purple); }
   {{template "content" .}}
 </main>
 
+<script>
+(function(){
+  var btn = document.getElementById('menu-btn');
+  var sidebar = document.getElementById('sidebar');
+  var backdrop = document.getElementById('sidebar-backdrop');
+  if (!btn) return;
+  function openSidebar() { sidebar.classList.add('open'); backdrop.classList.add('open'); }
+  function closeSidebar() { sidebar.classList.remove('open'); backdrop.classList.remove('open'); }
+  btn.addEventListener('click', openSidebar);
+  backdrop.addEventListener('click', closeSidebar);
+})();
+</script>
 </body>
 </html>`
 
@@ -611,9 +680,9 @@ var dashboardHTML = `{{define "content"}}
 
 {{if .HasActiveEvent}}
 <div style="background:rgba(192,132,252,0.08);border:1px solid rgba(192,132,252,0.28);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;margin-bottom:22px;">
-  <span style="font-size:22px;">{{if eq .ActiveEventType "freeze"}}🧊{{else if eq .ActiveEventType "hidetime"}}🕶️{{else}}⚡{{end}}</span>
+  <span style="font-size:22px;">{{if eq .ActiveEventType "freeze"}}🧊{{else if eq .ActiveEventType "hidetime"}}🕶️{{else if eq .ActiveEventType "pillory"}}🏚️{{else}}⚡{{end}}</span>
   <div>
-    <span style="font-weight:600;color:var(--purple);">Evento activo: {{if eq .ActiveEventType "freeze"}}Congelada{{else if eq .ActiveEventType "hidetime"}}Tiempo oculto{{else}}{{.ActiveEventType}}{{end}}</span>
+    <span style="font-weight:600;color:var(--purple);">Evento activo: {{if eq .ActiveEventType "freeze"}}Congelada{{else if eq .ActiveEventType "hidetime"}}Tiempo oculto{{else if eq .ActiveEventType "pillory"}}Picota{{else}}{{.ActiveEventType}}{{end}}</span>
     <span style="font-size:12px;color:var(--text-muted);margin-left:10px;">expira en {{.ActiveEventExpires}}</span>
   </div>
 </div>
@@ -970,13 +1039,6 @@ var tasksHTML = `{{define "content"}}
 </div>
 
 <style>
-.filter-btn {
-  background: var(--card); border: 1px solid var(--border);
-  color: var(--text-muted); padding: 5px 14px; border-radius: 20px;
-  cursor: pointer; font-size: 12px; font-family: 'Inter', sans-serif; transition: all .15s;
-}
-.filter-btn:hover { border-color: var(--pink); color: var(--pink); }
-.filter-btn.active { background: rgba(232,119,154,.15); border-color: var(--pink); color: var(--pink); }
 .task-card { transition: opacity .15s; display: flex; gap: 16px; align-items: flex-start; }
 .task-card.hidden { display: none !important; }
 
@@ -1097,9 +1159,6 @@ var chataskHTML = `{{define "content"}}
 </div>
 
 <style>
-.filter-btn { background:var(--card); border:1px solid var(--border); color:var(--text-muted); padding:5px 14px; border-radius:20px; cursor:pointer; font-size:12px; font-family:'Inter',sans-serif; transition:all .15s; }
-.filter-btn:hover { border-color:var(--pink); color:var(--pink); }
-.filter-btn.active { background:rgba(232,119,154,.15); border-color:var(--pink); color:var(--pink); }
 .ct-card.hidden { display: none !important; }
 #lb-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:1000; align-items:center; justify-content:center; cursor:zoom-out; }
 #lb-overlay.open { display:flex; }
@@ -1214,12 +1273,12 @@ var orgasmsHTML = `{{define "content"}}
 {{if .Entries}}
 <div class="timeline">
   {{range .Entries}}
-  <div class="tl-item {{if eq .Outcome "granted_cum"}}tl-granted{{else if eq .Outcome "granted_toys"}}{{else}}tl-denied{{end}}" {{if eq .Outcome "granted_toys"}}style="border-color:rgba(251,191,36,0.2);background:rgba(251,191,36,0.03);"{{end}}>
-    <div class="tl-icon">{{if eq .Outcome "granted_cum"}}✅{{else if eq .Outcome "granted_toys"}}🧸{{else if eq .Outcome "punished"}}⚠️{{else}}❌{{end}}</div>
+  <div class="tl-item {{if or (eq .Outcome "granted_cum") (eq .Outcome "granted")}}tl-granted{{else if eq .Outcome "granted_toys"}}{{else}}tl-denied{{end}}" {{if eq .Outcome "granted_toys"}}style="border-color:rgba(251,191,36,0.2);background:rgba(251,191,36,0.03);"{{end}}>
+    <div class="tl-icon">{{if or (eq .Outcome "granted_cum") (eq .Outcome "granted")}}✅{{else if eq .Outcome "granted_toys"}}🧸{{else if eq .Outcome "punished"}}⚠️{{else}}❌{{end}}</div>
     <div class="tl-body">
       <div class="tl-hd">
-        <span class="tl-title">{{if eq .Outcome "granted_cum"}}Concedido{{else if eq .Outcome "granted_toys"}}Juguetes{{else if eq .Outcome "punished"}}Castigada{{else}}Negado{{end}}</span>
-        {{if eq .Outcome "granted_cum"}}<span class="badge badge-success">sí</span>{{else if eq .Outcome "granted_toys"}}<span class="badge badge-warning">juguetes</span>{{else if eq .Outcome "punished"}}<span class="badge badge-danger">castigo</span>{{else}}<span class="badge badge-danger">no</span>{{end}}
+        <span class="tl-title">{{if or (eq .Outcome "granted_cum") (eq .Outcome "granted")}}Concedido{{else if eq .Outcome "granted_toys"}}Juguetes{{else if eq .Outcome "punished"}}Castigada{{else}}Negado{{end}}</span>
+        {{if or (eq .Outcome "granted_cum") (eq .Outcome "granted")}}<span class="badge badge-success">sí</span>{{else if eq .Outcome "granted_toys"}}<span class="badge badge-warning">juguetes</span>{{else if eq .Outcome "punished"}}<span class="badge badge-danger">castigo</span>{{else}}<span class="badge badge-danger">no</span>{{end}}
         <span class="tl-date">{{formatDateTime .CreatedAt}}</span>
       </div>
       {{if .UserMessage}}
@@ -1345,20 +1404,7 @@ var wardrobeHTML = `{{define "content"}}
 </div>
 
 <style>
-.filter-btn {
-  background: var(--card);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  padding: 5px 12px;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 12px;
-  font-family: 'Inter', sans-serif;
-  transition: all .15s;
-}
-.filter-btn:hover { border-color: var(--pink); color: var(--pink); }
-.filter-btn.active { background: rgba(232,119,154,.15); border-color: var(--pink); color: var(--pink); }
-.clothing-item { transition: opacity .2s, transform .2s; }
+.clothing-item { transition: opacity .2s; }
 .clothing-item.hidden { display: none; }
 </style>
 
@@ -1472,7 +1518,7 @@ var galleryHTML = `{{define "content"}}
 {{if .Photos}}
 <div class="gal-grid" id="gal-grid">
   {{range .Photos}}
-  <div class="gal-item" data-cat="{{.Category}}" onclick="openLB(this.querySelector('img').src, '{{truncate .Caption 80}}', '{{formatDate .Date}}')">
+  <div class="gal-item" data-cat="{{.Category}}" data-cap="{{truncate .Caption 80}}" data-date="{{formatDate .Date}}">
     <img class="gal-img" src="{{safeURL .URL}}" alt="{{.Caption}}" loading="lazy">
     <div class="gal-cat-badge">{{if eq .Category "task"}}📋{{else if eq .Category "outfit"}}👗{{else if eq .Category "toy"}}🎀{{else if eq .Category "clothing"}}🩲{{else}}🌐{{end}}</div>
     <div class="gal-overlay">
@@ -1497,13 +1543,19 @@ var galleryHTML = `{{define "content"}}
 </div>
 
 <script>
-function openLB(src, cap, date) {
-  document.getElementById('lb2-img').src = src;
-  document.getElementById('lb2-cap').textContent = cap + (date ? ' · ' + date : '');
-  document.getElementById('lb2-overlay').classList.add('open');
-}
 function closeLB() { document.getElementById('lb2-overlay').classList.remove('open'); }
 document.addEventListener('keydown', e => { if(e.key==='Escape') closeLB(); });
+
+document.querySelectorAll('.gal-item').forEach(item => {
+  item.addEventListener('click', function() {
+    var img = this.querySelector('img');
+    document.getElementById('lb2-img').src = img ? img.src : '';
+    var cap = this.dataset.cap || '';
+    var date = this.dataset.date || '';
+    document.getElementById('lb2-cap').textContent = cap + (date ? ' · ' + date : '');
+    document.getElementById('lb2-overlay').classList.add('open');
+  });
+});
 
 document.querySelectorAll('.gal-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1588,6 +1640,9 @@ var checkinsHTML = `{{define "content"}}
 #lb3-overlay.open { display:flex; }
 #lb3-overlay img { max-width:90vw; max-height:90vh; border-radius:8px; }
 </style>
+<script>
+document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ document.getElementById('lb3-overlay').classList.remove('open'); } });
+</script>
 
 {{if .Entries}}
 <div style="display:flex; flex-direction:column; gap:10px;">
