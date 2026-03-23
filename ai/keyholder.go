@@ -500,6 +500,42 @@ type IntentResult struct {
 	Toy      string `json:"toy,omitempty"`
 }
 
+// ReactToTaskFail genera la reacción en personaje de Papi cuando Jolie confiesa
+// voluntariamente que falló la tarea. La penalización ya fue aplicada antes de llamar esta función.
+func (c *Client) ReactToTaskFail(userMessage string, penaltyHours int, toys []models.Toy, daysLocked int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	prompt := c.P.MustRender("task_fail_reaction", map[string]any{
+		"Ctx":          ctx,
+		"PenaltyHours": penaltyHours,
+		"UserMessage":  userMessage,
+	})
+	return c.chat(c.P.Models.Text, c.P.System.Locked, prompt)
+}
+
+// GeneratePlugPhotoRequest genera la demanda en personaje de Papi pidiendo la foto del plug.
+func (c *Client) GeneratePlugPhotoRequest(toys []models.Toy, daysLocked int) (string, error) {
+	ctx := buildContext(toys, daysLocked)
+	prompt := c.P.MustRender("plug_photo_request", map[string]any{"Ctx": ctx})
+	return c.chat(c.P.Models.Text, c.P.System.Locked, prompt)
+}
+
+// SummarizeConversation genera un resumen breve de una conversación para la memoria emocional.
+// history debe tener al menos 4 mensajes para que valga la pena resumir.
+func (c *Client) SummarizeConversation(history []models.ChatMessage) (string, error) {
+	if len(history) < 4 {
+		return "", nil
+	}
+	var sb strings.Builder
+	for _, m := range history {
+		role := "Jolie"
+		if m.Role == "assistant" {
+			role = "Papi"
+		}
+		sb.WriteString(fmt.Sprintf("%s: %s\n", role, m.Content))
+	}
+	return c.chat(c.P.Models.Text, c.P.System.SummarizeConversation, sb.String())
+}
+
 // ClassifyIntent clasifica un mensaje en lenguaje natural en una intención de acción.
 // Es una llamada ligera y rápida — el modelo solo devuelve JSON corto.
 func (c *Client) ClassifyIntent(message string) (*IntentResult, error) {
@@ -781,41 +817,100 @@ type NegotiationResult struct {
 // history: recent messages (user/assistant pairs). rules: active contract rules to enforce.
 // attitude: "brat"|"emotional"|"playful"|"neutral" — detected from message keywords.
 // minutesSinceLastMsg: -1 if unknown, otherwise minutes since her last message.
-// recentPhotoCtx: "task"|"ritual"|"plug"|"checkin"|"outfit" if a photo was processed <30min ago, else "".
-func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int, locked bool, history []models.ChatMessage, rules []models.ContractRule, attitude string, minutesSinceLastMsg int, recentPhotoCtx string) (*ChatResult, error) {
-	system := c.P.BuildSystemPrompt(locked)
-
-	// ── Contexto adicional de actitud, tiempo y foto ─────────────────────────
-	var extraCtx string
-
-	switch attitude {
-	case "brat":
-		extraCtx += " She is being bratty or resistant — address this directly, coldly, with quiet consequence. Do not raise your voice. Just make her feel what happens next."
-	case "emotional":
-		extraCtx += " She seems emotionally vulnerable. Do NOT comfort her warmly — own her emotionally instead. She is yours even when she is sad. Possessive and dark, not warm."
-	case "playful":
-		extraCtx += " She is being playful or affectionate. You can briefly enjoy your property's mood — then remind her of her place."
-	}
-
-	if minutesSinceLastMsg > 180 {
-		hours := minutesSinceLastMsg / 60
-		extraCtx += fmt.Sprintf(" She disappeared for %d hours and just reappeared. Papi notices — he always does.", hours)
-	} else if minutesSinceLastMsg > 60 {
-		extraCtx += " She was gone for over an hour before writing. Papi is aware of when she goes quiet."
-	}
-
+// buildNarrativeContext construye un contexto situacional como narrativa causal
+// en lugar de una lista de hechos independientes.
+func buildNarrativeContext(attitude, recentPhotoCtx string, minutesSinceLastMsg int) string {
+	// Qué acaba de pasar (acción reciente)
+	var photoEvent string
 	switch recentPhotoCtx {
 	case "task":
-		extraCtx += " She just sent her task photo moments ago."
+		photoEvent = "she just submitted her task photo"
 	case "ritual":
-		extraCtx += " She just completed her morning ritual photo."
+		photoEvent = "she completed her morning ritual photo moments ago"
 	case "plug":
-		extraCtx += " She just confirmed wearing the plug."
+		photoEvent = "she just confirmed wearing the plug"
 	case "checkin":
-		extraCtx += " She just sent a check-in photo."
+		photoEvent = "she just responded to a check-in"
 	case "outfit":
-		extraCtx += " She just submitted her outfit photo."
+		photoEvent = "she just submitted her outfit photo"
 	}
+
+	// Cuánto tiempo estuvo en silencio
+	var timeEvent string
+	if minutesSinceLastMsg > 180 {
+		hours := minutesSinceLastMsg / 60
+		if photoEvent != "" {
+			timeEvent = fmt.Sprintf("then went quiet for %d hours before reappearing", hours)
+		} else {
+			timeEvent = fmt.Sprintf("she disappeared for %d hours and just reappeared — Papi always notices", hours)
+		}
+	} else if minutesSinceLastMsg > 60 {
+		if photoEvent != "" {
+			timeEvent = "then went quiet for over an hour"
+		} else {
+			timeEvent = "she was gone for over an hour before writing"
+		}
+	}
+
+	// Tono actual del mensaje
+	var attitudeDesc string
+	switch attitude {
+	case "brat":
+		attitudeDesc = "her tone now reads as resistant and bratty"
+	case "emotional":
+		attitudeDesc = "her tone reads as emotionally vulnerable"
+	case "playful":
+		attitudeDesc = "she's being playful and affectionate"
+	}
+
+	// Ensamblar en oración narrativa causal
+	var parts []string
+	if photoEvent != "" {
+		parts = append(parts, photoEvent)
+	}
+	if timeEvent != "" {
+		parts = append(parts, timeEvent)
+	}
+	if attitudeDesc != "" {
+		parts = append(parts, attitudeDesc)
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	narrative := "Context: " + strings.Join(parts, ", ") + "."
+
+	// Instrucción de comportamiento basada en actitud
+	switch attitude {
+	case "brat":
+		narrative += " Address her resistance directly and coldly — no raised voice, just quiet consequence."
+	case "emotional":
+		narrative += " Do NOT comfort her warmly — own her emotionally. She is yours even when she hurts."
+	case "playful":
+		narrative += " You can briefly enjoy your property's mood — then remind her of her place."
+	}
+
+	return narrative
+}
+
+// recentPhotoCtx: "task"|"ritual"|"plug"|"checkin"|"outfit" if a photo was processed <30min ago, else "".
+// summaries: resúmenes de conversaciones anteriores (memoria emocional de Papi).
+func (c *Client) Chat(userMessage string, toys []models.Toy, daysLocked int, tasksCompleted int, tasksFailed int, totalHoursAdded int, locked bool, history []models.ChatMessage, rules []models.ContractRule, attitude string, minutesSinceLastMsg int, recentPhotoCtx string, summaries []models.ConversationSummary) (*ChatResult, error) {
+	system := c.P.BuildSystemPrompt(locked)
+
+	// ── Memoria emocional — resúmenes de conversaciones anteriores ────────────
+	if len(summaries) > 0 {
+		memLines := "\n\nPAPI'S MEMORY — recent conversations with Jolie (oldest first):\n"
+		for _, s := range summaries {
+			memLines += fmt.Sprintf("- %s: %s\n", s.CreatedAt.Format("Jan 2"), s.Summary)
+		}
+		memLines += "Use this memory naturally — reference it when relevant, not mechanically."
+		system += memLines
+	}
+
+	// ── Contexto narrativo de actitud, tiempo y foto ──────────────────────────
+	extraCtx := buildNarrativeContext(attitude, recentPhotoCtx, minutesSinceLastMsg)
 
 	var userPrompt string
 	if locked {

@@ -724,6 +724,88 @@ func (b *Bot) HandleFail() {
 	b.autoPillory("confesó que no pudo completar la tarea")
 }
 
+// handleTaskFailFromChat procesa la confesión de fallo de tarea cuando llega por chat libre.
+// A diferencia de HandleFail (que usa el mensaje genérico de penalización), esta versión
+// pide a Papi que reaccione en personaje al cómo y qué dijo Jolie al confesar.
+func (b *Bot) handleTaskFailFromChat(userMessage string) {
+	penaltyHours := b.state.CurrentTask.PenaltyHours
+	b.state.CurrentTask.Failed = true
+	b.state.CurrentTask.AwaitingPhoto = false
+	b.state.TotalTimeAddedHours += penaltyHours
+	b.state.TasksFailed++
+	b.state.TasksStreak = max(0, b.state.TasksStreak-3)
+	b.mustSaveState()
+
+	if lock, err := b.chaster.GetActiveLock(); err == nil {
+		if err := b.chaster.AddTime(lock.ID, penaltyHours*3600); err != nil {
+			log.Printf("error añadiendo tiempo en Chaster: %v", err)
+		}
+	}
+
+	if b.db != nil {
+		b.db.SaveTask(&storage.Task{
+			ID: b.state.CurrentTask.ID, LockID: b.state.CurrentLockID,
+			Description: b.state.CurrentTask.Description,
+			AssignedAt:  b.state.CurrentTask.AssignedAt, DueAt: b.state.CurrentTask.DueAt,
+			Status:       "failed",
+			PenaltyHours: penaltyHours, RewardHours: b.state.CurrentTask.RewardHours,
+		})
+	}
+
+	b.addWeeklyDebt("tarea confesada por chat")
+
+	// Reacción en personaje de Papi a la confesión — referencia el mensaje de Jolie
+	if msg, err := b.ai.ReactToTaskFail(userMessage, penaltyHours, b.state.Toys, b.daysLocked()); err == nil {
+		b.Send(msg + fmt.Sprintf("\n\n_+%dh añadidas._", penaltyHours))
+	} else {
+		b.Send(fmt.Sprintf("▪️ *TAREA FALLADA*\n▬▬▬▬▬▬▬▬▬▬▬▬\n_+%dh añadidas._", penaltyHours))
+	}
+
+	b.autoPillory("confesó por chat que no pudo completar la tarea")
+}
+
+// TrySummarizeConversation genera y guarda un resumen de la conversación activa
+// si Jolie lleva más de 30 minutos sin escribir y hay suficientes mensajes.
+// Debe llamarse desde el job de 5 minutos — no bloquea, corre en goroutine.
+func (b *Bot) TrySummarizeConversation() {
+	if b.db == nil {
+		return
+	}
+	if b.state.LastMessageAt == nil {
+		return
+	}
+	// Solo actuar si han pasado 30+ minutos desde el último mensaje
+	if time.Since(*b.state.LastMessageAt) < 30*time.Minute {
+		return
+	}
+	// Solo si hay suficientes mensajes para que valga la pena resumir
+	count := b.db.GetChatHistoryCount()
+	if count < 4 {
+		return
+	}
+
+	history, err := b.db.GetAllChatHistory()
+	if err != nil || len(history) < 4 {
+		return
+	}
+
+	// Generar resumen en goroutine para no bloquear el scheduler
+	go func() {
+		summary, err := b.ai.SummarizeConversation(history)
+		if err != nil || summary == "" {
+			return
+		}
+		b.WithLock(func() {
+			if saveErr := b.db.SaveConversationSummary(summary, len(history)); saveErr != nil {
+				log.Printf("[memory] error guardando resumen: %v", saveErr)
+				return
+			}
+			b.db.ClearChatHistory()
+			log.Printf("[memory] conversación resumida (%d mensajes)", len(history))
+		})
+	}()
+}
+
 // ── Freeze / Timer visibility ──────────────────────────────────────────────
 // Todas estas funciones obtienen el lock activo automáticamente.
 
@@ -1045,7 +1127,7 @@ func (b *Bot) HandleChat(text string) {
 
 	case "task_fail_report":
 		if b.state.CurrentTask != nil && !b.state.CurrentTask.Completed && !b.state.CurrentTask.Failed {
-			b.HandleFail()
+			b.handleTaskFailFromChat(text)
 			return
 		}
 		// Sin tarea activa → cae a chat (Papi reacciona en personaje)
@@ -1075,7 +1157,11 @@ func (b *Bot) HandleChat(text string) {
 
 	case "plug_confirm":
 		if b.currentPendingAction() == "plug_photo" {
-			b.Send("_Manda la foto del plug puesto para que pueda confirmarlo._")
+			if msg, err := b.ai.GeneratePlugPhotoRequest(b.state.Toys, b.daysLocked()); err == nil {
+				b.Send(msg)
+			} else {
+				b.Send("_La foto. Ahora._")
+			}
 			return
 		}
 		// Sin pending plug → chat (Papi reacciona en personaje)
@@ -1100,11 +1186,13 @@ func (b *Bot) HandleChat(text string) {
 
 	var history []models.ChatMessage
 	var rules []models.ContractRule
+	var summaries []models.ConversationSummary
 	if b.db != nil {
 		history, _ = b.db.GetRecentChatHistory(6, 120)
 		if locked {
 			rules, _ = b.db.GetActiveContractRules()
 		}
+		summaries, _ = b.db.GetRecentConversationSummaries(3)
 	}
 
 	attitude := intent.Attitude
@@ -1137,6 +1225,7 @@ func (b *Bot) HandleChat(text string) {
 		attitude,
 		minutesSinceLastMsg,
 		recentPhotoCtx,
+		summaries,
 	)
 	if err != nil {
 		b.Send("_..._")

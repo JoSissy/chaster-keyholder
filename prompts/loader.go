@@ -37,17 +37,18 @@ type Thresholds struct {
 
 // SystemPrompts holds static system-role prompt strings (no variable interpolation).
 type SystemPrompts struct {
-	Locked               string `yaml:"locked"`
-	Free                 string `yaml:"free"`
-	TaskExplanation      string `yaml:"task_explanation"`
-	VerifyTaskPhoto      string `yaml:"verify_task_photo"`
-	VerifyLockPhoto      string `yaml:"verify_lock_photo"`
-	ClassifyIntent       string `yaml:"classify_intent"`
-	ExtractContractRules string `yaml:"extract_contract_rules"`
-	DescribeToy          string `yaml:"describe_toy"`
-	DescribeClothing     string `yaml:"describe_clothing"`
-	PilloryReason        string `yaml:"pillory_reason"`
-	ChasterTask          string `yaml:"chaster_task"`
+	Locked                  string `yaml:"locked"`
+	Free                    string `yaml:"free"`
+	TaskExplanation         string `yaml:"task_explanation"`
+	VerifyTaskPhoto         string `yaml:"verify_task_photo"`
+	VerifyLockPhoto         string `yaml:"verify_lock_photo"`
+	ClassifyIntent          string `yaml:"classify_intent"`
+	ExtractContractRules    string `yaml:"extract_contract_rules"`
+	DescribeToy             string `yaml:"describe_toy"`
+	DescribeClothing        string `yaml:"describe_clothing"`
+	PilloryReason           string `yaml:"pillory_reason"`
+	ChasterTask             string `yaml:"chaster_task"`
+	SummarizeConversation   string `yaml:"summarize_conversation"`
 }
 
 // ObedienceCtxs holds the per-level context suffix strings appended to prompts.

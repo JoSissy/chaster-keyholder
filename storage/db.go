@@ -54,6 +54,7 @@ func (db *DB) migrate() error {
 	}{
 		{1, "schema base", db.migrateV1},
 		{2, "fix orgasm_log + columnas faltantes", db.migrateV2},
+		{3, "conversation_summaries — memoria emocional", db.migrateV3},
 	}
 
 	for _, m := range migrations {
@@ -279,6 +280,20 @@ func (db *DB) migrateV1() error {
 		value      TEXT NOT NULL DEFAULT '',
 		updated_at TIMESTAMPTZ DEFAULT NOW()
 	);
+	`)
+	return err
+}
+
+// migrateV3 — tabla de resúmenes de conversación (memoria emocional de Papi).
+func (db *DB) migrateV3() error {
+	_, err := db.conn.Exec(`
+	CREATE TABLE IF NOT EXISTS conversation_summaries (
+		id            BIGSERIAL PRIMARY KEY,
+		summary       TEXT NOT NULL,
+		message_count INTEGER DEFAULT 0,
+		created_at    TIMESTAMPTZ DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_conv_summaries_created ON conversation_summaries(created_at);
 	`)
 	return err
 }
@@ -1385,6 +1400,62 @@ func (db *DB) GetRecentChatHistory(n int, maxIdleMinutes int) ([]models.ChatMess
 func (db *DB) ClearChatHistory() error {
 	_, err := db.conn.Exec(`DELETE FROM chat_history`)
 	return err
+}
+
+// GetChatHistoryCount devuelve cuántos mensajes hay en chat_history.
+func (db *DB) GetChatHistoryCount() int {
+	var count int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM chat_history`).Scan(&count)
+	return count
+}
+
+// GetAllChatHistory devuelve todos los mensajes en chat_history en orden cronológico.
+func (db *DB) GetAllChatHistory() ([]models.ChatMessage, error) {
+	rows, err := db.conn.Query(`SELECT role, content FROM chat_history ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var msgs []models.ChatMessage
+	for rows.Next() {
+		var m models.ChatMessage
+		if err := rows.Scan(&m.Role, &m.Content); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, nil
+}
+
+// ── Conversation Summaries (memoria emocional) ──────────────────────────────
+
+func (db *DB) SaveConversationSummary(summary string, messageCount int) error {
+	_, err := db.conn.Exec(
+		`INSERT INTO conversation_summaries (summary, message_count, created_at) VALUES ($1, $2, $3)`,
+		summary, messageCount, time.Now(),
+	)
+	return err
+}
+
+// GetRecentConversationSummaries devuelve los últimos n resúmenes en orden cronológico.
+func (db *DB) GetRecentConversationSummaries(n int) ([]models.ConversationSummary, error) {
+	rows, err := db.conn.Query(`
+		SELECT summary, message_count, created_at FROM (
+			SELECT summary, message_count, created_at FROM conversation_summaries ORDER BY created_at DESC LIMIT $1
+		) AS recent ORDER BY created_at ASC`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var summaries []models.ConversationSummary
+	for rows.Next() {
+		var s models.ConversationSummary
+		if err := rows.Scan(&s.Summary, &s.MessageCount, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, s)
+	}
+	return summaries, nil
 }
 
 // ── Contract Rules ─────────────────────────────────────────────────────────

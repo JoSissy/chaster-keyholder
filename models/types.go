@@ -284,6 +284,13 @@ type ChatMessage struct {
 	Content string
 }
 
+// ConversationSummary resumen de una conversación pasada — memoria emocional de Papi
+type ConversationSummary struct {
+	Summary      string
+	MessageCount int
+	CreatedAt    time.Time
+}
+
 // ContractRule una regla del contrato activo verificable por chat
 type ContractRule struct {
 	ID         string

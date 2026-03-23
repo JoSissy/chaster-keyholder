@@ -10,28 +10,39 @@ import (
 	"chaster-keyholder/telegram"
 )
 
+// jitter duerme un tiempo aleatorio entre 0 y maxMinutes minutos.
+// Se usa para que los jobs de mensajería no disparen siempre a la hora exacta,
+// haciéndolos sentir más naturales y menos robóticos.
+func jitter(maxMinutes int) {
+	if maxMinutes <= 0 {
+		return
+	}
+	d := time.Duration(rand.Intn(maxMinutes*60)) * time.Second
+	time.Sleep(d)
+}
+
 // Start registra todos los jobs del scheduler y arranca el loop de check-ins.
 // TODOS los horarios son en COT (Colombia, UTC-5). El servidor puede estar en
 // cualquier zona horaria — gocron usa la zona del sistema, pero el código en bot.go
 // usa cotLocation explícitamente para comparaciones de fecha.
 //
 // Resumen de jobs:
-//   08:00 — status matutino + mensaje de Papi
-//   08:30 — ritual matutino (foto de jaula + mensaje escrito)
-//   08:45 — asignación de plug del día
-//   09:00 — tarea diaria
-//   10:00 — outfit del día + mensaje de condicionamiento
-//   11:00 — expiración del ritual (penaliza si no se completó)
-//   12:00, 16:00, 20:00 — mensajes random de condicionamiento
-//   14:00 — mensaje de condicionamiento
-//   18:00 — ruleta diaria
-//   22:00 — status nocturno + penalización si tarea no completada
-//   23:00 — decay de obediencia (si 2+ días sin tarea, ConsecutiveDays = 0)
-//   cada 1 min  — check si el lock terminó (CheckLockFinished)
-//   cada 5 min  — expiración de eventos activos, check-ins, recordatorio de plug
+//   08:00 — status matutino + mensaje de Papi (±15 min jitter)
+//   08:30 — ritual matutino (±10 min jitter)
+//   08:45 — asignación de plug del día (±10 min jitter)
+//   09:00 — tarea diaria (±10 min jitter)
+//   10:00 — outfit del día (±15 min jitter)
+//   10:00, 14:00 — mensajes de condicionamiento (±20 min jitter)
+//   12:00, 16:00, 20:00 — mensajes random (±20 min jitter)
+//   11:00 — expiración del ritual (sin jitter — deadline fijo)
+//   18:00 — ruleta diaria (±30 min jitter)
+//   22:00 — status nocturno (±15 min jitter)
+//   23:00 — decay de obediencia (sin jitter)
+//   cada 1 min  — check si el lock terminó
+//   cada 5 min  — expiración de eventos, check-ins, plug, resumen de conversación
 //   cada 15 min — voto comunitario de tareas de Chaster
-//   cada 30 min (8-22h) — eventos random (freeze, hidetime, pillory, etc.)
-//   domingos 21:00 — juicio semanal (WeeklyDebt → consecuencias)
+//   cada 30 min (8-22h) — eventos random
+//   domingos 21:00 — juicio semanal
 //   intervalo aleatorio (45min-3h, 8-23h) — check-ins espontáneos (goroutine separada)
 func Start(bot *telegram.Bot) {
 	cotLoc, err := time.LoadLocation("America/Bogota")
@@ -43,34 +54,43 @@ func Start(bot *telegram.Bot) {
 		log.Fatal("error creando scheduler:", err)
 	}
 
-	// Status matutino — 8:00 AM
+	// Status matutino — 8:00 AM (±15 min jitter)
 	s.NewJob(
 		gocron.CronJob("0 8 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Enviando status matutino...")
-			bot.WithLock(bot.SendMorningStatus)
+			go func() {
+				jitter(15)
+				log.Println("[scheduler] Enviando status matutino...")
+				bot.WithLock(bot.SendMorningStatus)
+			}()
 		}),
 	)
 
-	// Status nocturno — 10:00 PM
+	// Status nocturno — 10:00 PM (±15 min jitter)
 	s.NewJob(
 		gocron.CronJob("0 22 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Enviando status nocturno...")
-			bot.WithLock(bot.SendNightStatus)
+			go func() {
+				jitter(15)
+				log.Println("[scheduler] Enviando status nocturno...")
+				bot.WithLock(bot.SendNightStatus)
+			}()
 		}),
 	)
 
-	// Tarea diaria — 9:00 AM
+	// Tarea diaria — 9:00 AM (±10 min jitter)
 	s.NewJob(
 		gocron.CronJob("0 9 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Asignando tarea diaria...")
-			bot.WithLock(bot.HandleTask)
+			go func() {
+				jitter(10)
+				log.Println("[scheduler] Asignando tarea diaria...")
+				bot.WithLock(bot.HandleTask)
+			}()
 		}),
 	)
 
-	// Check si el lock terminó — cada minuto
+	// Check si el lock terminó — cada minuto (sin jitter — técnico)
 	s.NewJob(
 		gocron.CronJob("* * * * *", false),
 		gocron.NewTask(func() {
@@ -87,7 +107,7 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
-	// Verificar expiración de eventos activos y check-ins — cada 5 minutos
+	// Verificar expiración de eventos activos, check-ins, plug y resumir conversación — cada 5 minutos
 	s.NewJob(
 		gocron.CronJob("*/5 * * * *", false),
 		gocron.NewTask(func() {
@@ -96,61 +116,80 @@ func Start(bot *telegram.Bot) {
 				bot.CheckCheckinExpiry()
 				bot.CheckPlugReminder()
 				bot.CheckGrantedPermissionsExpiry()
+				bot.TrySummarizeConversation()
 			})
 		}),
 	)
 
-	// Mensajes random del keyholder — cada 4 horas en horario activo (8am-11pm)
+	// Mensajes random del keyholder — cada 4 horas en horario activo (±20 min jitter)
 	s.NewJob(
-		gocron.CronJob("0 8,12,16,20 * * *", false),
+		gocron.CronJob("0 12,16,20 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Enviando mensaje random...")
-			bot.WithLock(bot.SendRandomMessage)
+			go func() {
+				jitter(20)
+				log.Println("[scheduler] Enviando mensaje random...")
+				bot.WithLock(bot.SendRandomMessage)
+			}()
 		}),
 	)
 
-	// Ritual matutino — 8:30 AM
+	// Ritual matutino — 8:30 AM (±10 min jitter)
 	s.NewJob(
 		gocron.CronJob("30 8 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Iniciando ritual matutino...")
-			bot.WithLock(bot.StartMorningRitual)
+			go func() {
+				jitter(10)
+				log.Println("[scheduler] Iniciando ritual matutino...")
+				bot.WithLock(bot.StartMorningRitual)
+			}()
 		}),
 	)
 
-	// Asignación de plug — 8:45 AM
+	// Asignación de plug — 8:45 AM (±10 min jitter)
 	s.NewJob(
 		gocron.CronJob("45 8 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Asignando plug del día...")
-			bot.WithLock(bot.SendPlugAssignment)
+			go func() {
+				jitter(10)
+				log.Println("[scheduler] Asignando plug del día...")
+				bot.WithLock(bot.SendPlugAssignment)
+			}()
 		}),
 	)
 
-	// Outfit del día — 10:00 AM
+	// Outfit del día — 10:00 AM (±15 min jitter)
 	s.NewJob(
 		gocron.CronJob("0 10 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Asignando outfit del día...")
-			bot.WithLock(bot.SendDailyOutfit)
+			go func() {
+				jitter(15)
+				log.Println("[scheduler] Asignando outfit del día...")
+				bot.WithLock(bot.SendDailyOutfit)
+			}()
 		}),
 	)
 
-	// Mensajes de condicionamiento — 10am y 2pm
+	// Mensajes de condicionamiento — 10am y 2pm (±20 min jitter)
 	s.NewJob(
 		gocron.CronJob("0 10,14 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Enviando mensaje de condicionamiento...")
-			bot.WithLock(bot.SendConditioningMessage)
+			go func() {
+				jitter(20)
+				log.Println("[scheduler] Enviando mensaje de condicionamiento...")
+				bot.WithLock(bot.SendConditioningMessage)
+			}()
 		}),
 	)
 
-	// Ruleta diaria — 6pm
+	// Ruleta diaria — 6pm (±30 min jitter)
 	s.NewJob(
 		gocron.CronJob("0 18 * * *", false),
 		gocron.NewTask(func() {
-			log.Println("[scheduler] Girando ruleta diaria...")
-			bot.WithLock(bot.HandleRuleta)
+			go func() {
+				jitter(30)
+				log.Println("[scheduler] Girando ruleta diaria...")
+				bot.WithLock(bot.HandleRuleta)
+			}()
 		}),
 	)
 
