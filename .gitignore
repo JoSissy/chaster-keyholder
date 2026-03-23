@@ -1,3 +1,4 @@
 /.vscode
 .env
-state.json
+state.json.claude/
+chaster-keyholder
