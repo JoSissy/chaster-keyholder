@@ -773,12 +773,14 @@ func (b *Bot) TrySummarizeConversation() {
 		return
 	}
 
-	// Snapshot rápido del estado relevante — sin lock (LastMessageAt es solo-lectura aquí,
-	// el peor caso es una lectura ligeramente stale que resulta en no resumir: aceptable).
-	if b.state.LastMessageAt == nil {
+	// Snapshot de LastMessageAt bajo lock — el loop de Telegram lo escribe bajo handlerMu,
+	// así que debemos leerlo también bajo lock para evitar race condition.
+	var lastMsg *time.Time
+	b.WithLock(func() { lastMsg = b.state.LastMessageAt })
+	if lastMsg == nil {
 		return
 	}
-	idleTime := time.Since(*b.state.LastMessageAt)
+	idleTime := time.Since(*lastMsg)
 	if idleTime < 30*time.Minute {
 		return
 	}
