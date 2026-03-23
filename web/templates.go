@@ -554,6 +554,22 @@ a:hover { color: var(--purple); }
   btn.addEventListener('click', openSidebar);
   backdrop.addEventListener('click', closeSidebar);
 })();
+
+// Auto-refresh: recarga cada 60s, se pausa cuando la pestaña está en background
+(function(){
+  var INTERVAL = 60000;
+  var timer = null;
+  function schedule() {
+    timer = setTimeout(function(){ location.reload(); }, INTERVAL);
+  }
+  function pause() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) { pause(); } else { schedule(); }
+  });
+  schedule();
+})();
 </script>
 </body>
 </html>`
