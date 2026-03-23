@@ -107,7 +107,7 @@ func Start(bot *telegram.Bot) {
 		}),
 	)
 
-	// Verificar expiración de eventos activos, check-ins, plug y resumir conversación — cada 5 minutos
+	// Verificar expiración de eventos activos, check-ins y plug — cada 5 minutos
 	s.NewJob(
 		gocron.CronJob("*/5 * * * *", false),
 		gocron.NewTask(func() {
@@ -116,8 +116,11 @@ func Start(bot *telegram.Bot) {
 				bot.CheckCheckinExpiry()
 				bot.CheckPlugReminder()
 				bot.CheckGrantedPermissionsExpiry()
-				bot.TrySummarizeConversation()
 			})
+			// TrySummarizeConversation se llama FUERA de WithLock — gestiona su propio
+			// locking internamente desde la goroutine que lanza. Llamarla dentro
+			// causaría deadlock: padre retiene handlerMu, goroutine hija lo pide.
+			bot.TrySummarizeConversation()
 		}),
 	)
 

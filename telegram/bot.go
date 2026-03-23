@@ -766,18 +766,23 @@ func (b *Bot) handleTaskFailFromChat(userMessage string) {
 
 // TrySummarizeConversation genera y guarda un resumen de la conversación activa
 // si Jolie lleva más de 30 minutos sin escribir y hay suficientes mensajes.
-// Debe llamarse desde el job de 5 minutos — no bloquea, corre en goroutine.
+// IMPORTANTE: debe llamarse FUERA de WithLock — lanza una goroutine que adquiere
+// el lock internamente. Llamarla dentro de WithLock causa deadlock.
 func (b *Bot) TrySummarizeConversation() {
 	if b.db == nil {
 		return
 	}
+
+	// Snapshot rápido del estado relevante — sin lock (LastMessageAt es solo-lectura aquí,
+	// el peor caso es una lectura ligeramente stale que resulta en no resumir: aceptable).
 	if b.state.LastMessageAt == nil {
 		return
 	}
-	// Solo actuar si han pasado 30+ minutos desde el último mensaje
-	if time.Since(*b.state.LastMessageAt) < 30*time.Minute {
+	idleTime := time.Since(*b.state.LastMessageAt)
+	if idleTime < 30*time.Minute {
 		return
 	}
+
 	// Solo si hay suficientes mensajes para que valga la pena resumir
 	count := b.db.GetChatHistoryCount()
 	if count < 4 {
@@ -785,14 +790,22 @@ func (b *Bot) TrySummarizeConversation() {
 	}
 
 	history, err := b.db.GetAllChatHistory()
-	if err != nil || len(history) < 4 {
+	if err != nil {
+		log.Printf("[memory] error leyendo chat_history: %v", err)
+		return
+	}
+	if len(history) < 4 {
 		return
 	}
 
-	// Generar resumen en goroutine para no bloquear el scheduler
+	// Generar resumen en goroutine — la llamada a AI puede tardar varios segundos
 	go func() {
 		summary, err := b.ai.SummarizeConversation(history)
-		if err != nil || summary == "" {
+		if err != nil {
+			log.Printf("[memory] error generando resumen: %v", err)
+			return
+		}
+		if summary == "" {
 			return
 		}
 		b.WithLock(func() {
@@ -801,7 +814,7 @@ func (b *Bot) TrySummarizeConversation() {
 				return
 			}
 			b.db.ClearChatHistory()
-			log.Printf("[memory] conversación resumida (%d mensajes)", len(history))
+			log.Printf("[memory] conversación resumida (%d mensajes, idle %.0fmin)", len(history), idleTime.Minutes())
 		})
 	}()
 }
