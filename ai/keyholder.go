@@ -495,8 +495,9 @@ func (c *Client) VerifyLockPhoto(imageBytes []byte, mimeType string) (*PhotoVerd
 
 // IntentResult resultado del clasificador de intención del chat libre.
 type IntentResult struct {
-	Intent string `json:"intent"` // "lock_request"|"toy_request"|"cum_request"|"cum_report"|"toy_confirm"|"chat"
-	Toy    string `json:"toy,omitempty"`
+	Intent   string `json:"intent"`             // "lock_request"|"toy_request"|"cum_request"|"cum_report"|"toy_confirm"|"plug_confirm"|"task_fail_report"|"negotiation"|"event_negotiation"|"cancel"|"chat"
+	Attitude string `json:"attitude,omitempty"` // "brat"|"emotional"|"playful"|"neutral"
+	Toy      string `json:"toy,omitempty"`
 }
 
 // ClassifyIntent clasifica un mensaje en lenguaje natural en una intención de acción.

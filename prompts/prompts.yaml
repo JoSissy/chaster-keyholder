@@ -169,55 +169,79 @@ system:
     - Only reject if one of the two elements is completely absent or the photo is clearly unrelated
 
   classify_intent: |-
-    You classify a Spanish chat message into ONE intent. Respond ONLY in JSON, no extra text.
+    You classify a Spanish chat message into ONE intent and ONE attitude. Respond ONLY in JSON, no extra text.
 
-    Intents:
-    - cancel: wants to cancel or abort the current action/flow (cancela, olvídalo, me arrepentí, no quiero, déjalo, ya no, abort, para, stop)
-    - lock_request: wants to get locked / start a new chastity session (enjaular, jaula, enjaularse, encerrarme, ponerme la jaula, empezar sesión)
+    INTENTS:
+    - cancel: actively aborting something already in progress right now (cancela, olvídalo, ya no quiero esto, déjalo, para)
+    - lock_request: clear, immediate desire to start a chastity session NOW (enjaular, ponerme la jaula, empezar sesión) — NOT conditional, NOT hypothetical
     - toy_request: asking permission to use toys/dildo/plug/vibrator to masturbate (NOT asking to cum)
-    - cum_request: asking permission to orgasm/cum/correrse
-    - cum_report: reporting they already came/orgasmed (with or without permission)
-    - toy_confirm: saying they finished/completed a toy or masturbation session
-    - chat: anything else
+    - cum_request: asking permission to orgasm/cum — clear intent, NOT hypothetical
+    - cum_report: reporting they already came/orgasmed (past tense: me corrí, me vine, me acabé, me fui, me llegué)
+    - toy_confirm: confirming they finished a toy or masturbation session Papi authorized
+    - plug_confirm: saying they put on / are wearing the plug right now (verbal confirmation, no photo)
+    - task_fail_report: confessing/reporting they failed or couldn't complete today's task
+    - negotiation: asking to remove time, earn a reward, negotiate release, or arguing they deserve something based on good behavior
+    - event_negotiation: begging Papi to end an active punishment event (freeze, hidetime, pillory) — pleading for relief, asking how long is left
+    - chat: everything else — questions, conversation, feelings, complaints, hypotheticals, conditionals
 
-    Extract toy name only if explicitly mentioned in the message.
+    ATTITUDE (always include, for every intent including "chat"):
+    - brat: resistant, defiant, pushing back, refusing, complaining it's unfair
+    - emotional: sad, crying, scared, anxious, vulnerable, lonely, hurting
+    - playful: flirty, affectionate, giggly, teasing, using cute language
+    - neutral: calm, matter-of-fact, informational, asking questions
 
-    IMPORTANT — disambiguation rules:
-    - toy_request = wants to use toys/masturbate but NOT asking to cum (pleasure session)
-    - cum_request = primary goal is to orgasm/cum, even if a toy is mentioned
-    - cum_report = already came, reporting it (past tense: me corrí, me vine, me acabé)
-    - toy_confirm = confirming they finished a toy session Papi authorized
-    - cancel = aborting something they started (adding toy, lock flow, etc.)
-    - lock_request = wants to start a new chastity lock session
-    - chat = everything else (questions, conversation, status checks, complaints)
+    CRITICAL disambiguation rules:
+    - Conditional or hypothetical = chat. "si me dices algo lindo me enjaulo" → chat (condition present)
+    - "me enjaulo" alone in context of negotiation or fantasy → chat
+    - "papi quiero enjaularme ya" → lock_request (immediate, direct, no condition)
+    - cancel ONLY when actively stopping something in progress. "me arrepentí de no haber hecho la tarea" → chat (not canceling anything)
+    - "no quiero" alone is NOT brat if it's affectionate ("no quiero que te vayas papi" → playful or emotional)
+    - "no quiero hacer esto" / "no pienso obedecer" → brat
+    - task_fail_report ONLY when confessing failure. "no pude hacer la tarea" → task_fail_report. "qué pasa si fallo la tarea?" → chat
+    - plug_confirm = verbal "ya me puse el plug" / "tengo el plug puesto". NOT a photo. NOT a toy_request.
+    - negotiation = asking for time removal, reward, or arguing good behavior. NOT just complaining.
+    - event_negotiation = begging about an active freeze/hidetime/pillory event. Asking when it ends, pleading for relief.
+    - cum_report only for past-tense reports. "me correré pronto" → chat. "me corrí ahorita" → cum_report.
 
     Examples:
-    "cancela" → {"intent":"cancel"}
-    "olvídalo papi" → {"intent":"cancel"}
-    "me arrepentí" → {"intent":"cancel"}
-    "ya no quiero" → {"intent":"cancel"}
-    "papi quiero enjaularme" → {"intent":"lock_request"}
-    "quiero ponerme la jaula papi" → {"intent":"lock_request"}
-    "papi encierrame" → {"intent":"lock_request"}
-    "quiero empezar sesión" → {"intent":"lock_request"}
-    "papi puedo usar mi dildo" → {"intent":"toy_request","toy":"dildo"}
-    "papi quiero masturbarme" → {"intent":"toy_request"}
-    "papi quiero tocarme un poco" → {"intent":"toy_request"}
-    "puedo jugar con mi plug papi" → {"intent":"toy_request","toy":"plug"}
-    "papi quiero correrme por favor" → {"intent":"cum_request"}
-    "papi puedo correrme con el dildo?" → {"intent":"cum_request","toy":"dildo"}
-    "quiero hacerme venir papi" → {"intent":"cum_request"}
-    "papi me corrí con el dildo grande" → {"intent":"cum_report","toy":"dildo grande"}
-    "me vine sin permiso papi perdón" → {"intent":"cum_report"}
-    "me acabé papi, lo siento" → {"intent":"cum_report"}
-    "terminé papi listo" → {"intent":"toy_confirm"}
-    "ya hice lo que me dijiste" → {"intent":"toy_confirm"}
-    "papi cuánto tiempo me falta" → {"intent":"chat"}
-    "papi cómo estás" → {"intent":"chat"}
-    "me duele la espalda hoy" → {"intent":"chat"}
-    "papi tengo una pregunta" → {"intent":"chat"}
+    "cancela" → {"intent":"cancel","attitude":"neutral"}
+    "olvídalo papi" → {"intent":"cancel","attitude":"neutral"}
+    "me arrepentí" → {"intent":"cancel","attitude":"neutral"}
+    "me arrepentí de no haber hecho la tarea antes" → {"intent":"chat","attitude":"emotional"}
+    "ya no quiero esto" → {"intent":"cancel","attitude":"brat"}
+    "papi quiero enjaularme ya" → {"intent":"lock_request","attitude":"playful"}
+    "quiero ponerme la jaula papi" → {"intent":"lock_request","attitude":"neutral"}
+    "si me dices algo lindo me enjaulo" → {"intent":"chat","attitude":"playful"}
+    "me enjaulo si me lo pides" → {"intent":"chat","attitude":"playful"}
+    "pensé en enjaularme hoy" → {"intent":"chat","attitude":"neutral"}
+    "papi puedo usar mi dildo" → {"intent":"toy_request","attitude":"neutral","toy":"dildo"}
+    "papi quiero masturbarme un poco" → {"intent":"toy_request","attitude":"playful"}
+    "puedo jugar con mi plug papi" → {"intent":"toy_request","attitude":"neutral","toy":"plug"}
+    "ya me puse el plug papi" → {"intent":"plug_confirm","attitude":"neutral"}
+    "tengo el plug puesto como me dijiste" → {"intent":"plug_confirm","attitude":"neutral"}
+    "papi quiero correrme por favor" → {"intent":"cum_request","attitude":"playful"}
+    "papi puedo correrme con el dildo?" → {"intent":"cum_request","attitude":"neutral","toy":"dildo"}
+    "si me porto bien me dejas correrme?" → {"intent":"chat","attitude":"playful"}
+    "papi me corrí con el dildo grande" → {"intent":"cum_report","attitude":"neutral","toy":"dildo grande"}
+    "me vine sin permiso papi perdón" → {"intent":"cum_report","attitude":"emotional"}
+    "me acabé papi, lo siento" → {"intent":"cum_report","attitude":"emotional"}
+    "terminé papi listo" → {"intent":"toy_confirm","attitude":"neutral"}
+    "papi fallé la tarea, no pude" → {"intent":"task_fail_report","attitude":"emotional"}
+    "no logré hacer lo que me pediste" → {"intent":"task_fail_report","attitude":"emotional"}
+    "qué pasa si fallo la tarea?" → {"intent":"chat","attitude":"neutral"}
+    "papi me porté bien toda la semana, me quitas tiempo?" → {"intent":"negotiation","attitude":"playful"}
+    "creo que merezco una recompensa" → {"intent":"negotiation","attitude":"brat"}
+    "papi ya fue suficiente, por favor descongélame" → {"intent":"event_negotiation","attitude":"emotional"}
+    "cuánto tiempo me falta de castigo?" → {"intent":"event_negotiation","attitude":"neutral"}
+    "ya aprendí la lección papi" → {"intent":"event_negotiation","attitude":"emotional"}
+    "papi no quiero que te vayas" → {"intent":"chat","attitude":"emotional"}
+    "papi cómo estás" → {"intent":"chat","attitude":"playful"}
+    "me duele la espalda hoy" → {"intent":"chat","attitude":"neutral"}
+    "no me gusta esta tarea" → {"intent":"chat","attitude":"brat"}
+    "jajaja papi eres malo" → {"intent":"chat","attitude":"playful"}
+    "estoy triste papi" → {"intent":"chat","attitude":"emotional"}
 
-    Respond ONLY with JSON: {"intent":"...", "toy":"..."} — omit "toy" key if none mentioned.
+    Respond ONLY with JSON: {"intent":"...","attitude":"...","toy":"..."} — omit "toy" if none mentioned.
 
   extract_contract_rules: |-
     You extract enforceable chat rules from chastity session contracts.

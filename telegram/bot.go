@@ -987,52 +987,6 @@ func isCancelIntent(textLower string) bool {
 	return false
 }
 
-// isCumReportText detecta frases de reporte de orgasmo sin llamar a la IA.
-// Se usa para que cum_report tenga prioridad sobre toy_session_confirm.
-func isCumReportText(textLower string) bool {
-	phrases := []string{"me corrí", "me corri", "me vine", "me vení", "me veni", "me llegué", "me llegue", "me fui", "me acabé", "me acabe"}
-	for _, p := range phrases {
-		if strings.Contains(textLower, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// detectAttitude clasifica la actitud del mensaje: "brat", "emotional", "playful", "neutral".
-// Se pasa a ai.Chat como contexto adicional para calibrar la respuesta de Papi.
-func detectAttitude(textLower string) string {
-	bratPhrases := []string{
-		"no quiero", "no me da la gana", "no es justo", "es injusto",
-		"no pienso", "me niego", "que aburrido", "eres malo",
-		"no me gusta esto", "odio esto", "no quiero hacer",
-	}
-	for _, p := range bratPhrases {
-		if strings.Contains(textLower, p) {
-			return "brat"
-		}
-	}
-	emotionalPhrases := []string{
-		"estoy triste", "me siento mal", "me siento sola", "estoy llorando",
-		"me puse a llorar", "estoy angustiada", "me siento rara", "estoy deprimida",
-		"tengo miedo", "estoy asustada", "me siento vacía", "me duele el alma",
-	}
-	for _, p := range emotionalPhrases {
-		if strings.Contains(textLower, p) {
-			return "emotional"
-		}
-	}
-	playfulPhrases := []string{
-		"holi", "papiii", "papi rico", "papi guapo", "te quiero papi",
-		"jajaja", "jajaj", "jejeje", "hehehe", "uwu", ":3",
-	}
-	for _, p := range playfulPhrases {
-		if strings.Contains(textLower, p) {
-			return "playful"
-		}
-	}
-	return "neutral"
-}
 
 func (b *Bot) HandleChat(text string) {
 	// Rate limiting — máximo 1 mensaje IA cada 3 segundos
@@ -1046,119 +1000,101 @@ func (b *Bot) HandleChat(text string) {
 
 	textLower := strings.ToLower(text)
 
-	// ── Cancel tiene prioridad absoluta — funciona en CUALQUIER estado ──────
-	// Se comprueba ANTES de cualquier routing por estado para que "cancela" /
-	// "olvídalo" / "me arrepentí" siempre funcionen, incluso en selecting_cage.
-	if isCancelIntent(textLower) {
-		b.HandleCancel()
-		return
-	}
-
-	// Ritual matutino — respuesta de texto
-	if b.currentPendingAction() == "ritual_message" {
+	// ── Pending actions que esperan input estructurado — bypasean clasificación ──
+	// No son lenguaje natural libre: son selección numérica o flujo guiado paso a paso.
+	switch b.currentPendingAction() {
+	case "ritual_message":
 		b.HandleRitualMessage(text)
 		return
-	}
-
-	// Detectar selección de jaula durante flujo de newlock
-	if b.currentPendingAction() == "selecting_cage" {
+	case "selecting_cage":
 		b.handleCageSelection(text)
 		return
-	}
-
-	// Detectar selección de juguete a eliminar
-	if b.currentPendingAction() == "removing_toy" {
+	case "removing_toy":
 		b.handleToyRemoveSelection(text)
 		return
-	}
-
-	// Confirmación de sesión de juguetes.
-	// cum_report tiene prioridad: si reportas que ya te corriste durante la sesión,
-	// se procesa como reporte de orgasmo (posiblemente sin permiso) en lugar de confirmación.
-	if b.currentPendingAction() == "toy_session_confirm" {
-		if isCumReportText(textLower) {
-			if intent, err := b.ai.ClassifyIntent(text); err == nil && intent.Intent == "cum_report" {
-				b.handleCumReport(text, intent.Toy)
-				return
-			}
+	case "removing_clothing":
+		b.handleClothingRemoveSelection(text)
+		return
+	case "toy_session_confirm":
+		// cum_report tiene prioridad: si reporta orgasmo durante la sesión,
+		// se procesa como orgasmo (posiblemente sin permiso), no como confirmación.
+		if intent, err := b.ai.ClassifyIntent(text); err == nil && intent.Intent == "cum_report" {
+			b.handleCumReport(text, intent.Toy)
+			return
 		}
 		b.handleToySessionConfirmation(text)
 		return
 	}
 
-	// Detectar selección de prenda a eliminar
-	if b.currentPendingAction() == "removing_clothing" {
-		b.handleClothingRemoveSelection(text)
-		return
-	}
-
-	// Detectar ruegos sobre evento activo (freeze/hidetime)
-	if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
-		eventKeywords := map[string][]string{
-			"freeze":   {"descongela", "unfreeze", "congela", "frio", "fría", "congelada", "liberame", "libérame"},
-			"hidetime": {"timer", "tiempo", "cuanto", "cuánto", "falta", "muestrame", "muéstrame", "ver el tiempo"},
-		}
-		for _, kw := range eventKeywords[b.state.ActiveEvent.Type] {
-			if strings.Contains(textLower, kw) {
-				b.handleEventNegotiation(text)
-				return
-			}
-		}
-	}
-
-	// ── Clasificador de intención (lenguaje natural) ──────────────────────
-	// Cubre: pedir juguetes, pedir orgasmo, reportar orgasmo, confirmar sesión.
-	// cum_report tiene prioridad absoluta sobre cualquier pendingAction.
-	if intent, err := b.ai.ClassifyIntent(text); err == nil {
-		switch intent.Intent {
-		case "cancel":
+	// ── Clasificador de intención AI — enruta TODO el lenguaje natural ──────
+	// Devuelve intent + attitude en una sola llamada.
+	// Si falla (red, timeout), isCancelIntent actúa como safety net mínimo.
+	intent, classErr := b.ai.ClassifyIntent(text)
+	if classErr != nil {
+		if isCancelIntent(textLower) {
 			b.HandleCancel()
 			return
-		case "lock_request":
-			b.handleNaturalLockRequest(text)
-			return
-		case "cum_report":
-			b.handleCumReport(text, intent.Toy)
-			return
-		case "toy_request":
-			b.handleToyRequest(text)
-			return
-		case "cum_request":
-			b.handleCumRequest(text)
-			return
-		case "toy_confirm":
-			if b.currentPendingAction() == "toy_session_confirm" {
-				b.handleToySessionConfirmation(text)
-				return
-			}
 		}
+		intent = &ai.IntentResult{Intent: "chat", Attitude: "neutral"}
 	}
 
-	// Detectar negociación de tiempo.
-	// IMPORTANTE: mantener esta lista específica — palabras genéricas como "tiempo",
-	// "horas", "permiso", "puedo", "por favor" generan falsos positivos en conversación normal.
-	negotiationKeywords := []string{
-		"quitar tiempo", "quita tiempo", "quitarme tiempo",
-		"reducir tiempo", "reduce tiempo", "reducirme tiempo",
-		"quitar horas", "reducir horas", "menos tiempo", "menos horas",
-		"me porté bien", "me porte bien", "me comporté", "me comporte",
-		"negociar", "recompensa",
-		"liberar antes", "salir antes", "terminar antes",
-	}
+	switch intent.Intent {
+	case "cancel":
+		b.HandleCancel()
+		return
 
-	isNegotiation := false
-	for _, kw := range negotiationKeywords {
-		if strings.Contains(textLower, kw) {
-			isNegotiation = true
-			break
+	case "task_fail_report":
+		if b.state.CurrentTask != nil && !b.state.CurrentTask.Completed && !b.state.CurrentTask.Failed {
+			b.HandleFail()
+			return
 		}
-	}
+		// Sin tarea activa → cae a chat (Papi reacciona en personaje)
 
-	if isNegotiation {
+	case "lock_request":
+		b.handleNaturalLockRequest(text)
+		return
+
+	case "cum_report":
+		b.handleCumReport(text, intent.Toy)
+		return
+
+	case "toy_request":
+		b.handleToyRequest(text)
+		return
+
+	case "cum_request":
+		b.handleCumRequest(text)
+		return
+
+	case "toy_confirm":
+		if b.currentPendingAction() == "toy_session_confirm" {
+			b.handleToySessionConfirmation(text)
+			return
+		}
+		// Sin sesión activa → cae a chat
+
+	case "plug_confirm":
+		if b.currentPendingAction() == "plug_photo" {
+			b.Send("_Manda la foto del plug puesto para que pueda confirmarlo._")
+			return
+		}
+		// Sin pending plug → chat (Papi reacciona en personaje)
+
+	case "negotiation":
+		b.handleNegotiation(text)
+		return
+
+	case "event_negotiation":
+		if b.state.ActiveEvent != nil && time.Now().Before(b.state.ActiveEvent.ExpiresAt) {
+			b.handleEventNegotiation(text)
+			return
+		}
+		// Sin evento activo → tratar como negociación de tiempo
 		b.handleNegotiation(text)
 		return
 	}
 
+	// ── Chat libre ────────────────────────────────────────────────────────────
 	_, lockErr := b.chaster.GetActiveLock()
 	locked := lockErr == nil
 
@@ -1171,8 +1107,10 @@ func (b *Bot) HandleChat(text string) {
 		}
 	}
 
-	// ── Actitud, tiempo de respuesta y contexto de foto reciente ─────────────
-	attitude := detectAttitude(textLower)
+	attitude := intent.Attitude
+	if attitude == "" {
+		attitude = "neutral"
+	}
 
 	minutesSinceLastMsg := -1
 	if b.state.LastMessageAt != nil {
