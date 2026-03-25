@@ -33,6 +33,15 @@ type Thresholds struct {
 	LockDurationDefault    int `yaml:"lock_duration_default_hours"`
 	NegotiateMaxRemove     int `yaml:"negotiate_max_remove_hours"`
 	NegotiateMaxPenalty    int `yaml:"negotiate_max_penalty_hours"`
+
+	// Chat history — cuántos pares de mensajes pasar como contexto al modelo,
+	// y cuántos minutos de silencio consideran que la conversación "expiró".
+	ChatHistoryPairs  int `yaml:"chat_history_pairs"`
+	ChatIdleMinutes   int `yaml:"chat_idle_minutes"`
+
+	// Summarize — minutos de silencio antes de resumir, y mínimo de mensajes.
+	SummarizeIdleMinutes int `yaml:"summarize_idle_minutes"`
+	SummarizeMinMessages int `yaml:"summarize_min_messages"`
 }
 
 // SystemPrompts holds static system-role prompt strings (no variable interpolation).

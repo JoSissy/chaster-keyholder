@@ -37,6 +37,14 @@ thresholds:
   negotiate_max_remove_hours:  4
   negotiate_max_penalty_hours: 3
 
+  # Chat history — pares de mensajes a pasar como contexto, e idle para nueva conversación
+  chat_history_pairs:  6
+  chat_idle_minutes:   120
+
+  # Summarize — minutos de silencio antes de resumir y mínimo de mensajes para que valga la pena
+  summarize_idle_minutes: 30
+  summarize_min_messages: 4
+
 
 # ── System prompts base ───────────────────────────────────────────────────
 # Estos prompts se pasan como rol "system" en la mayoría de las llamadas.

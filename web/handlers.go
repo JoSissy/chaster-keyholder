@@ -66,6 +66,12 @@ type dashData struct {
 	TodayOutfitPhotoURL string
 	TodayOutfitComment  string
 	OutfitConfirmed     bool
+	// Última actividad
+	HasLastMessage     bool
+	LastMessageAgo     string // "hace X minutos" human-readable
+	// Eventos recientes (últimos 5)
+	RecentEvents []*storage.Event
+	TotalEvents  int
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +178,33 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	recent, _ := s.db.GetRecentTasks(6)
 	d.RecentTasks = recent
+
+	// Última actividad — LastMessageAt persiste desde el bot
+	if st.LastMessageAt != nil {
+		d.HasLastMessage = true
+		since := time.Since(*st.LastMessageAt)
+		switch {
+		case since < time.Minute:
+			d.LastMessageAgo = "hace menos de un minuto"
+		case since < time.Hour:
+			d.LastMessageAgo = fmt.Sprintf("hace %d min", int(since.Minutes()))
+		case since < 24*time.Hour:
+			h := int(since.Hours())
+			m := int(since.Minutes()) % 60
+			if m > 0 {
+				d.LastMessageAgo = fmt.Sprintf("hace %dh %dm", h, m)
+			} else {
+				d.LastMessageAgo = fmt.Sprintf("hace %dh", h)
+			}
+		default:
+			d.LastMessageAgo = fmt.Sprintf("hace %d días", int(since.Hours()/24))
+		}
+	}
+
+	// Eventos recientes y conteo total
+	recentEvents, _ := s.db.GetEvents(5)
+	d.RecentEvents = recentEvents
+	d.TotalEvents, _, _, _ = s.db.GetEventStats()
 
 	// Outfit del día
 	loc, err := time.LoadLocation("America/Bogota")
@@ -589,4 +622,36 @@ func (s *Server) handleContract(w http.ResponseWriter, r *http.Request) {
 		d.Contract = c
 	}
 	s.render(w, contractHTML, d)
+}
+
+// ── Events ─────────────────────────────────────────────────────────────────
+
+type eventsData struct {
+	pageBase
+	Events  []*storage.Event
+	Total   int
+	Freeze  int
+	Hidetime int
+	Pillory int
+	Negotiated int
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	events, _ := s.db.GetEvents(200)
+	total, freeze, hidetime, pillory := s.db.GetEventStats()
+	negotiated := 0
+	for _, e := range events {
+		if e.Negotiated {
+			negotiated++
+		}
+	}
+	s.render(w, eventsHTML, eventsData{
+		pageBase:   s.base("events"),
+		Events:     events,
+		Total:      total,
+		Freeze:     freeze,
+		Hidetime:   hidetime,
+		Pillory:    pillory,
+		Negotiated: negotiated,
+	})
 }

@@ -41,6 +41,7 @@ func New(db *storage.DB, botUsername, password string) http.Handler {
 	mux.HandleFunc("/gallery", s.auth(s.handleGallery))
 	mux.HandleFunc("/contract", s.auth(s.handleContract))
 	mux.HandleFunc("/checkins", s.auth(s.handleCheckins))
+	mux.HandleFunc("/events", s.auth(s.handleEvents))
 	return mux
 }
 
@@ -125,6 +126,24 @@ func funcMap() template.FuncMap {
 		},
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
+		"div": func(a, b int) int {
+			if b == 0 {
+				return 0
+			}
+			return a / b
+		},
+		"mod": func(a, b int) int {
+			if b == 0 {
+				return 0
+			}
+			return a % b
+		},
+		"derefTime": func(t *time.Time) time.Time {
+			if t == nil {
+				return time.Time{}
+			}
+			return *t
+		},
 		"truncate": func(s string, n int) string {
 			runes := []rune(s)
 			if len(runes) <= n {

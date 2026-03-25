@@ -531,6 +531,9 @@ a:hover { color: var(--purple); }
     <a href="/checkins" class="nav-link {{if eq .Nav "checkins"}}active{{end}}">
       <span class="nav-icon">📸</span> Check-ins
     </a>
+    <a href="/events" class="nav-link {{if eq .Nav "events"}}active{{end}}">
+      <span class="nav-icon">⚡</span> Eventos
+    </a>
   </nav>
   <div class="sidebar-foot">
     <a href="{{.TelegramLink}}" target="_blank" class="tg-btn">
@@ -886,6 +889,63 @@ var dashboardHTML = `{{define "content"}}
     </div>
     {{end}}
   </div>
+</div>
+
+<!-- ── Última actividad + Eventos recientes ── -->
+<div class="grid-2" style="margin-top:18px;">
+
+  <!-- Última actividad del chat -->
+  <div class="card">
+    <div class="card-title">Actividad reciente</div>
+    {{if .HasLastMessage}}
+    <div style="display:flex;align-items:center;gap:14px;padding:10px 0;">
+      <span style="font-size:26px;">💬</span>
+      <div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);">Último mensaje</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">{{.LastMessageAgo}}</div>
+      </div>
+    </div>
+    {{else}}
+    <div class="empty">
+      <div class="empty-icon">💬</div>
+      <div class="empty-text">Sin actividad reciente</div>
+    </div>
+    {{end}}
+    {{if .TotalEvents}}
+    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px;">
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;">Estadísticas de castigo</div>
+      <div style="font-size:13px;color:var(--text);">{{.TotalEvents}} eventos totales · <a href="/events" style="color:var(--pink);">ver historial →</a></div>
+    </div>
+    {{end}}
+  </div>
+
+  <!-- Eventos recientes -->
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div class="card-title" style="margin-bottom:0;">Eventos recientes</div>
+      {{if .TotalEvents}}<a href="/events" style="font-size:12px;color:var(--pink);">ver todos</a>{{end}}
+    </div>
+    {{if .RecentEvents}}
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      {{range .RecentEvents}}
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:rgba(58,29,72,0.25);border:1px solid rgba(58,29,72,0.5);">
+        <span style="font-size:18px;">{{if eq .Type "freeze"}}🧊{{else if eq .Type "hidetime"}}🕶️{{else if eq .Type "pillory"}}🏚️{{else}}⚡{{end}}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:600;color:var(--text);">{{.Type}} · {{.DurationMinutes}}min</div>
+          <div style="font-size:11px;color:var(--text-muted);">{{formatDateTime .TriggeredAt}}</div>
+        </div>
+        {{if .Negotiated}}<span class="badge badge-purple" style="font-size:10px;">negociado</span>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty">
+      <div class="empty-icon">⚡</div>
+      <div class="empty-text">Sin eventos todavía</div>
+    </div>
+    {{end}}
+  </div>
+
 </div>
 
 {{if .LockStartISO}}
@@ -1714,4 +1774,86 @@ document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ document
 <div id="lb3-overlay" onclick="this.classList.remove('open')">
   <img id="lb3-img" src="" alt="Check-in">
 </div>
+{{end}}`
+
+// ── Events ──────────────────────────────────────────────────────────────────
+
+var eventsHTML = `{{define "content"}}
+<div class="page-hd">
+  <h1 class="page-title">Eventos de castigo</h1>
+  <p class="page-sub">Historial de freeze, hidetime y pillory</p>
+</div>
+
+<div class="stats-grid g4" style="margin-bottom:22px;">
+  <div class="stat-card">
+    <div class="stat-lbl">Total</div>
+    <div class="stat-val c-pink">{{.Total}}</div>
+    <div class="stat-sub">eventos ejecutados</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Freeze 🧊</div>
+    <div class="stat-val c-purple">{{.Freeze}}</div>
+    <div class="stat-sub">congelaciones</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Hidetime 🕶️</div>
+    <div class="stat-val c-yellow">{{.Hidetime}}</div>
+    <div class="stat-sub">ocultaciones</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-lbl">Pillory 🏚️</div>
+    <div class="stat-val c-red">{{.Pillory}}</div>
+    <div class="stat-sub">picotas</div>
+  </div>
+</div>
+
+{{if .Negotiated}}
+<div style="background:rgba(192,132,252,0.06);border:1px solid rgba(192,132,252,0.2);border-radius:10px;padding:11px 18px;margin-bottom:18px;font-size:13px;color:var(--text-muted);">
+  🤝 <span style="color:var(--purple);font-weight:600;">{{.Negotiated}}</span> eventos fueron negociados con éxito
+</div>
+{{end}}
+
+{{if .Events}}
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Tipo</th>
+        <th>Duración</th>
+        <th>Disparado</th>
+        <th>Resuelto</th>
+        <th>Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Events}}
+      <tr>
+        <td>
+          <span style="font-size:18px;margin-right:6px;">{{if eq .Type "freeze"}}🧊{{else if eq .Type "hidetime"}}🕶️{{else if eq .Type "pillory"}}🏚️{{else}}⚡{{end}}</span>
+          <span style="font-weight:600;color:var(--text);">{{.Type}}</span>
+        </td>
+        <td class="no-wrap">
+          {{if gt .DurationMinutes 59}}
+            {{printf "%dh" (div .DurationMinutes 60)}}{{if gt (mod .DurationMinutes 60) 0}} {{printf "%dm" (mod .DurationMinutes 60)}}{{end}}
+          {{else}}
+            {{.DurationMinutes}}min
+          {{end}}
+        </td>
+        <td class="no-wrap c-muted">{{formatDateTime .TriggeredAt}}</td>
+        <td class="no-wrap c-muted">{{if .ResolvedAt}}{{formatDateTime (derefTime .ResolvedAt)}}{{else}}<span class="badge badge-warning">activo</span>{{end}}</td>
+        <td>{{if .Negotiated}}<span class="badge badge-purple">negociado</span>{{else}}<span class="badge badge-muted">completado</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{else}}
+<div class="card">
+  <div class="empty">
+    <div class="empty-icon">⚡</div>
+    <div class="empty-text">Sin eventos registrados todavía</div>
+    <div class="empty-sub">Papi los activará durante la sesión</div>
+  </div>
+</div>
+{{end}}
 {{end}}`

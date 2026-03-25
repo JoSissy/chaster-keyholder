@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -64,6 +65,10 @@ type Bot struct {
 	// para que la IA tenga una base al identificar el juguete en la foto.
 	// Se limpia inmediatamente después de usarse en HandleToyPhoto().
 	pendingToyHint string
+
+	// summarizing previene que múltiples goroutines de TrySummarizeConversation
+	// corran en paralelo. CompareAndSwap garantiza que solo una corra a la vez.
+	summarizing atomic.Bool
 }
 
 // pendingActionPriority define el orden de prioridad de las acciones persistentes de foto.
@@ -781,13 +786,21 @@ func (b *Bot) TrySummarizeConversation() {
 		return
 	}
 	idleTime := time.Since(*lastMsg)
-	if idleTime < 30*time.Minute {
+	idleThreshold := time.Duration(b.ai.P.Thresholds.SummarizeIdleMinutes) * time.Minute
+	if idleThreshold == 0 {
+		idleThreshold = 30 * time.Minute // fallback si el yaml tiene 0
+	}
+	if idleTime < idleThreshold {
 		return
 	}
 
 	// Solo si hay suficientes mensajes para que valga la pena resumir
+	minMessages := b.ai.P.Thresholds.SummarizeMinMessages
+	if minMessages == 0 {
+		minMessages = 4
+	}
 	count := b.db.GetChatHistoryCount()
-	if count < 4 {
+	if count < minMessages {
 		return
 	}
 
@@ -796,12 +809,19 @@ func (b *Bot) TrySummarizeConversation() {
 		log.Printf("[memory] error leyendo chat_history: %v", err)
 		return
 	}
-	if len(history) < 4 {
+	if len(history) < minMessages {
 		return
 	}
 
-	// Generar resumen en goroutine — la llamada a AI puede tardar varios segundos
+	// Prevenir ejecuciones concurrentes — si ya hay una goroutine corriendo, salir.
+	if !b.summarizing.CompareAndSwap(false, true) {
+		return
+	}
+
+	// Generar resumen en goroutine — la llamada a AI puede tardar varios segundos.
+	// summarizing se libera siempre al terminar (defer).
 	go func() {
+		defer b.summarizing.Store(false)
 		summary, err := b.ai.SummarizeConversation(history)
 		if err != nil {
 			log.Printf("[memory] error generando resumen: %v", err)
@@ -1203,7 +1223,7 @@ func (b *Bot) HandleChat(text string) {
 	var rules []models.ContractRule
 	var summaries []models.ConversationSummary
 	if b.db != nil {
-		history, _ = b.db.GetRecentChatHistory(6, 120)
+		history, _ = b.db.GetRecentChatHistory(b.ai.P.Thresholds.ChatHistoryPairs, b.ai.P.Thresholds.ChatIdleMinutes)
 		if locked {
 			rules, _ = b.db.GetActiveContractRules()
 		}

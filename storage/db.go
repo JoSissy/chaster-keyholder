@@ -1310,6 +1310,37 @@ func (db *DB) SaveEvent(e *Event) error {
 	return err
 }
 
+// GetEvents devuelve los últimos N eventos ordenados por fecha descendente.
+func (db *DB) GetEvents(limit int) ([]*Event, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, lock_id, type, duration_minutes, triggered_at, resolved_at, negotiated
+		FROM events ORDER BY triggered_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []*Event
+	for rows.Next() {
+		e := &Event{}
+		var neg int
+		if err := rows.Scan(&e.ID, &e.LockID, &e.Type, &e.DurationMinutes, &e.TriggeredAt, &e.ResolvedAt, &neg); err != nil {
+			return nil, err
+		}
+		e.Negotiated = neg == 1
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// GetEventStats devuelve estadísticas globales de eventos.
+func (db *DB) GetEventStats() (total, freeze, hidetime, pillory int) {
+	db.conn.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&total)
+	db.conn.QueryRow(`SELECT COUNT(*) FROM events WHERE type='freeze'`).Scan(&freeze)
+	db.conn.QueryRow(`SELECT COUNT(*) FROM events WHERE type='hidetime'`).Scan(&hidetime)
+	db.conn.QueryRow(`SELECT COUNT(*) FROM events WHERE type='pillory'`).Scan(&pillory)
+	return
+}
+
 // ── Negotiations ──────────────────────────────────────────────────────────
 
 type Negotiation struct {
@@ -1461,14 +1492,24 @@ func (db *DB) GetRecentConversationSummaries(n int) ([]models.ConversationSummar
 // ── Contract Rules ─────────────────────────────────────────────────────────
 
 func (db *DB) SaveContractRules(rules []models.ContractRule) error {
-	db.conn.Exec(`DELETE FROM contract_rules`)
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("SaveContractRules: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck — rollback es no-op si ya se hizo Commit
+
+	if _, err := tx.Exec(`DELETE FROM contract_rules`); err != nil {
+		return fmt.Errorf("SaveContractRules: delete: %w", err)
+	}
 	for _, r := range rules {
-		db.conn.Exec(
+		if _, err := tx.Exec(
 			`INSERT INTO contract_rules (id, lock_id, rule_text, punishment, hours, minutes, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			r.ID, r.LockID, r.RuleText, r.Punishment, r.Hours, r.Minutes, time.Now(),
-		)
+		); err != nil {
+			return fmt.Errorf("SaveContractRules: insert %s: %w", r.ID, err)
+		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (db *DB) GetActiveContractRules() ([]models.ContractRule, error) {

@@ -8,10 +8,14 @@ import (
 	"chaster-keyholder/storage"
 	"chaster-keyholder/telegram"
 	"chaster-keyholder/web"
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -80,24 +84,41 @@ func main() {
 
 	log.Println("🔒 Chaster Keyholder Bot iniciado")
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	go scheduler.Start(bot)
 	dashPassword := os.Getenv("DASHBOARD_PASSWORD")
-	go startWebServer(db, botUsername, dashPassword)
+	srv := startWebServer(db, botUsername, dashPassword)
 
-	bot.Start()
+	go bot.Start()
+
+	<-ctx.Done()
+	log.Println("⏹️  Señal recibida — apagando gracefully...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("error en shutdown del servidor web: %v", err)
+	}
+	log.Println("✅ Servidor web detenido")
 }
 
-func startWebServer(db *storage.DB, botUsername, dashPassword string) {
+func startWebServer(db *storage.DB, botUsername, dashPassword string) *http.Server {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
 	handler := web.New(db, botUsername, dashPassword)
+	srv := &http.Server{Addr: ":" + port, Handler: handler}
 	log.Printf("🌐 Dashboard iniciado en puerto %s", port)
-	if err := http.ListenAndServe(":"+port, handler); err != nil {
-		log.Printf("error en servidor web: %v", err)
-	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("error en servidor web: %v", err)
+		}
+	}()
+	return srv
 }
 
 func mustEnv(key string) string {
