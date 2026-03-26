@@ -65,10 +65,16 @@ func (c *CloudinaryClient) Upload(imageBytes []byte, mimeType, folder string) (s
 		return "", "", err
 	}
 
-	writer.WriteField("api_key", c.apiKey)
-	writer.WriteField("timestamp", timestamp)
-	writer.WriteField("signature", signature)
-	writer.WriteField("folder", folder)
+	for k, v := range map[string]string{
+		"api_key":   c.apiKey,
+		"timestamp": timestamp,
+		"signature": signature,
+		"folder":    folder,
+	} {
+		if err := writer.WriteField(k, v); err != nil {
+			return "", "", fmt.Errorf("cloudinary form field %q: %w", k, err)
+		}
+	}
 	writer.Close()
 
 	url := fmt.Sprintf("https://api.cloudinary.com/v1_1/%s/image/upload", c.cloudName)
@@ -84,7 +90,10 @@ func (c *CloudinaryClient) Upload(imageBytes []byte, mimeType, folder string) (s
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("cloudinary read body: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return "", "", fmt.Errorf("cloudinary error %d: %s", resp.StatusCode, string(body))
 	}
@@ -126,7 +135,10 @@ func (c *CloudinaryClient) Delete(publicID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("cloudinary delete error %d (body unreadable: %v)", resp.StatusCode, err)
+		}
 		return fmt.Errorf("cloudinary delete error %d: %s", resp.StatusCode, string(body))
 	}
 	return nil

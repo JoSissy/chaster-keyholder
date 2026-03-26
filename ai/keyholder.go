@@ -101,8 +101,16 @@ func (c *Client) doRequest(data []byte) ([]byte, error) {
 			}
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("groq read body: %w", err)
+			if attempt < 3 {
+				log.Printf("[groq] retry %d/3: %v", attempt, lastErr)
+				time.Sleep(backoff[attempt-1])
+			}
+			continue
+		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return body, nil

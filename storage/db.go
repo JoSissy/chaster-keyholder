@@ -65,7 +65,9 @@ func (db *DB) migrate() error {
 		if err := m.fn(); err != nil {
 			return fmt.Errorf("migration v%d (%s): %w", m.version, m.label, err)
 		}
-		db.conn.Exec(`INSERT INTO schema_version (version) VALUES ($1)`, m.version)
+		if _, err := db.conn.Exec(`INSERT INTO schema_version (version) VALUES ($1)`, m.version); err != nil {
+			return fmt.Errorf("migration v%d: registro de version: %w", m.version, err)
+		}
 		version = m.version
 		log.Printf("[migrate] v%d aplicada ✓", m.version)
 	}

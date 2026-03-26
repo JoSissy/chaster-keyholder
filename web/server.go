@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"html/template"
 	"log"
@@ -51,8 +52,10 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		return next
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		_, pass, ok := r.BasicAuth()
-		if !ok || pass != s.password {
+		user, pass, ok := r.BasicAuth()
+		validUser := subtle.ConstantTimeCompare([]byte(user), []byte("jolie")) == 1
+		validPass := subtle.ConstantTimeCompare([]byte(pass), []byte(s.password)) == 1
+		if !ok || !validUser || !validPass {
 			w.Header().Set("WWW-Authenticate", `Basic realm="Jolie's Diary"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return

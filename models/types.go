@@ -300,34 +300,3 @@ type ContractRule struct {
 	Hours      int
 	Minutes    int
 }
-
-// GetObedienceLevel devuelve el nivel de obediencia (0-3) según el streak actual.
-// OBSOLETO — esta función usa una escala distinta (0-3, thresholds 3/6/10) a la
-// usada en todo el resto del código (GetObedienceLevelFromPoints, escala 0-4).
-// No se llama desde ningún lugar. Conservada por si se quiere reutilizar.
-func GetObedienceLevel(tasksStreak int) int {
-	switch {
-	case tasksStreak >= 10:
-		return 3
-	case tasksStreak >= 6:
-		return 2
-	case tasksStreak >= 3:
-		return 1
-	default:
-		return 0
-	}
-}
-
-// ObedienceLevelString devuelve el nombre del nivel de obediencia
-func ObedienceLevelString(level int) string {
-	switch level {
-	case 3:
-		return "máximo"
-	case 2:
-		return "intenso"
-	case 1:
-		return "moderado"
-	default:
-		return "básico"
-	}
-}
